@@ -1,5 +1,6 @@
 package com.fpvarbcon
 
+import android.app.Activity
 import android.graphics.Rect
 import android.text.TextUtils
 import android.view.View
@@ -12,6 +13,7 @@ import org.junit.After
 import org.junit.Before
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -544,7 +546,7 @@ class DestinationInteractionTest {
    */
   @Test
   fun atFontScaleOneAndTwoNoTextIsSilentlyClipped() {
-    val clipped = mutableListOf<String>()
+    val clipped = mutableListOf<Complaint>()
     for (scale in listOf("1.0", "2.0")) {
       setSystemFontScale(scale)
       val applied = readSystemFontScale()
@@ -569,16 +571,37 @@ class DestinationInteractionTest {
               drawnViews(activity.window.decorView)
                 .filterIsInstance<TextView>()
                 .filter { !it.text.isNullOrBlank() }
-                .mapNotNull { view -> clippingComplaint("${destination.name}@$scale", view) }
+                .mapNotNull { view -> truncationComplaint("${destination.name}@$scale", view) }
             }
             clipped += found
           }
         }
       }
     }
+
+    // WHAT FAILS, AND WHY NOT EVERYTHING.
+    //
+    // Ellipsised text is reported in full but does not fail: the operator
+    // can see an ellipsis and knows the text continues, which is the whole
+    // point of a deliberate numberOfLines. Silently dropped text and text
+    // overflowing its box are invisible to the operator, and those fail.
+    //
+    // Every instance of all three is printed either way, so a deliberate
+    // truncation cannot hide in the count - and if ellipsised text should
+    // fail too, that is one line here and a product decision, not a
+    // measurement problem.
+    val byKind = clipped.groupBy { it.kind }
+    for (kind in Loss.entries) {
+      val found = byKind[kind].orEmpty()
+      println("truncation census: $kind = ${found.size}")
+      found.forEach { println("  ${it.message}") }
+    }
+
+    val invisible = clipped.filter { it.kind != Loss.ELLIPSISED }
     assertTrue(
-      "text is cut off:\n" + clipped.joinToString("\n"),
-      clipped.isEmpty(),
+      "text is lost with nothing on screen to say so:\n" +
+        invisible.joinToString("\n") { it.message },
+      invisible.isEmpty(),
     )
   }
 
@@ -593,15 +616,95 @@ class DestinationInteractionTest {
    * React Native pairs it with an ellipsis so the operator can see there
    * is more.
    */
-  private fun clippingComplaint(destination: String, view: TextView): String? {
+  /** The three ways a TextView can be showing less than it was given. */
+  private enum class Loss {
+    /**
+     * The platform ellipsised it. Characters were dropped, but the operator
+     * can SEE they were: there is a visible ellipsis. This is what a
+     * deliberate numberOfLines is for.
+     */
+    ELLIPSISED,
+
+    /**
+     * Characters were dropped with NO ellipsis. Nothing on screen says the
+     * text continues, so the operator cannot know they are reading half a
+     * sentence.
+     */
+    DROPPED_SILENTLY,
+
+    /** Every character was laid out, into a box too short to draw them. */
+    OVERFLOWS_BOX,
+  }
+
+  private data class Complaint(val kind: Loss, val message: String)
+
+  /**
+   * WHAT A TEXT VIEW IS ACTUALLY SHOWING, ASKED SEMANTICALLY.
+   *
+   * The previous version measured one thing - laid-out height against box
+   * height - and skipped any view with a maxLines, on the reasoning that
+   * shortening text to a line count is a design decision. That left two
+   * ways of losing text unmeasured, and a brief attempt to add a third
+   * (comparing Layout.getLineWidth against the view's width) produced ten
+   * false complaints of nought to five pixels on correctly wrapped Arabic
+   * in run 34649197028, because that float is an advance width and not a
+   * cut-off glyph. It is not reinstated.
+   *
+   * These three are asked of the LAYOUT, in characters, not in fractional
+   * pixels:
+   *
+   *   1  getEllipsisCount(line) - the platform's own admission that it had
+   *      to drop characters from that line.
+   *   2  getLineEnd(last) against the text's own length - with a maxLines,
+   *      Layout simply stops, and the remainder is drawn nowhere. Trailing
+   *      whitespace is discounted, so a string ending in a newline is not
+   *      reported as a character short.
+   *   3  the vertical check, unchanged: every character laid out, into a
+   *      box too short for them.
+   *
+   * The kinds are separated because they are not equally bad, and the
+   * caller decides which fail. Ellipsised text is visibly ellipsised;
+   * silently dropped text is invisible loss.
+   */
+  private fun truncationComplaint(destination: String, view: TextView): Complaint? {
     val layout = view.layout ?: return null
-    if (view.maxLines != Int.MAX_VALUE) return null
-    val text = view.text.toString().take(60)
+    val full = view.text?.toString() ?: return null
+    if (full.isBlank()) return null
+    val shown = full.take(60)
+
+    for (line in 0 until layout.lineCount) {
+      val dropped = layout.getEllipsisCount(line)
+      if (dropped > 0) {
+        return Complaint(
+          Loss.ELLIPSISED,
+          "$destination: \"$shown\" line ${line + 1} of ${layout.lineCount} is ellipsised, " +
+            "$dropped character(s) dropped (maxLines=${view.maxLines})",
+        )
+      }
+    }
+
+    if (layout.lineCount > 0) {
+      val drawnTo = layout.getLineEnd(layout.lineCount - 1)
+      // Trailing whitespace and newlines are not content: a layout that
+      // ends short because the string ends in "\n" has lost nothing.
+      val contentLength = full.trimEnd().length
+      if (drawnTo < contentLength) {
+        return Complaint(
+          Loss.DROPPED_SILENTLY,
+          "$destination: \"$shown\" is drawn to character $drawnTo of $contentLength after " +
+            "${layout.lineCount} line(s) with NO ellipsis - ${contentLength - drawnTo} " +
+            "character(s) appear nowhere (maxLines=${view.maxLines})",
+        )
+      }
+    }
 
     val available = view.height - view.paddingTop - view.paddingBottom
     if (available <= 0) return null
     if (layout.height <= available) return null
-    return "$destination: \"$text\" needs ${layout.height}px and has ${available}px"
+    return Complaint(
+      Loss.OVERFLOWS_BOX,
+      "$destination: \"$shown\" needs ${layout.height}px and has ${available}px",
+    )
   }
 
   /*
@@ -635,30 +738,129 @@ class DestinationInteractionTest {
    */
 
   /**
-   * The detector is a real subject. A text view deliberately squeezed to
-   * half the height its text needs must be complained about, otherwise
-   * every clean result above would be meaningless.
+   * A TextView measured and laid out exactly as the detector will see it.
+   *
+   * [heightPx] null means "as tall as the text needs", which is the only
+   * way to build a control that MUST NOT produce a complaint - a box of a
+   * guessed height would be testing the guess.
+   */
+  private fun laidOut(
+    activity: Activity,
+    content: String,
+    widthPx: Int,
+    heightPx: Int? = null,
+    lines: Int? = null,
+    truncate: TextUtils.TruncateAt? = null,
+  ): TextView {
+    val view = TextView(activity)
+    view.text = content
+    view.setTextSize(20f)
+    lines?.let { view.maxLines = it }
+    truncate?.let { view.ellipsize = it }
+    val widthSpec = View.MeasureSpec.makeMeasureSpec(widthPx, View.MeasureSpec.EXACTLY)
+    val heightSpec = heightPx
+      ?.let { View.MeasureSpec.makeMeasureSpec(it, View.MeasureSpec.EXACTLY) }
+      ?: View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
+    view.measure(widthSpec, heightSpec)
+    view.layout(0, 0, widthPx, heightPx ?: view.measuredHeight)
+    return view
+  }
+
+  /**
+   * THE DETECTOR IS A SUBJECT, AND SO IS ITS SILENCE.
+   *
+   * Five planted views, all in one case. Three of them lose text by a
+   * different mechanism and the detector must name each; two are fully
+   * drawn and it must say nothing about them. Both halves matter: a
+   * detector that complains about everything is as useless as one that
+   * complains about nothing, and the false-positive half is the half that
+   * was missing when a width comparison was briefly added and produced ten
+   * complaints about correctly wrapped Arabic.
+   *
+   * Nothing here is left failing. The planted cuts are asserted to have
+   * produced a complaint, which is a passing assertion about a detector
+   * that works.
    */
   @Test
-  fun theClippingDetectorFiresOnTextThatReallyIsCut() {
+  fun theTruncationDetectorNamesEveryWayTextIsLostAndStaysSilentOtherwise() {
+    val long =
+      "سطر طويل جدًا لا يمكن أن يتسع في مربع بارتفاع سطر واحد فقط أبدًا ومعه كلمات أخرى تطيله"
     ActivityScenario.launch(MainActivity::class.java).use { scenario ->
       scenario.awaitTag(START)
-      val complaint = scenario.readMain { activity ->
-        val squeezed = TextView(activity)
-        squeezed.text = "سطر طويل جدًا لا يمكن أن يتسع في مربع بارتفاع سطر واحد فقط أبدًا"
-        squeezed.setTextSize(20f)
-        val width = View.MeasureSpec.makeMeasureSpec(200, View.MeasureSpec.EXACTLY)
-        val height = View.MeasureSpec.makeMeasureSpec(20, View.MeasureSpec.EXACTLY)
-        squeezed.measure(width, height)
-        squeezed.layout(0, 0, 200, 20)
-        clippingComplaint("control", squeezed)
+      val results = scenario.readMain { activity ->
+        linkedMapOf(
+          "1 ellipsised at maxLines 1" to truncationComplaint(
+            "control",
+            laidOut(activity, long, 200, 40, lines = 1, truncate = TextUtils.TruncateAt.END),
+          ),
+          "2 dropped by maxLines with no ellipsis" to truncationComplaint(
+            "control",
+            laidOut(activity, long, 200, 40, lines = 1),
+          ),
+          "3 wrapped inside a fixed height" to truncationComplaint(
+            "control",
+            laidOut(activity, long, 200, 20),
+          ),
+          "4 full multi-line Arabic" to truncationComplaint(
+            "control",
+            laidOut(activity, long, 200),
+          ),
+          "5a fully drawn, ends in a newline" to truncationComplaint(
+            "control",
+            laidOut(activity, "$long\n", 200),
+          ),
+          "5b fully drawn, ends in spaces" to truncationComplaint(
+            "control",
+            laidOut(activity, "$long   ", 200),
+          ),
+        )
       }
-      assertNotNull(
-        "the clipping detector did not fire on text squeezed into a fifth of the height it " +
-          "needs, so every clean result it produces is worthless",
-        complaint,
+      results.forEach { (name, complaint) ->
+        println("truncation control: $name -> ${complaint?.let { "${it.kind}: ${it.message}" } ?: "<silent>"}")
+      }
+
+      for (name in listOf(
+        "1 ellipsised at maxLines 1",
+        "2 dropped by maxLines with no ellipsis",
+        "3 wrapped inside a fixed height",
+      )) {
+        assertNotNull(
+          "the detector said nothing about planted text that really is cut: $name. Every clean " +
+            "result it produces on a real screen is worthless until it fires on this.",
+          results[name],
+        )
+      }
+
+      for (name in listOf(
+        "4 full multi-line Arabic",
+        "5a fully drawn, ends in a newline",
+        "5b fully drawn, ends in spaces",
+      )) {
+        assertNull(
+          "the detector complained about text that is fully drawn: $name -> " +
+            "${results[name]?.message}. A detector that fires on correct text turns every " +
+            "screen red and teaches the reader to ignore it.",
+          results[name],
+        )
+      }
+
+      // The three cuts must be attributed to DIFFERENT mechanisms, or one
+      // check could be doing all the work while another is dead.
+      assertEquals(
+        "the ellipsised control was not attributed to the ellipsis check",
+        Loss.ELLIPSISED,
+        results["1 ellipsised at maxLines 1"]?.kind,
       )
-      println("clipping detector control: $complaint")
+      assertEquals(
+        "the un-ellipsised maxLines control was not attributed to the silent-drop check",
+        Loss.DROPPED_SILENTLY,
+        results["2 dropped by maxLines with no ellipsis"]?.kind,
+      )
+      assertEquals(
+        "the fixed-height control was not attributed to the overflow check",
+        Loss.OVERFLOWS_BOX,
+        results["3 wrapped inside a fixed height"]?.kind,
+      )
     }
   }
 
