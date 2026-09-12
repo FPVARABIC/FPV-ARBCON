@@ -65,10 +65,13 @@ So resolution is chronological, and it is a state machine per pid:
 
   3  THE LAST PROCESS START STRICTLY BEFORE THE CRASH, and only if the pid
      was still alive at the moment of the crash: no am_proc_died for it
-     between that start and the crash, and no later start in between
-     either. If it died and the pid then crashed, the crashing process is
-     something that inherited the number and this says so instead of
-     naming the corpse.
+     between that start and the crash. If it died and the pid then crashed,
+     the crashing process is something that inherited the number, and this
+     says so instead of naming the corpse.
+
+     Two starts sharing that latest millisecond and naming different
+     processes is ambiguous, and is reported as such rather than settled by
+     whichever the parser happened to see first.
 
 NO EVENT AFTER THE CRASH MAY RESOLVE IT, with the single exception in (2),
 which is the same event and not a later one. Without a readable timestamp
@@ -278,15 +281,27 @@ def resolve(
             "inherited the number, and this log does not say what it was"
         )
 
-    newer_starts = [
-        event
+    # AMBIGUITY AT THE SAME INSTANT.
+    #
+    # This was first written as "is there a start NEWER than the one I
+    # chose" - which can never be true, because the chosen one is by
+    # construction the latest before the crash. Dead code that reads like a
+    # safety check is worse than no check: it makes the reader believe an
+    # ambiguity is being caught when nothing is looking.
+    #
+    # The ambiguity that can actually occur is two starts sharing the
+    # latest timestamp and naming DIFFERENT processes, which logcat's
+    # millisecond resolution permits. Then nothing in the log says which of
+    # them held the pid, and a coin toss is not attribution.
+    tied = {
+        event["name"]
         for event in starts
-        if event is not start and millis_between(start["at"], event["at"]) > 0
-    ]
-    if newer_starts:
+        if millis_between(event["at"], start["at"]) == 0
+    }
+    if len(tied) > 1:
         return None, (
-            f"pid {pid} has more than one start before the crash and no death between them, so "
-            "which process held it is ambiguous"
+            f"pid {pid} has starts at the same instant naming {sorted(tied)}, so which process "
+            "held it when it crashed is ambiguous"
         )
 
     return start["name"], (
@@ -538,6 +553,16 @@ E AndroidRuntime: FATAL EXCEPTION: main
 E AndroidRuntime: java.lang.IllegalStateException: planted
 """
 
+#: Two processes recorded as starting on the SAME millisecond under one
+#: pid. logcat's resolution allows it, and nothing then says which of them
+#: held the number - a coin toss is not attribution.
+TIED_STARTS = """\
+09-11 20:38:01.100   530  1000 I am_proc_start: [0,6941,10192,com.fpvarbcon,activity,x]
+09-11 20:38:01.100   530  1000 I am_proc_start: [0,6941,10150,com.google.android.gm,activity,x]
+09-11 20:39:15.619  6941  7741 E AndroidRuntime: FATAL EXCEPTION: main
+09-11 20:39:15.619  6941  7741 E AndroidRuntime: java.lang.IllegalStateException: planted
+"""
+
 
 class _Sink:
     def __init__(self) -> None:
@@ -594,6 +619,12 @@ def self_test() -> int:
         ),
         ("an unresolvable pid fails without being blamed on us", UNRESOLVABLE, UNRESOLVED_FATAL, 1),
         ("a header with no timestamp or pid resolves nothing", NO_TIMESTAMP, UNRESOLVED_FATAL, 1),
+        (
+            "two starts at the same instant name nobody",
+            TIED_STARTS,
+            UNRESOLVED_FATAL,
+            1,
+        ),
         ("a clean log is clean", "", None, 0),
     ]
 
