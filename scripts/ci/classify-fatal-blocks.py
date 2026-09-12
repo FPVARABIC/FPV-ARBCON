@@ -21,36 +21,64 @@ FOUR VERDICTS, BECAUSE "NOT OURS" IS NOT ONE THING.
                     subprocess of either. FAILS as a defect in the
                     application, and the block is printed whole.
 
-  PLATFORM_FATAL    system_server and the other processes the platform
-                    itself is made of. FAILS - but as the TEST ENVIRONMENT
-                    being invalid, not as our defect. When the platform
-                    dies underneath a suite, every green case after it was
-                    measured on a machine that was already broken, so it
-                    cannot be waved through; and it is not our crash, so it
-                    must not be reported as one. Both halves are said
-                    explicitly.
+  PLATFORM_FATAL    the processes the platform itself is made of. FAILS -
+                    but as the TEST ENVIRONMENT being invalid, not as our
+                    defect. When the platform dies underneath a suite,
+                    every green case after it was measured on a machine
+                    that was already broken, so it cannot be waved through;
+                    and it is not our crash, so it must not be reported as
+                    one. Both halves are said explicitly.
 
   EXTERNAL_FATAL    any other process. Recorded in one line, does not fail,
                     and is never attributed to the application.
 
-  UNRESOLVED_FATAL  the process could not be determined even after the
-                    resolution below. FAILS THE EVIDENCE GATE, because a
-                    crash nobody can attribute is a hole in the evidence -
-                    and is NOT called an app crash, because guessing is how
-                    the original defect got written.
+  UNRESOLVED_FATAL  the process could not be determined, or could not be
+                    determined UNAMBIGUOUSLY. FAILS THE EVIDENCE GATE,
+                    because a crash nobody can attribute is a hole in the
+                    evidence - and is NOT called an app crash, because
+                    guessing is how the original defect got written.
 
-HOW A PID IS RESOLVED BEFORE UNRESOLVED IS DECLARED. In order:
+=====================================================================
+HOW A PID BECOMES A PROCESS NAME
+=====================================================================
 
-  1  the "Process: <name>, PID: <pid>" line the platform writes directly
-     under the header, accepted only when its own PID matches the header's.
-  2  the event log. am_crash, am_proc_start and am_proc_died all carry
-     [.., pid, .., processName, ..], and ActivityManager writes
-     "Start proc <pid>:<name>/<uid>" and "Process <name> (pid <pid>) has
-     died" in plain text. Every such line in the WHOLE log is indexed.
-  3  TIMING, when the index holds more than one name for a PID - the
-     kernel reuses PIDs. The occurrence closest in the log to the crash
-     header wins, and the distance is printed so a far-away match can be
-     judged rather than trusted.
+The first version of this picked whichever naming line was FEWEST LINES
+AWAY from the crash. That is not evidence. The kernel reuses pids, so a
+"Start proc 6941:com.something" printed after the crash describes a
+DIFFERENT process that merely inherited the number, and line distance
+cannot tell the two apart - it would happily resolve a crash from an event
+that had not happened yet.
+
+So resolution is chronological, and it is a state machine per pid:
+
+  1  THE CRASH BLOCK'S OWN "Process:" LINE. The platform writes
+     "Process: <name>, PID: <pid>" directly under the header. Accepted only
+     when its pid matches the header's. Highest priority: it is the
+     crashing process naming itself.
+
+  2  am_crash FOR THE SAME PID AT THE SAME MOMENT. am_crash is not a later
+     event about a different process - it is system_server's own record of
+     THIS crash, and it can be written a few milliseconds either side of
+     the AndroidRuntime dump. It is accepted only inside
+     AM_CRASH_WINDOW_MILLIS of the header, and an am_crash outside that
+     window is ignored rather than stretched to fit.
+
+  3  THE LAST PROCESS START STRICTLY BEFORE THE CRASH, and only if the pid
+     was still alive at the moment of the crash: no am_proc_died for it
+     between that start and the crash, and no later start in between
+     either. If it died and the pid then crashed, the crashing process is
+     something that inherited the number and this says so instead of
+     naming the corpse.
+
+NO EVENT AFTER THE CRASH MAY RESOLVE IT, with the single exception in (2),
+which is the same event and not a later one. Without a readable timestamp
+on the header there is no order to reason about, and the answer is
+UNRESOLVED_FATAL rather than a guess.
+
+Timestamps are logcat's own "MM-DD HH:MM:SS.mmm". They carry no year, so
+they are compared as (month, day, h, m, s, ms) tuples - correct within one
+capture, which is all a single instrumentation run is, and wrong only
+across a New Year boundary inside one log.
 
 Usage:
   classify-fatal-blocks.py <logcat.txt>   read a log; non-zero unless every
@@ -76,11 +104,17 @@ UNRESOLVED_FATAL = "UNRESOLVED_FATAL"
 #: Verdicts that fail. EXTERNAL_FATAL is the only one that does not.
 FAILING = {APP_FATAL, PLATFORM_FATAL, UNRESOLVED_FATAL}
 
-#: The processes the platform itself is made of. Deliberately a short
-#: explicit list rather than a pattern: "com.android.*" would capture
-#: com.android.chrome, which is an ordinary application, and a rule that
-#: silently reclassifies third-party crashes as platform ones would hide
-#: exactly what EXTERNAL_FATAL exists to show.
+#: The processes the platform itself is made of, as the platform ACTUALLY
+#: names them in logcat - fully qualified, no short aliases. "systemui" and
+#: "phone" are not process names; com.android.systemui and
+#: com.android.phone are. Nothing is normalised or abbreviated here,
+#: because a comparison against a name the platform never writes is a
+#: comparison that silently never matches.
+#:
+#: Deliberately a short explicit set rather than a "com.android.*" pattern:
+#: that pattern would capture com.android.chrome, an ordinary application,
+#: and a rule that quietly reclassifies a third-party crash as a platform
+#: one hides exactly what EXTERNAL_FATAL exists to show.
 PLATFORM_PROCESSES = frozenset(
     {
         "system_server",
@@ -91,16 +125,19 @@ PLATFORM_PROCESSES = frozenset(
     }
 )
 
+#: How far either side of the AndroidRuntime header an am_crash line is
+#: still the SAME crash rather than a later event.
+AM_CRASH_WINDOW_MILLIS = 2_000
+
 # "MM-DD HH:MM:SS.mmm  PID  TID L TAG: message"
 LOGCAT_LINE = re.compile(
-    r"^\s*\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+\s+(\d+)\s+(\d+)\s+[VDIWEFS]\s+([^:]+):\s?(.*)$"
+    r"^\s*(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})\.(\d{3})\s+(\d+)\s+(\d+)\s+[VDIWEFS]\s+"
+    r"([^:]+):\s?(.*)$"
 )
 PROCESS_LINE = re.compile(r"\bProcess:\s*([A-Za-z0-9_.:]+)\s*,\s*PID:\s*(\d+)")
 
-#: am_crash: [pid,uid,processName,...] - and am_proc_died is
-#: [userId,pid,processName,...], so the pid is not always in the same slot.
-#: Both shapes are read, and a token that is not a plausible process name
-#: is ignored rather than guessed at.
+#: The event log puts the pid in a different slot per event, so each shape
+#: is matched on its own rather than by a single loose pattern.
 EVENT_AM_CRASH = re.compile(r"\bam_crash\s*:\s*\[(\d+),\s*\d+,\s*([A-Za-z0-9_.:]+)")
 EVENT_AM_PROC_START = re.compile(
     r"\bam_proc_start\s*:\s*\[\d+,\s*(\d+),\s*\d+,\s*([A-Za-z0-9_.:]+)"
@@ -111,6 +148,151 @@ TEXT_PROC_DIED = re.compile(r"\bProcess ([A-Za-z0-9_.:]+) \(pid (\d+)\) has died
 
 PROCESS_SEARCH_LINES = 8
 MAX_BLOCK_LINES = 60
+
+START, DIED, CRASH = "start", "died", "crash"
+
+
+def timestamp_of(line: str) -> tuple[int, ...] | None:
+    """logcat's own clock as a comparable tuple, or None if unreadable."""
+    match = LOGCAT_LINE.match(line)
+    if not match:
+        return None
+    return tuple(int(part) for part in match.group(1, 2, 3, 4, 5, 6))
+
+
+def millis_between(earlier: tuple[int, ...], later: tuple[int, ...]) -> int:
+    """Signed milliseconds from [earlier] to [later] within one capture."""
+
+    def total(stamp: tuple[int, ...]) -> int:
+        month, day, hour, minute, second, milli = stamp
+        return ((((month * 31 + day) * 24 + hour) * 60 + minute) * 60 + second) * 1000 + milli
+
+    return total(later) - total(earlier)
+
+
+def pid_of(line: str) -> str | None:
+    match = LOGCAT_LINE.match(line)
+    return match.group(7) if match else None
+
+
+def timeline(lines: list[str]) -> dict[str, list[dict]]:
+    """
+    {pid -> [event, ...]} in log order, each event timestamped.
+
+    Every naming line in the WHOLE file is indexed, because the line that
+    names a process is usually written when the process STARTS and is
+    nowhere near the crash.
+    """
+    events: dict[str, list[dict]] = {}
+
+    def remember(index: int, at, pid: str, name: str | None, kind: str, source: str) -> None:
+        events.setdefault(pid, []).append(
+            {"line": index, "at": at, "name": name, "kind": kind, "source": source}
+        )
+
+    for index, line in enumerate(lines):
+        at = timestamp_of(line)
+        for pattern, kind, source in (
+            (EVENT_AM_CRASH, CRASH, "am_crash"),
+            (EVENT_AM_PROC_START, START, "am_proc_start"),
+            (EVENT_AM_PROC_DIED, DIED, "am_proc_died"),
+            (TEXT_START_PROC, START, "Start proc"),
+        ):
+            match = pattern.search(line)
+            if match:
+                remember(index, at, match.group(1), match.group(2), kind, source)
+        died = TEXT_PROC_DIED.search(line)
+        if died:
+            remember(index, at, died.group(2), died.group(1), DIED, "has died")
+    return events
+
+
+def resolve(
+    pid: str | None,
+    at: tuple[int, ...] | None,
+    events: dict[str, list[dict]],
+) -> tuple[str | None, str]:
+    """
+    The process name for [pid] at time [at], chronologically.
+
+    Returns (name or None, the reasoning, printed verbatim so a reader can
+    disagree with it).
+    """
+    if pid is None:
+        return None, "no pid on the crash header"
+    if at is None:
+        return None, f"pid {pid} has no readable timestamp on its header, so nothing can be ordered"
+
+    history = events.get(pid, [])
+    if not history:
+        return None, f"pid {pid} is named nowhere in this log"
+
+    # 2. am_crash for this pid at this moment - the same event, not a later one.
+    for event in history:
+        if event["kind"] != CRASH or event["at"] is None:
+            continue
+        delta = millis_between(at, event["at"])
+        if abs(delta) <= AM_CRASH_WINDOW_MILLIS:
+            return event["name"], (
+                f"pid {pid} -> {event['name']} via am_crash at line {event['line'] + 1}, "
+                f"{delta:+d}ms from the header (same crash)"
+            )
+
+    # 3. The last start strictly before the crash, if the pid was still
+    #    alive when it crashed.
+    starts = [
+        event
+        for event in history
+        if event["kind"] == START
+        and event["at"] is not None
+        and millis_between(event["at"], at) > 0
+    ]
+    if not starts:
+        after = [
+            event
+            for event in history
+            if event["kind"] == START and event["at"] is not None
+        ]
+        if after:
+            return None, (
+                f"pid {pid} is only ever named by events AFTER the crash "
+                f"(nearest at line {after[0]['line'] + 1}), which describe a process that "
+                "inherited the number - they cannot name this one"
+            )
+        return None, f"pid {pid} has no process start before the crash"
+
+    start = max(starts, key=lambda event: millis_between(event["at"], at) * -1)
+    deaths = [
+        event
+        for event in history
+        if event["kind"] == DIED
+        and event["at"] is not None
+        and millis_between(start["at"], event["at"]) > 0
+        and millis_between(event["at"], at) >= 0
+    ]
+    if deaths:
+        death = deaths[0]
+        return None, (
+            f"pid {pid} was started as {start['name']} at line {start['line'] + 1} but DIED at "
+            f"line {death['line'] + 1}, before this crash. Whatever crashed under that pid "
+            "inherited the number, and this log does not say what it was"
+        )
+
+    newer_starts = [
+        event
+        for event in starts
+        if event is not start and millis_between(start["at"], event["at"]) > 0
+    ]
+    if newer_starts:
+        return None, (
+            f"pid {pid} has more than one start before the crash and no death between them, so "
+            "which process held it is ambiguous"
+        )
+
+    return start["name"], (
+        f"pid {pid} -> {start['name']} via {start['source']} at line {start['line'] + 1}, "
+        f"{millis_between(start['at'], at)}ms before the crash, with no death in between"
+    )
 
 
 def belongs_to_app(process: str) -> bool:
@@ -137,70 +319,19 @@ def verdict_for(process: str) -> str:
     return EXTERNAL_FATAL
 
 
-def pid_index(lines: list[str]) -> dict[str, list[tuple[int, str, str]]]:
-    """
-    {pid -> [(line index, process name, which pattern found it)]}
-
-    Built from the WHOLE log, because the line that names a process is
-    usually nowhere near the crash - it is written when the process starts.
-    """
-    found: dict[str, list[tuple[int, str, str]]] = {}
-
-    def remember(index: int, pid: str, name: str, source: str) -> None:
-        found.setdefault(pid, []).append((index, name, source))
-
-    for index, line in enumerate(lines):
-        for pattern, source in (
-            (EVENT_AM_CRASH, "am_crash"),
-            (EVENT_AM_PROC_START, "am_proc_start"),
-            (EVENT_AM_PROC_DIED, "am_proc_died"),
-            (TEXT_START_PROC, "Start proc"),
-        ):
-            match = pattern.search(line)
-            if match:
-                remember(index, match.group(1), match.group(2), source)
-        died = TEXT_PROC_DIED.search(line)
-        if died:
-            remember(index, died.group(2), died.group(1), "has died")
-        owner = PROCESS_LINE.search(line)
-        if owner:
-            remember(index, owner.group(2), owner.group(1), "Process:")
-    return found
-
-
-def resolve(pid: str | None, at_line: int, index: dict) -> tuple[str | None, str]:
-    """
-    The process name for [pid], chosen by closeness to [at_line].
-
-    PIDs are reused, so when the index holds several names for one pid the
-    nearest in the log wins and the distance travelled is reported - a
-    match found four thousand lines away is a different quality of evidence
-    from one found next door, and the reader should be able to see which
-    they have.
-    """
-    if pid is None:
-        return None, "no pid on the crash header"
-    candidates = index.get(pid)
-    if not candidates:
-        return None, f"pid {pid} is named nowhere in this log"
-    line, name, source = min(candidates, key=lambda entry: abs(entry[0] - at_line))
-    distance = abs(line - at_line)
-    return name, f"pid {pid} -> {name} via {source} at line {line + 1} ({distance} lines away)"
-
-
 def parse(lines: list[str]) -> list[dict]:
     """Every FATAL EXCEPTION block, with whatever the log says about it."""
-    index = pid_index(lines)
+    events = timeline(lines)
     blocks: list[dict] = []
 
     for position, line in enumerate(lines):
         if "FATAL EXCEPTION" not in line:
             continue
 
-        header = LOGCAT_LINE.match(line)
-        header_pid = header.group(1) if header else None
+        header_pid = pid_of(line)
+        header_at = timestamp_of(line)
 
-        # 1. The Process: line directly under the header.
+        # 1. The block's own Process: line.
         process = None
         how = ""
         for offset, candidate in enumerate(
@@ -211,17 +342,15 @@ def parse(lines: list[str]) -> list[dict]:
             owner = PROCESS_LINE.search(candidate)
             if not owner:
                 continue
-            candidate_match = LOGCAT_LINE.match(candidate)
-            candidate_pid = candidate_match.group(1) if candidate_match else None
+            candidate_pid = pid_of(candidate)
             if header_pid and candidate_pid and header_pid != candidate_pid:
                 continue
             process = owner.group(1)
-            how = f"Process: line {offset + 1} under the header"
+            how = f"the crash block's own Process: line, {offset + 1} line(s) under the header"
             break
 
-        # 2 and 3. The event log and plain-text process names, nearest first.
         if process is None:
-            process, how = resolve(header_pid, position, index)
+            process, how = resolve(header_pid, header_at, events)
 
         verdict = verdict_for(process) if process else UNRESOLVED_FATAL
 
@@ -229,8 +358,8 @@ def parse(lines: list[str]) -> list[dict]:
         for candidate in lines[position + 1 : position + MAX_BLOCK_LINES]:
             if "FATAL EXCEPTION" in candidate:
                 break
-            candidate_match = LOGCAT_LINE.match(candidate)
-            if header_pid and candidate_match and candidate_match.group(1) != header_pid:
+            candidate_pid = pid_of(candidate)
+            if header_pid and candidate_pid and candidate_pid != header_pid:
                 break
             body.append(candidate.rstrip("\n"))
 
@@ -328,6 +457,12 @@ PLATFORM_CRASH = """\
 09-11 20:39:15.619   530   642 E AndroidRuntime: java.lang.NullPointerException: planted
 """
 
+SYSTEMUI_CRASH = """\
+09-11 20:39:15.619  1200  1210 E AndroidRuntime: FATAL EXCEPTION: main
+09-11 20:39:15.619  1200  1210 E AndroidRuntime: Process: com.android.systemui, PID: 1200
+09-11 20:39:15.619  1200  1210 E AndroidRuntime: java.lang.NullPointerException: planted
+"""
+
 GMAIL_CRASH = """\
 09-11 20:39:15.619  2866  2976 E AndroidRuntime: FATAL EXCEPTION: Blocking Thread #1
 09-11 20:39:15.619  2866  2976 E AndroidRuntime: Process: com.google.android.gm, PID: 2866
@@ -340,35 +475,67 @@ LOOKALIKE_CRASH = """\
 09-11 20:39:15.619  8000  8000 E AndroidRuntime: java.lang.IllegalStateException: planted
 """
 
-#: No Process line under the header, but the event log names the pid as
-#: OURS. This must resolve to APP_FATAL rather than being written off.
-UNKNOWN_PID_RESOLVING_TO_APP = """\
+#: No Process line, but the pid was started as ours before the crash.
+START_BEFORE_RESOLVING_TO_APP = """\
 09-11 20:38:01.100   530  1000 I am_proc_start: [0,6941,10192,com.fpvarbcon,activity,x]
 09-11 20:39:15.619  6941  7741 E AndroidRuntime: FATAL EXCEPTION: main
 09-11 20:39:15.619  6941  7741 E AndroidRuntime: java.lang.IllegalStateException: planted
-09-11 20:39:15.619  6941  7741 E AndroidRuntime: \tat com.fpvarbcon.MainActivity.onCreate(MainActivity.kt:1)
 """
 
-#: The same shape, resolving to somebody else's process via am_crash.
-UNKNOWN_PID_RESOLVING_TO_EXTERNAL = """\
-09-11 20:38:01.100   530  1000 I am_crash: [2866,10144,com.google.android.gm,0,planted]
+#: am_crash for the same pid within the window - the same crash, logged by
+#: system_server a moment after the AndroidRuntime dump.
+AM_CRASH_JUST_AFTER = """\
 09-11 20:39:15.619  2866  2976 E AndroidRuntime: FATAL EXCEPTION: Blocking Thread #1
 09-11 20:39:15.619  2866  2976 E AndroidRuntime: android.os.RemoteException: planted
+09-11 20:39:15.700   530  1000 I am_crash: [2866,10144,com.google.android.gm,0,planted]
 """
 
-#: And to the platform, via the plain-text "Start proc" line.
-UNKNOWN_PID_RESOLVING_TO_PLATFORM = """\
-09-11 20:38:01.100   530  1000 I ActivityManager: Start proc 530:system_server/1000 for x
-09-11 20:39:15.619   530   642 E AndroidRuntime: FATAL EXCEPTION: Binder:530_4
-09-11 20:39:15.619   530   642 E AndroidRuntime: java.lang.NullPointerException: planted
+#: The same am_crash, but a minute later. Outside the window, so it is a
+#: different event and must not name this crash.
+AM_CRASH_FAR_LATER = """\
+09-11 20:39:15.619  2866  2976 E AndroidRuntime: FATAL EXCEPTION: Blocking Thread #1
+09-11 20:39:15.619  2866  2976 E AndroidRuntime: android.os.RemoteException: planted
+09-11 20:41:00.000   530  1000 I am_crash: [2866,10144,com.google.android.gm,0,planted]
 """
 
-#: Nothing anywhere names this pid. MUST be UNRESOLVED_FATAL and MUST make
-#: the script exit non-zero.
+#: PID REUSE, DIRECTION ONE. The pid was somebody else's, that process
+#: died, and then the pid crashed. Naming the corpse would be a lie.
+PID_REUSED_AFTER_DEATH = """\
+09-11 20:38:01.100   530  1000 I am_proc_start: [0,6941,10150,com.google.android.gm,activity,x]
+09-11 20:38:40.000   530  1000 I am_proc_died: [0,6941,com.google.android.gm,0,0]
+09-11 20:39:15.619  6941  7741 E AndroidRuntime: FATAL EXCEPTION: main
+09-11 20:39:15.619  6941  7741 E AndroidRuntime: java.lang.IllegalStateException: planted
+"""
+
+#: PID REUSE, DIRECTION TWO. Somebody else had it, died, and OUR process
+#: then took the number before the crash. The later start is the truth.
+PID_REUSED_THEN_OURS = """\
+09-11 20:38:01.100   530  1000 I am_proc_start: [0,6941,10150,com.google.android.gm,activity,x]
+09-11 20:38:40.000   530  1000 I am_proc_died: [0,6941,com.google.android.gm,0,0]
+09-11 20:38:55.000   530  1000 I am_proc_start: [0,6941,10192,com.fpvarbcon,activity,x]
+09-11 20:39:15.619  6941  7741 E AndroidRuntime: FATAL EXCEPTION: main
+09-11 20:39:15.619  6941  7741 E AndroidRuntime: java.lang.IllegalStateException: planted
+"""
+
+#: A START AFTER THE CRASH. It describes a process that inherited the
+#: number. It must not resolve anything.
+START_ONLY_AFTER_CRASH = """\
+09-11 20:39:15.619  6941  7741 E AndroidRuntime: FATAL EXCEPTION: main
+09-11 20:39:15.619  6941  7741 E AndroidRuntime: java.lang.IllegalStateException: planted
+09-11 20:40:02.000   530  1000 I am_proc_start: [0,6941,10192,com.fpvarbcon,activity,x]
+"""
+
+#: Nothing anywhere names this pid.
 UNRESOLVABLE = """\
 09-11 20:39:15.619  4242  4242 E AndroidRuntime: FATAL EXCEPTION: some-thread
 09-11 20:39:15.619  4242  4242 E AndroidRuntime: java.lang.RuntimeException: planted
-09-11 20:39:15.619  4242  4242 E AndroidRuntime: \tat unknown.Frame.run(Frame.java:1)
+"""
+
+#: A header with no readable timestamp. Nothing can be ordered, so nothing
+#: may be inferred.
+NO_TIMESTAMP = """\
+E AndroidRuntime: FATAL EXCEPTION: main
+E AndroidRuntime: java.lang.IllegalStateException: planted
 """
 
 
@@ -386,27 +553,47 @@ def self_test() -> int:
         ("an app crash is the app's", APP_CRASH, APP_FATAL, 1),
         ("a named subprocess of the app is the app's", APP_SUBPROCESS_CRASH, APP_FATAL, 1),
         ("system_server is the platform, not us", PLATFORM_CRASH, PLATFORM_FATAL, 1),
+        ("com.android.systemui is the platform too", SYSTEMUI_CRASH, PLATFORM_FATAL, 1),
         ("Gmail crashing is not ours and does not fail", GMAIL_CRASH, EXTERNAL_FATAL, 0),
         ("a package that merely starts the same is not ours", LOOKALIKE_CRASH, EXTERNAL_FATAL, 0),
         (
-            "an unknown pid the event log resolves to US is ours",
-            UNKNOWN_PID_RESOLVING_TO_APP,
+            "a start BEFORE the crash names it",
+            START_BEFORE_RESOLVING_TO_APP,
             APP_FATAL,
             1,
         ),
         (
-            "an unknown pid the event log resolves to somebody else is theirs",
-            UNKNOWN_PID_RESOLVING_TO_EXTERNAL,
+            "am_crash a moment after the dump is the same crash",
+            AM_CRASH_JUST_AFTER,
             EXTERNAL_FATAL,
             0,
         ),
         (
-            "an unknown pid the event log resolves to the platform is the platform's",
-            UNKNOWN_PID_RESOLVING_TO_PLATFORM,
-            PLATFORM_FATAL,
+            "am_crash a minute later is a different event and names nothing",
+            AM_CRASH_FAR_LATER,
+            UNRESOLVED_FATAL,
+            1,
+        ),
+        (
+            "a pid reused after its owner died names nobody",
+            PID_REUSED_AFTER_DEATH,
+            UNRESOLVED_FATAL,
+            1,
+        ),
+        (
+            "a pid reused BY US before the crash is ours",
+            PID_REUSED_THEN_OURS,
+            APP_FATAL,
+            1,
+        ),
+        (
+            "a start AFTER the crash resolves nothing",
+            START_ONLY_AFTER_CRASH,
+            UNRESOLVED_FATAL,
             1,
         ),
         ("an unresolvable pid fails without being blamed on us", UNRESOLVABLE, UNRESOLVED_FATAL, 1),
+        ("a header with no timestamp or pid resolves nothing", NO_TIMESTAMP, UNRESOLVED_FATAL, 1),
         ("a clean log is clean", "", None, 0),
     ]
 
@@ -440,6 +627,7 @@ def self_test() -> int:
         ("Gmail", GMAIL_CRASH),
         ("system_server", PLATFORM_CRASH),
         ("an unresolvable block", UNRESOLVABLE),
+        ("a pid reused after a death", PID_REUSED_AFTER_DEATH),
     ):
         sink = _Sink()
         report(parse(fixture.splitlines()), out=sink)
@@ -468,6 +656,32 @@ def self_test() -> int:
         "not as our defect"
     )
     if not correct:
+        problems += 1
+
+    # THE PLATFORM NAMES MUST BE THE ONES THE PLATFORM ACTUALLY WRITES.
+    #
+    # Checked as an equality against a literal, not by a shape heuristic. A
+    # first attempt flagged anything without a dot as a suspected alias and
+    # reported zygote and zygote64 - which are the real, whole process names
+    # the platform writes, single token by its own choice, exactly as
+    # system_server is. The heuristic was wrong, not the list.
+    #
+    # An equality check instead means adding a name is a deliberate edit
+    # here, reviewed against what appears in a real logcat, rather than
+    # something a pattern lets through.
+    expected = {
+        "system_server",
+        "zygote",
+        "zygote64",
+        "com.android.systemui",
+        "com.android.phone",
+    }
+    matches = set(PLATFORM_PROCESSES) == expected
+    print(
+        f"  [{'OK ' if matches else 'BAD'}] the platform list is exactly the reviewed set of "
+        f"real process names{'' if matches else f' - it is {sorted(PLATFORM_PROCESSES)}'}"
+    )
+    if not matches:
         problems += 1
 
     print(f"  problems: {problems}")
