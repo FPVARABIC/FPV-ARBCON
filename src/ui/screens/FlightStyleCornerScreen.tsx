@@ -29,6 +29,7 @@ import React from 'react';
 import type {NativeStackScreenProps} from '@react-navigation/native-stack';
 import {
   Image,
+  PixelRatio,
   ScrollView,
   StyleSheet,
   Text,
@@ -62,6 +63,44 @@ const DECISION_LABEL: Readonly<Record<GuideDecisionKind, string>> = {
   NOT_APPLICABLE: 'لا ينطبق',
 };
 
+/**
+ * The step badge at the system's DEFAULT text size. A floor, not a fixed
+ * size - see [stepBadgeSize].
+ */
+const STEP_BADGE_BASE_SIZE = 26;
+
+/**
+ * HOW BIG THE STEP BADGE HAS TO BE AT THIS TEXT SIZE.
+ *
+ * The badge was a fixed 26x26 circle wrapped around a typography.label
+ * that grows with the operator's text-size setting, so at a large setting
+ * the numeral was drawn taller than the box and its bottom was cut off
+ * with nothing reporting it. Run 34653241507 measured every one of the six
+ * steps on API 34 at font scale 2.0 on a 320px display:
+ *
+ *   FlightStyleCorner@2.0: "1" needs 36px and has 26px
+ *   ... "2" ... "3" ... "4" ... "5" ... "6", all 36 against 26
+ *
+ * This is the same defect FirmwareFlasherSimpleScreen had, in a second
+ * screen, and it is repaired the same way: the box grows with the text
+ * rather than the text being made to fit the box. Shrinking the numeral,
+ * pinning allowFontScaling to false, capping maxFontSizeMultiplier, adding
+ * an ellipsis or hiding the number would each silence the measurement by
+ * making the screen worse for the operator who asked for larger text.
+ *
+ * minWidth/minHeight rather than width/height, so a wider glyph still gets
+ * the room it needs; borderRadius follows the size so the shape stays a
+ * circle. At the default scale this computes exactly 26 and the badge is
+ * pixel-identical to before.
+ *
+ * PixelRatio.getFontScale() is read during render, not once at module
+ * load, so a setting the operator changes while the app is installed is
+ * picked up the next time the screen is drawn.
+ */
+function stepBadgeSize(): number {
+  return Math.ceil(STEP_BADGE_BASE_SIZE * Math.max(1, PixelRatio.getFontScale()));
+}
+
 function StepBlock({
   corner,
   step,
@@ -70,10 +109,15 @@ function StepBlock({
   readonly step: GuideStep;
 }): React.JSX.Element {
   const image = GUIDE_STEP_IMAGES[`${corner.id}/${step.n}`];
+  const badge = stepBadgeSize();
   return (
     <View style={styles.step} testID={`guide-step-${corner.id}-${step.n}`}>
       <View style={styles.stepHead}>
-        <View style={styles.stepBadge}>
+        <View
+          style={[
+            styles.stepBadge,
+            {minWidth: badge, minHeight: badge, borderRadius: badge / 2},
+          ]}>
           <Text style={styles.stepBadgeText}>{step.n}</Text>
         </View>
         <Text style={styles.stepTitle}>{step.titleAr}</Text>
@@ -359,10 +403,11 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   stepHead: {flexDirection: 'row', alignItems: 'center', gap: spacing.sm},
+  // The circle, the centring and the colour live here; the three
+  // dimensions come per render from stepBadgeSize() - see its note. At the
+  // default text size it computes 26, so this badge looks exactly as it
+  // did.
   stepBadge: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
     backgroundColor: colors.accentStrong,
     alignItems: 'center',
     justifyContent: 'center',
