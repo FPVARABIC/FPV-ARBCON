@@ -137,10 +137,34 @@ class InputInjectionControlTest {
     val centreText: String get() = "(${centre[0]}, ${centre[1]})"
     val originText: String get() = "(${rootOrigin[0]}, ${rootOrigin[1]})"
 
+    /**
+     * ONE LINE, SHORT ENOUGH NOT TO NEED CUTTING.
+     *
+     * display and rootOrigin are the same on every probe in a run, so they
+     * are printed ONCE by [printGeometryHeader] instead of on every line.
+     * That is not cosmetic: the evidence extract used to truncate these
+     * lines at 220 characters and the value of `landed` fell off the end of
+     * three of them in run 34653241507. A field that is sometimes present
+     * is worse than a field that is always somewhere else.
+     */
     override fun toString(): String =
       "\"$testId\" centre=$centreText rect=$targetRect visible=${visibleRect ?: "<none>"} " +
-        "display=$displayRect rootOrigin=$originText " +
         "deepestViewThere=$hitDescription landed=$landed"
+  }
+
+  /**
+   * The fields that are identical for every probe, printed once so the
+   * per-probe lines stay short. Both are MEASURED - see CoordinateSpaceTest
+   * for why the root origin is never assumed to be (0, 0).
+   */
+  private fun printGeometryHeader(scenario: ActivityScenario<MainActivity>, case: String) {
+    val (display, origin) = scenario.readMain { activity ->
+      val root = activity.window.decorView
+      screenRectOf(root) to rootOriginOf(root)
+    }
+    println(
+      "geometry header: $case display=$display rootOrigin=(${origin[0]}, ${origin[1]})",
+    )
   }
 
   /**
@@ -381,6 +405,7 @@ class InputInjectionControlTest {
       scenario.moveToState(Lifecycle.State.RESUMED)
       scenario.awaitTag(START)
       for (probe in PROBES) scenario.awaitTag(probe)
+      printGeometryHeader(scenario, "scroll-and-press")
 
       for (probe in PROBES) {
         val centre = scenario.centreOfTag(probe)
@@ -479,6 +504,7 @@ class InputInjectionControlTest {
       scenario.moveToState(Lifecycle.State.RESUMED)
       scenario.awaitTag(START)
       for (probe in PROBES) scenario.awaitTag(probe)
+      printGeometryHeader(scenario, "no-scroll")
 
       var bit = 0
       for (probe in PROBES) {

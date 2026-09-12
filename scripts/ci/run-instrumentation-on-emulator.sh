@@ -248,11 +248,25 @@ print(f"started={len(started)} finished={len(finished)} never finished={len(hang
 for name in hanging:
     print(f"  NEVER FINISHED: {name}")
 PY
+  # NOT TRUNCATED. This carried `cut -c1-240`, and in run 34649197028 the
+  # one line that mattered arrived as
+  #   "...and getGlobalVisibleRect ret"
+  # - the assertion message cut off mid-word, taking with it the fact a
+  # reader needed. An assertion message is the whole point of a failing
+  # case; the frames after it are the cheap part.
   echo "=== cases the runner itself reported as FAILED, with the first frames ==="
   grep -a -A 12 "TestRunner:.*failed:" "$DIAG/logcat.txt" 2>/dev/null \
-    | sed 's/.*TestRunner:/TestRunner:/' | cut -c1-240 | head -120 || true
-  echo "=== uncaught exceptions, with frames ==="
-  grep -a -A 12 -m 1 "FATAL EXCEPTION" "$DIAG/logcat.txt" 2>/dev/null | cut -c1-300 || true
+    | sed 's/.*TestRunner:/TestRunner:/' | head -140 || true
+  # FATAL blocks are NOT extracted here any more.
+  #
+  # There used to be a `grep -m 1 "FATAL EXCEPTION" | cut -c1-300` in this
+  # spot: one block, twelve frames, truncated, and attributed to nobody.
+  # classify-fatal-blocks.py now reads every block, resolves its process
+  # chronologically and prints the whole thing under a verdict, into the
+  # digest. Two extracts of the same crashes with different rules invites
+  # the reader to trust whichever they happen to see first, and the
+  # truncated unattributed one is the wrong one.
+  echo "=== uncaught exceptions: see the FATAL attribution section of the digest ==="
   echo "=== input injection rejected (InputDispatcher / InputManager) ==="
   grep -aiE "not directed at a window owned|Targeted input event|Permission denied.*inject|injectInputEvent.*(fail|denied)|Dropping .*(injected|untrusted)" \
     "$DIAG/logcat.txt" 2>/dev/null | head -40 || true
@@ -284,9 +298,18 @@ echo "input/ANR extract: $(wc -l < "$DIAG/input-and-anr.txt" 2>/dev/null || echo
 # time. The same geometry is now printed by the controls in
 # InputInjectionControlTest that ASSERT it, so these lines are a record of
 # a test that would have failed had the numbers been wrong.
-grep -aE "scroll-and-press control:|no-scroll control:|scrolled control:|sensitivity control|ancestor control:|clip control:|destination control:|positive control:|occlusion control:|mutation control:" \
+# NOT TRUNCATED. This used to pass through `cut -c1-220`, and in run
+# 34653241507 the value of `landed` fell off the end of three of these
+# lines - the one field a reader goes to that block for. A measurement that
+# arrives with its last field missing is not a measurement.
+#
+# The lines are short enough not to need cutting because the fields that
+# are the same on every probe - the display rectangle and the root origin -
+# are printed ONCE on a "geometry header" line instead of on all of them.
+# See Probe.toString in InputInjectionControlTest.
+grep -aE "geometry header:|scroll-and-press control:|no-scroll control:|scrolled control:|sensitivity control|ancestor control:|clip control:|destination control:|positive control:|occlusion control:|mutation control:|truncation census:|truncation allowed:|truncation control:|back control:" \
   "$DIAG/logcat.txt" 2>/dev/null \
-  | sed 's/.*System\.out: //' | cut -c1-220 | head -60 > "$DIAG/tap-geometry.txt" 2>/dev/null || true
+  | sed 's/.*System\.out: //' | head -80 > "$DIAG/tap-geometry.txt" 2>/dev/null || true
 echo "tap geometry: $(wc -l < "$DIAG/tap-geometry.txt" 2>/dev/null || echo 0) lines"
 
 # The right-to-left repair is about the FIRST launch after an install,
