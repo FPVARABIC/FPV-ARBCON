@@ -12,6 +12,7 @@ import com.facebook.react.modules.i18nmanager.I18nUtil
 import org.junit.After
 import org.junit.Before
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -123,6 +124,39 @@ class DestinationInteractionTest {
       "MODES", "FAILSAFE", "POWER", "OSD", "VTX", "LED", "SENSORS", "BLACKBOX",
       "PRESETS", "CLI",
     )
+
+    /**
+     * CONTROLS WHERE AN ELLIPSIS IS A DECISION SOMEBODY MADE, NOT A
+     * CONTAINER THAT CAME OUT TOO SMALL.
+     *
+     * testID -> why it is allowed and how the full text still reaches the
+     * operator.
+     *
+     * DELIBERATELY EMPTY. Everything the measurement finds fails until a
+     * person puts it here, and nothing was pre-approved to make the first
+     * run green - that would be deciding, sight unseen, that every
+     * truncation the product happens to contain is intentional. The list
+     * the next run prints is the list to argue about.
+     *
+     * TWO CONDITIONS FOR AN ENTRY, BOTH ON THE PERSON ADDING IT:
+     *
+     *   1  a reason naming the decision - not "it is fine", but what the
+     *      control is and why shortening it there is right.
+     *   2  the full text demonstrably reachable by an operator who cannot
+     *      see the screen. Since ellipsised text is gone from the visual
+     *      layout, that means the whole string exposed through the
+     *      accessibility semantics of that control, asserted somewhere.
+     *
+     * That second condition is ACCESSIBILITY_SEMANTICS, not TalkBack.
+     * Nothing in this suite enables TalkBack or measures what it
+     * announced, so no entry here may be justified by claiming it did -
+     * only by what the accessibility tree exposes.
+     *
+     * An unnamed control can never appear here: there is no testID to write
+     * down, so there is nothing to exempt. Fix the container or give the
+     * control a name.
+     */
+    val ELLIPSIS_ALLOWED: Map<String, String> = emptyMap()
   }
 
   /**
@@ -579,17 +613,6 @@ class DestinationInteractionTest {
       }
     }
 
-    // WHAT FAILS, AND WHY NOT EVERYTHING.
-    //
-    // Ellipsised text is reported in full but does not fail: the operator
-    // can see an ellipsis and knows the text continues, which is the whole
-    // point of a deliberate numberOfLines. Silently dropped text and text
-    // overflowing its box are invisible to the operator, and those fail.
-    //
-    // Every instance of all three is printed either way, so a deliberate
-    // truncation cannot hide in the count - and if ellipsised text should
-    // fail too, that is one line here and a product decision, not a
-    // measurement problem.
     val byKind = clipped.groupBy { it.kind }
     for (kind in Loss.entries) {
       val found = byKind[kind].orEmpty()
@@ -597,11 +620,27 @@ class DestinationInteractionTest {
       found.forEach { println("  ${it.message}") }
     }
 
-    val invisible = clipped.filter { it.kind != Loss.ELLIPSISED }
+    // EVERY LOSS FAILS UNLESS IT IS DECLARED.
+    //
+    // An earlier version let ELLIPSISED pass on the reasoning that an
+    // ellipsis is visible, so the operator knows the text continues. That
+    // is true of an ellipsis somebody CHOSE. It is not true of one the
+    // line breaker produced because a container was too small, and the
+    // measurement cannot tell those apart - only a person can, per control,
+    // which is what ELLIPSIS_ALLOWED is for. Until a case is declared there
+    // with a reason, it is undeclared truncation and it fails.
+    val undeclared = clipped.filter { !isDeclared(it, ELLIPSIS_ALLOWED) }
+    val declared = clipped.filter { isDeclared(it, ELLIPSIS_ALLOWED) }
+    declared.forEach { println("truncation allowed: ${it.testId} - ${ELLIPSIS_ALLOWED[it.testId]}") }
+
     assertTrue(
-      "text is lost with nothing on screen to say so:\n" +
-        invisible.joinToString("\n") { it.message },
-      invisible.isEmpty(),
+      "text is lost and nothing declares it:\n" +
+        undeclared.joinToString("\n") { it.message } +
+        "\n\nEllipsised text may be allowed one control at a time in ELLIPSIS_ALLOWED, by " +
+        "testID, with a reason and with the full text proved to be exposed to accessibility " +
+        "services. Text with no testID cannot be allowed at all - there is nothing to name it " +
+        "by - and silently dropped or overflowing text is never allowed.",
+      undeclared.isEmpty(),
     )
   }
 
@@ -636,7 +675,12 @@ class DestinationInteractionTest {
     OVERFLOWS_BOX,
   }
 
-  private data class Complaint(val kind: Loss, val message: String)
+  /**
+   * @param testId the control's own testID, or null when it has none. Only
+   *   a named control can ever be declared in [ELLIPSIS_ALLOWED]: an
+   *   unnamed one cannot be written down, so it cannot be exempted.
+   */
+  private data class Complaint(val kind: Loss, val testId: String?, val message: String)
 
   /**
    * WHAT A TEXT VIEW IS ACTUALLY SHOWING, ASKED SEMANTICALLY.
@@ -671,13 +715,22 @@ class DestinationInteractionTest {
     val full = view.text?.toString() ?: return null
     if (full.isBlank()) return null
     val shown = full.take(60)
+    // The control's own testID if it has one, else the nearest named
+    // ancestor's - a Pressable's inner Text carries no testID of its own,
+    // and naming its parent is the only way an allowlist entry can point
+    // at anything.
+    val testId = generateSequence(view as View) { it.parent as? View }
+      .mapNotNull { it.tag as? String }
+      .firstOrNull()
 
     for (line in 0 until layout.lineCount) {
       val dropped = layout.getEllipsisCount(line)
       if (dropped > 0) {
         return Complaint(
           Loss.ELLIPSISED,
-          "$destination: \"$shown\" line ${line + 1} of ${layout.lineCount} is ellipsised, " +
+          testId,
+          "$destination: \"$shown\"${testId?.let { " [$it]" } ?: " [no testID]"} line " +
+            "${line + 1} of ${layout.lineCount} is ellipsised, " +
             "$dropped character(s) dropped (maxLines=${view.maxLines})",
         )
       }
@@ -691,6 +744,7 @@ class DestinationInteractionTest {
       if (drawnTo < contentLength) {
         return Complaint(
           Loss.DROPPED_SILENTLY,
+          testId,
           "$destination: \"$shown\" is drawn to character $drawnTo of $contentLength after " +
             "${layout.lineCount} line(s) with NO ellipsis - ${contentLength - drawnTo} " +
             "character(s) appear nowhere (maxLines=${view.maxLines})",
@@ -703,6 +757,7 @@ class DestinationInteractionTest {
     if (layout.height <= available) return null
     return Complaint(
       Loss.OVERFLOWS_BOX,
+      testId,
       "$destination: \"$shown\" needs ${layout.height}px and has ${available}px",
     )
   }
@@ -736,6 +791,79 @@ class DestinationInteractionTest {
    * complaints go away is a number chosen to produce a colour, and the
    * next real defect would have to be larger than whatever was picked.
    */
+
+  /**
+   * Whether this loss has been declared, and is therefore allowed.
+   *
+   * Only an ELLIPSISED loss can be, only when the control has a testID, and
+   * only when that testID is written in [allowed]. Silently dropped text
+   * and text overflowing its box are never declarable: there is nothing on
+   * screen for an operator to notice, so there is no decision to record.
+   *
+   * A separate function rather than an inline filter so the policy can be
+   * driven against a synthetic allowlist by
+   * theEllipsisAllowlistOnlyExemptsNamedListedControls while the real one
+   * stays empty.
+   */
+  private fun isDeclared(complaint: Complaint, allowed: Map<String, String>): Boolean =
+    complaint.kind == Loss.ELLIPSISED &&
+      complaint.testId != null &&
+      complaint.testId in allowed
+
+  /**
+   * THE ALLOWLIST IS A GATE, SO IT IS TESTED LIKE ONE.
+   *
+   * Driven against a synthetic list, because the real ELLIPSIS_ALLOWED is
+   * empty on purpose and must stay that way until a person fills it. Four
+   * things have to hold, and the last two are the ones an allowlist
+   * normally gets wrong:
+   *
+   *   a listed, named, ellipsised control    is declared
+   *   an unlisted one                        is not
+   *   an UNNAMED ellipsised control          is not, whatever is listed -
+   *                                          there is no testID to write
+   *                                          down, so there is nothing to
+   *                                          exempt
+   *   a silent drop or an overflow           is not, even when its testID
+   *                                          appears in the list - an
+   *                                          entry must not become a
+   *                                          licence for every kind of
+   *                                          loss on that control
+   */
+  @Test
+  fun theEllipsisAllowlistOnlyExemptsNamedListedControls() {
+    val allowed = mapOf("declared-control" to "shortened on purpose; full text in semantics")
+
+    assertTrue(
+      "a listed, named, ellipsised control was not treated as declared",
+      isDeclared(Complaint(Loss.ELLIPSISED, "declared-control", "planted"), allowed),
+    )
+    assertFalse(
+      "an ellipsised control that is NOT listed was treated as declared",
+      isDeclared(Complaint(Loss.ELLIPSISED, "undeclared-control", "planted"), allowed),
+    )
+    assertFalse(
+      "an UNNAMED ellipsised control was treated as declared. It has no testID, so no entry " +
+        "can point at it and none may exempt it.",
+      isDeclared(Complaint(Loss.ELLIPSISED, null, "planted"), allowed),
+    )
+    for (kind in listOf(Loss.DROPPED_SILENTLY, Loss.OVERFLOWS_BOX)) {
+      assertFalse(
+        "a $kind loss on a control whose testID is in the allowlist was treated as declared. " +
+          "An entry declares an ELLIPSIS, not every way that control might lose text.",
+        isDeclared(Complaint(kind, "declared-control", "planted"), allowed),
+      )
+    }
+
+    assertTrue(
+      "ELLIPSIS_ALLOWED is not empty. It starts empty on purpose: an entry added before the " +
+        "measurement has run is a decision taken sight unseen that whatever the product happens " +
+        "to truncate was intended. If a case genuinely belongs there, add it with its reason " +
+        "and delete this assertion in the same commit, so the two are argued about together. " +
+        "It currently holds: ${ELLIPSIS_ALLOWED.keys}",
+      ELLIPSIS_ALLOWED.isEmpty(),
+    )
+  }
 
   /**
    * A TextView measured and laid out exactly as the detector will see it.
