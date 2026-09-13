@@ -307,9 +307,21 @@ echo "input/ANR extract: $(wc -l < "$DIAG/input-and-anr.txt" 2>/dev/null || echo
 # are the same on every probe - the display rectangle and the root origin -
 # are printed ONCE on a "geometry header" line instead of on all of them.
 # See Probe.toString in InputInjectionControlTest.
-grep -aE "geometry header:|scroll-and-press control:|no-scroll control:|scrolled control:|sensitivity control|ancestor control:|clip control:|destination control:|positive control:|occlusion control:|mutation control:|truncation census:|truncation allowed:|truncation control:|back control:" \
+#
+# "truncation instance:" is in this list because it was missing from it.
+# Run 34723764981 printed `truncation census: ELLIPSISED = 2` here and then
+# printed the two identities with no marker at all, so which controls lose
+# text - the only part a reader can act on - reached the digest and not
+# this file. A census with no instances is a number, not evidence.
+#
+# The line cap is 200 rather than 80 for the same reason. It is still a
+# cap, and a cut is detectable rather than silent: every census line
+# carries its own count, so `truncation census: X = 4` with three
+# `truncation instance: X` lines under it says plainly that this file was
+# cut.
+grep -aE "geometry header:|scroll-and-press control:|no-scroll control:|scrolled control:|sensitivity control|ancestor control:|clip control:|destination control:|positive control:|occlusion control:|mutation control:|truncation census:|truncation instance:|truncation allowed:|truncation control:|back control:" \
   "$DIAG/logcat.txt" 2>/dev/null \
-  | sed 's/.*System\.out: //' | head -80 > "$DIAG/tap-geometry.txt" 2>/dev/null || true
+  | sed 's/.*System\.out: //' | head -200 > "$DIAG/tap-geometry.txt" 2>/dev/null || true
 echo "tap geometry: $(wc -l < "$DIAG/tap-geometry.txt" 2>/dev/null || echo 0) lines"
 
 # The right-to-left repair is about the FIRST launch after an install,

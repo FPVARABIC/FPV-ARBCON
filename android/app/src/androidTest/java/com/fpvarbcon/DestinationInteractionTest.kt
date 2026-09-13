@@ -620,7 +620,13 @@ class DestinationInteractionTest {
     for (kind in Loss.entries) {
       val found = byKind[kind].orEmpty()
       println("truncation census: $kind = ${found.size}")
-      found.forEach { println("  ${it.message}") }
+      // MARKED, because an unmarked line is not evidence. These used to be
+      // printed with two leading spaces and no marker, and the extraction
+      // in run-instrumentation-on-emulator.sh greps for markers - so run
+      // 34723764981 published "ELLIPSISED = 2" into tap-geometry.txt and
+      // left both identities out of it. The count was the only thing a
+      // reader could see, and the count is not the finding.
+      found.forEach { println("truncation instance: $kind ${it.message}") }
     }
 
     // EVERY LOSS FAILS UNLESS IT IS DECLARED.
@@ -772,6 +778,11 @@ class DestinationInteractionTest {
     val full = content.toString()
     if (full.isBlank()) return null
     val shown = full.take(60)
+    // EVERY complaint names its control, not only the ellipsis one. The
+    // overflow message used to carry the text and the two pixel counts and
+    // nothing to find the control by, which is the one thing a reader needs
+    // to go and look at it.
+    val named = testId?.let { " [$it]" } ?: " [no testID]"
 
     for (line in 0 until layout.lineCount) {
       val dropped = layout.getEllipsisCount(line)
@@ -779,9 +790,8 @@ class DestinationInteractionTest {
         return Complaint(
           Loss.ELLIPSISED,
           testId,
-          "$destination: \"$shown\"${testId?.let { " [$it]" } ?: " [no testID]"} line " +
-            "${line + 1} of ${layout.lineCount} is ellipsised, " +
-            "$dropped character(s) dropped (maxLines=$maxLines)",
+          "$destination: \"$shown\"$named line ${line + 1} of ${layout.lineCount} is " +
+            "ellipsised, $dropped character(s) dropped (maxLines=$maxLines)",
         )
       }
     }
@@ -795,8 +805,8 @@ class DestinationInteractionTest {
         return Complaint(
           Loss.DROPPED_SILENTLY,
           testId,
-          "$destination: \"$shown\" is drawn to character $drawnTo of $contentLength after " +
-            "${layout.lineCount} line(s) with NO ellipsis - ${contentLength - drawnTo} " +
+          "$destination: \"$shown\"$named is drawn to character $drawnTo of $contentLength " +
+            "after ${layout.lineCount} line(s) with NO ellipsis - ${contentLength - drawnTo} " +
             "character(s) appear nowhere (maxLines=$maxLines)",
         )
       }
@@ -807,7 +817,7 @@ class DestinationInteractionTest {
     return Complaint(
       Loss.OVERFLOWS_BOX,
       testId,
-      "$destination: \"$shown\" needs ${layout.height}px and has ${availableHeightPx}px",
+      "$destination: \"$shown\"$named needs ${layout.height}px and has ${availableHeightPx}px",
     )
   }
 
