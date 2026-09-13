@@ -1123,6 +1123,25 @@ jobs:
         working-directory: android
         run: ./gradlew :app:testDebugUnitTest
 
+      # WHETHER UsbDeviceConnection CAN BE CONSTRUCTED AT ALL, MEASURED.
+      #
+      # UsbSerialSession.kt is at 0 of 33 covered lines because no JVM test
+      # constructs the platform connection it holds. Every repair for that
+      # rests on the claim that the class has no accessible constructor - a
+      # claim that has only ever been written in a comment. This runs javap
+      # against the real android.jar, lists every jar on disk that carries
+      # the class, and puts the claim to javac four times INCLUDING a
+      # positive control that must compile, so a rejection cannot be a
+      # broken classpath wearing the costume of a platform restriction.
+      #
+      # It runs after the unit tests so that any mockable android jar AGP
+      # generates for them already exists on disk. It reports and does not
+      # gate: the only things that make it fail are being unable to measure
+      # at all, which must not read as a clean probe.
+      - name: USB connection seam probe (evidence for the coverage repair)
+        if: ${{ format('{0}', inputs.diagnostic_js_only) != 'true' }}
+        run: bash scripts/ci/probe-usb-connection-seam.sh usb-connection-seam-probe.txt
+
       # HOW MUCH OF THE NATIVE CODE THOSE TESTS ACTUALLY RAN.
       #
       # "The Android tests pass" says nothing about coverage, and a
@@ -1578,5 +1597,15 @@ jobs:
             cat native-coverage-verdict.txt
           else
             echo "no verdict file - the coverage ledger step did not reach the point of writing one"
+          fi
+          echo "::endgroup::"
+          # Printed here as well as where it ran: a step in the middle of a
+          # long job is unreachable from a log tail, and this probe exists to
+          # be read.
+          echo "::group::USB connection seam probe"
+          if [ -s usb-connection-seam-probe.txt ]; then
+            cat usb-connection-seam-probe.txt
+          else
+            echo "no probe output - the seam probe step did not run or wrote nothing"
           fi
           echo "::endgroup::"
