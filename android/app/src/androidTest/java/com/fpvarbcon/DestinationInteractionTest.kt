@@ -2,6 +2,9 @@ package com.fpvarbcon
 
 import android.app.Activity
 import android.graphics.Rect
+import android.text.Layout
+import android.text.StaticLayout
+import android.text.TextPaint
 import android.text.TextUtils
 import android.view.View
 import android.widget.TextView
@@ -699,22 +702,36 @@ class DestinationInteractionTest {
    *
    *   1  getEllipsisCount(line) - the platform's own admission that it had
    *      to drop characters from that line.
-   *   2  getLineEnd(last) against the text's own length - with a maxLines,
-   *      Layout simply stops, and the remainder is drawn nowhere. Trailing
-   *      whitespace is discounted, so a string ending in a newline is not
-   *      reported as a character short.
+   *   2  getLineEnd(last) against the text's own length - a layout that
+   *      stops before the end of its text draws the remainder nowhere.
+   *      Trailing whitespace is discounted, so a string ending in a newline
+   *      is not reported as a character short.
    *   3  the vertical check, unchanged: every character laid out, into a
    *      box too short for them.
    *
    * The kinds are separated because they are not equally bad, and the
    * caller decides which fail. Ellipsised text is visibly ellipsised;
    * silently dropped text is invisible loss.
+   *
+   * WHAT CHECK 2 DOES NOT CATCH, MEASURED.
+   *
+   * This comment said "with a maxLines, Layout simply stops". Run
+   * 34723764981 on API 34 proves that is wrong for a TextView: a view with
+   * setMaxLines(1) and NO ellipsize was measured EXACTLY 40px tall and its
+   * layout came back 109px, which is every line laid out. Because the
+   * layout runs to the end of the text, getLineEnd(last) equals the text's
+   * length, check 2 stays silent, and the clipping - which happens at draw
+   * time, not at layout time - is caught by check 3 instead.
+   *
+   * So check 2 is not the maxLines check. It fires for a layout that
+   * really does stop early, whatever made it stop. React Native's
+   * numberOfLines sets an ellipsize as well, so on these screens check 1
+   * gets there first; check 2 is the one that would catch a layout built
+   * without one.
    */
   private fun truncationComplaint(destination: String, view: TextView): Complaint? {
     val layout = view.layout ?: return null
-    val full = view.text?.toString() ?: return null
-    if (full.isBlank()) return null
-    val shown = full.take(60)
+    val content = view.text ?: return null
     // The control's own testID if it has one, else the nearest named
     // ancestor's - a Pressable's inner Text carries no testID of its own,
     // and naming its parent is the only way an allowlist entry can point
@@ -722,6 +739,39 @@ class DestinationInteractionTest {
     val testId = generateSequence(view as View) { it.parent as? View }
       .mapNotNull { it.tag as? String }
       .firstOrNull()
+    return truncationOf(
+      destination = destination,
+      testId = testId,
+      layout = layout,
+      content = content,
+      maxLines = view.maxLines,
+      availableHeightPx = view.height - view.paddingTop - view.paddingBottom,
+    )
+  }
+
+  /**
+   * THE DETECTOR ITSELF, OVER A LAYOUT AND NOTHING ELSE.
+   *
+   * Split out of [truncationComplaint] so that a control can hand it a
+   * layout it built on purpose. Everything it decides comes from the six
+   * parameters, so a case that a real TextView will not produce on this
+   * platform - see check 2 above - can still be driven through the real
+   * code rather than reasoned about in a comment.
+   *
+   * [availableHeightPx] at or below zero means the view was never given a
+   * height, and nothing is judged.
+   */
+  private fun truncationOf(
+    destination: String,
+    testId: String?,
+    layout: Layout,
+    content: CharSequence,
+    maxLines: Int,
+    availableHeightPx: Int,
+  ): Complaint? {
+    val full = content.toString()
+    if (full.isBlank()) return null
+    val shown = full.take(60)
 
     for (line in 0 until layout.lineCount) {
       val dropped = layout.getEllipsisCount(line)
@@ -731,7 +781,7 @@ class DestinationInteractionTest {
           testId,
           "$destination: \"$shown\"${testId?.let { " [$it]" } ?: " [no testID]"} line " +
             "${line + 1} of ${layout.lineCount} is ellipsised, " +
-            "$dropped character(s) dropped (maxLines=${view.maxLines})",
+            "$dropped character(s) dropped (maxLines=$maxLines)",
         )
       }
     }
@@ -747,18 +797,17 @@ class DestinationInteractionTest {
           testId,
           "$destination: \"$shown\" is drawn to character $drawnTo of $contentLength after " +
             "${layout.lineCount} line(s) with NO ellipsis - ${contentLength - drawnTo} " +
-            "character(s) appear nowhere (maxLines=${view.maxLines})",
+            "character(s) appear nowhere (maxLines=$maxLines)",
         )
       }
     }
 
-    val available = view.height - view.paddingTop - view.paddingBottom
-    if (available <= 0) return null
-    if (layout.height <= available) return null
+    if (availableHeightPx <= 0) return null
+    if (layout.height <= availableHeightPx) return null
     return Complaint(
       Loss.OVERFLOWS_BOX,
       testId,
-      "$destination: \"$shown\" needs ${layout.height}px and has ${available}px",
+      "$destination: \"$shown\" needs ${layout.height}px and has ${availableHeightPx}px",
     )
   }
 
@@ -895,15 +944,52 @@ class DestinationInteractionTest {
   }
 
   /**
+   * A LAYOUT THAT REALLY DOES STOP BEFORE ITS TEXT ENDS.
+   *
+   * StaticLayout.Builder.obtain(source, start, end, ...) lays out
+   * [drawnCharacters] characters of [content] and no more - that is the
+   * documented meaning of its range, not a behaviour being relied on - so
+   * getLineEnd(lastLine) is [drawnCharacters] while the text it came from
+   * is longer. No ellipsize is set, so getEllipsisCount is zero on every
+   * line. That is exactly the state check 2 exists to name, and it is the
+   * only way to reach it here: the TextView route that was expected to
+   * produce it measurably does not on API 34 (see truncationComplaint).
+   */
+  private fun layoutStoppingBefore(
+    content: String,
+    drawnCharacters: Int,
+    widthPx: Int,
+  ): Layout {
+    val paint = TextPaint().also { it.textSize = 20f }
+    return StaticLayout.Builder
+      .obtain(content, 0, drawnCharacters, paint, widthPx)
+      .build()
+  }
+
+  /**
    * THE DETECTOR IS A SUBJECT, AND SO IS ITS SILENCE.
    *
-   * Five planted views, all in one case. Three of them lose text by a
-   * different mechanism and the detector must name each; two are fully
-   * drawn and it must say nothing about them. Both halves matter: a
-   * detector that complains about everything is as useless as one that
-   * complains about nothing, and the false-positive half is the half that
-   * was missing when a width comparison was briefly added and produced ten
-   * complaints about correctly wrapped Arabic.
+   * Seven planted cases, all in one test. Four of them lose text and the
+   * detector must name each; three are fully drawn and it must say nothing
+   * about them. Both halves matter: a detector that complains about
+   * everything is as useless as one that complains about nothing, and the
+   * false-positive half is the half that was missing when a width
+   * comparison was briefly added and produced ten complaints about
+   * correctly wrapped Arabic.
+   *
+   * WHAT RUN 34723764981 CORRECTED HERE.
+   *
+   * "maxLines 1 with no ellipsis" was asserted to be DROPPED_SILENTLY on
+   * the reasoning that a line limit makes Layout stop. On API 34 it came
+   * back OVERFLOWS_BOX, with the layout needing 109px inside the 40px the
+   * view was measured at: the line limit did not stop the layout, so every
+   * character was laid out and the cut happens when it is drawn. The
+   * expectation was wrong, not the detector - so the expectation is
+   * corrected to what the platform does, and the case that the old one was
+   * meant to cover is driven through [truncationOf] with a layout that
+   * genuinely stops early. DROPPED_SILENTLY had no control at all until
+   * that was added, and the assertion at the end of this test now says so
+   * out loud: every kind must be exercised by something.
    *
    * Nothing here is left failing. The planted cuts are asserted to have
    * produced a complaint, which is a passing assertion about a detector
@@ -913,31 +999,43 @@ class DestinationInteractionTest {
   fun theTruncationDetectorNamesEveryWayTextIsLostAndStaysSilentOtherwise() {
     val long =
       "سطر طويل جدًا لا يمكن أن يتسع في مربع بارتفاع سطر واحد فقط أبدًا ومعه كلمات أخرى تطيله"
+    val stopsEarly = layoutStoppingBefore(long, long.length - 12, 200)
     ActivityScenario.launch(MainActivity::class.java).use { scenario ->
       scenario.awaitTag(START)
       val results = scenario.readMain { activity ->
         linkedMapOf(
-          "1 ellipsised at maxLines 1" to truncationComplaint(
+          "ellipsised at maxLines 1" to truncationComplaint(
             "control",
             laidOut(activity, long, 200, 40, lines = 1, truncate = TextUtils.TruncateAt.END),
           ),
-          "2 dropped by maxLines with no ellipsis" to truncationComplaint(
+          "maxLines 1 with no ellipsis" to truncationComplaint(
             "control",
             laidOut(activity, long, 200, 40, lines = 1),
           ),
-          "3 wrapped inside a fixed height" to truncationComplaint(
+          "wrapped inside a fixed height" to truncationComplaint(
             "control",
             laidOut(activity, long, 200, 20),
           ),
-          "4 full multi-line Arabic" to truncationComplaint(
+          // The height is deliberately far larger than anything this text
+          // can need, so the overflow check CANNOT fire and the complaint
+          // can only have come from the silent-drop check.
+          "layout stops before the text ends" to truncationOf(
+            destination = "control",
+            testId = null,
+            layout = stopsEarly,
+            content = long,
+            maxLines = 1,
+            availableHeightPx = 10_000,
+          ),
+          "full multi-line Arabic" to truncationComplaint(
             "control",
             laidOut(activity, long, 200),
           ),
-          "5a fully drawn, ends in a newline" to truncationComplaint(
+          "fully drawn, ends in a newline" to truncationComplaint(
             "control",
             laidOut(activity, "$long\n", 200),
           ),
-          "5b fully drawn, ends in spaces" to truncationComplaint(
+          "fully drawn, ends in spaces" to truncationComplaint(
             "control",
             laidOut(activity, "$long   ", 200),
           ),
@@ -946,11 +1044,17 @@ class DestinationInteractionTest {
       results.forEach { (name, complaint) ->
         println("truncation control: $name -> ${complaint?.let { "${it.kind}: ${it.message}" } ?: "<silent>"}")
       }
+      println(
+        "truncation control: the early-stopping layout has ${stopsEarly.lineCount} line(s), " +
+          "ends at character ${stopsEarly.getLineEnd(stopsEarly.lineCount - 1)} of " +
+          "${long.length}, is ${stopsEarly.height}px tall",
+      )
 
       for (name in listOf(
-        "1 ellipsised at maxLines 1",
-        "2 dropped by maxLines with no ellipsis",
-        "3 wrapped inside a fixed height",
+        "ellipsised at maxLines 1",
+        "maxLines 1 with no ellipsis",
+        "wrapped inside a fixed height",
+        "layout stops before the text ends",
       )) {
         assertNotNull(
           "the detector said nothing about planted text that really is cut: $name. Every clean " +
@@ -960,9 +1064,9 @@ class DestinationInteractionTest {
       }
 
       for (name in listOf(
-        "4 full multi-line Arabic",
-        "5a fully drawn, ends in a newline",
-        "5b fully drawn, ends in spaces",
+        "full multi-line Arabic",
+        "fully drawn, ends in a newline",
+        "fully drawn, ends in spaces",
       )) {
         assertNull(
           "the detector complained about text that is fully drawn: $name -> " +
@@ -972,22 +1076,48 @@ class DestinationInteractionTest {
         )
       }
 
-      // The three cuts must be attributed to DIFFERENT mechanisms, or one
-      // check could be doing all the work while another is dead.
+      // Each cut must be attributed to the mechanism that really produced
+      // it, or one check could be doing all the work while another is dead.
       assertEquals(
         "the ellipsised control was not attributed to the ellipsis check",
         Loss.ELLIPSISED,
-        results["1 ellipsised at maxLines 1"]?.kind,
+        results["ellipsised at maxLines 1"]?.kind,
       )
       assertEquals(
-        "the un-ellipsised maxLines control was not attributed to the silent-drop check",
+        "a layout that stops before the end of its text was not attributed to the silent-drop " +
+          "check. It has ${stopsEarly.lineCount} line(s), ends at character " +
+          "${stopsEarly.getLineEnd(stopsEarly.lineCount - 1)} of ${long.length} and reports " +
+          "${stopsEarly.getEllipsisCount(stopsEarly.lineCount - 1)} ellipsised character(s) on " +
+          "its last line",
         Loss.DROPPED_SILENTLY,
-        results["2 dropped by maxLines with no ellipsis"]?.kind,
+        results["layout stops before the text ends"]?.kind,
       )
       assertEquals(
         "the fixed-height control was not attributed to the overflow check",
         Loss.OVERFLOWS_BOX,
-        results["3 wrapped inside a fixed height"]?.kind,
+        results["wrapped inside a fixed height"]?.kind,
+      )
+      // Measured on API 34, not assumed: a TextView line limit without an
+      // ellipsize lays every line out and clips at draw time, so this is
+      // the overflow check's case too.
+      assertEquals(
+        "a TextView with maxLines and no ellipsize was not attributed to the overflow check. " +
+          "Run 34723764981 measured it laying out every line inside a shorter box; if it now " +
+          "stops the layout instead, the silent-drop check is what should fire and this " +
+          "expectation is the thing to change.",
+        Loss.OVERFLOWS_BOX,
+        results["maxLines 1 with no ellipsis"]?.kind,
+      )
+
+      // NO CHECK MAY BE DEAD. Without this, a kind with no control could
+      // sit unexercised for as long as the real screens happen not to
+      // produce it - which is what happened to DROPPED_SILENTLY.
+      val exercised = results.values.mapNotNull { it?.kind }.toSet()
+      assertEquals(
+        "not every way of losing text is exercised by a control here, so a check could be dead " +
+          "and no result would say so. Unexercised: ${Loss.entries.toSet() - exercised}",
+        Loss.entries.toSet(),
+        exercised,
       )
     }
   }
