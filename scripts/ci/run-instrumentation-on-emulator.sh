@@ -255,8 +255,14 @@ PY
   # reader needed. An assertion message is the whole point of a failing
   # case; the frames after it are the cheap part.
   echo "=== cases the runner itself reported as FAILED, with the first frames ==="
-  grep -a -A 12 "TestRunner:.*failed:" "$DIAG/logcat.txt" 2>/dev/null \
-    | sed 's/.*TestRunner:/TestRunner:/' | head -140 || true
+  # -A 40, not 12. In run 34780928743 the twelve lines ran out in the middle
+  # of bringTagOnScreen's ancestor chain: the block ended at SafeAreaProvider
+  # with grep's "--" separator, and whether the chain continued to the
+  # decorView - which is what says whether the tree was attached at all - was
+  # cut off. The chain is up to twelve ancestors plus the assertion text, so
+  # twelve lines of context could never carry it.
+  grep -a -A 40 "TestRunner:.*failed:" "$DIAG/logcat.txt" 2>/dev/null \
+    | sed 's/.*TestRunner:/TestRunner:/' | head -400 || true
   # FATAL blocks are NOT extracted here any more.
   #
   # There used to be a `grep -m 1 "FATAL EXCEPTION" | cut -c1-300` in this
