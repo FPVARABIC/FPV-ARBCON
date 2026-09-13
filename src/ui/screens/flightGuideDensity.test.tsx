@@ -39,6 +39,19 @@ const STYLE_IDS = GUIDE_CORNERS.filter(corner => corner.id !== 'firmware').map(c
 
 const navigation = {navigate: () => {}, goBack: () => {}} as never;
 
+function renderIndex() {
+  let renderer!: ReactTestRenderer.ReactTestRenderer;
+  ReactTestRenderer.act(() => {
+    renderer = ReactTestRenderer.create(
+      <FlightStyleGuideScreen
+        navigation={navigation}
+        route={{key: 'g', name: 'FlightStyleGuide'} as never}
+      />,
+    );
+  });
+  return renderer;
+}
+
 function renderCorner(styleId: string) {
   let renderer!: ReactTestRenderer.ReactTestRenderer;
   ReactTestRenderer.act(() => {
@@ -82,6 +95,38 @@ describe('the guide needs no flight controller', () => {
     expect(
       renderer.root.findAllByProps({testID: 'connection-gate-title'}).length,
     ).toBe(0);
+    ReactTestRenderer.act(() => renderer.unmount());
+  });
+
+  /**
+   * THE AIRCRAFT LINE IS NOT CAPPED, AND MAY NOT BE CAPPED AGAIN.
+   *
+   * It carried numberOfLines={2} until run 34723764981 measured the
+   * platform ellipsising the cinematic card's second line at font scale
+   * 2.0 and dropping 16 characters of the aircraft list. The emulator
+   * catches that, but only at a scale and a display width it happens to
+   * drive; this catches the cap itself, on every style, on every commit.
+   *
+   * It reads the props the component RENDERS with rather than the source
+   * text, so a cap reintroduced through a style object, a spread or a
+   * shared component fails here too.
+   */
+  it.each(STYLE_IDS)('%s: lists its aircraft with no line cap', styleId => {
+    const corner = GUIDE_CORNERS.find(one => one.id === styleId);
+    if (corner === undefined) throw new Error(`no corner ${styleId}`);
+    const line = corner.aircraft.join(' · ');
+    const renderer = renderIndex();
+    const nodes = renderer.root.findAll(
+      node => typeof node.type === 'string' && node.props.children === line,
+      {deep: true},
+    );
+    // If this is 0 the card stopped rendering the list at all, which is a
+    // worse failure than truncating it and must not read as a pass.
+    expect(nodes.length).toBeGreaterThan(0);
+    for (const node of nodes) {
+      expect(node.props.numberOfLines).toBeUndefined();
+      expect(node.props.ellipsizeMode).toBeUndefined();
+    }
     ReactTestRenderer.act(() => renderer.unmount());
   });
 

@@ -107,9 +107,21 @@ function StyleCard({
           </View>
         </View>
 
-        <Text style={styles.aircraft} numberOfLines={2}>
-          {corner.aircraft.join(' · ')}
-        </Text>
+        {/* NO LINE CAP. This carried numberOfLines={2} until run
+            34723764981 measured, at font scale 2.0 on a 320x640 display,
+            the platform ellipsising line 2 of 2 of the cinematic card and
+            dropping 16 characters: the reader at twice the text size was
+            shown "Cinewhoop · Cinelog · 5 إنش بكاميرا HD · 7 إنش للقطات
+            الواسع" and the list of aircraft ended mid-word.
+
+            The height it needs exists. The card has no fixed height, its
+            row stretches to the tallest card in it, and the screen
+            scrolls - so a third line costs scroll, which is what scroll
+            is for. At scale 1.0 on that display the same text still
+            wraps to two lines, so the default look is unchanged; on a
+            narrower multi-column tier it may take a third line, and that
+            is the intended trade. */}
+        <Text style={styles.aircraft}>{corner.aircraft.join(' · ')}</Text>
 
         <View style={styles.cta}>
           <Text style={styles.ctaText}>افتح الركن</Text>
