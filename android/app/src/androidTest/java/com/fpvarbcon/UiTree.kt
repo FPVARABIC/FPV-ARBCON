@@ -285,7 +285,10 @@ fun ActivityScenario<MainActivity>.bringTagOnScreen(testId: String) {
   var lastRect = Rect()
   var lastDisplay = Rect()
   var lastVisible = false
+  var firstRect: Rect? = null
+  var iterations = 0
   while (SystemClock.uptimeMillis() < deadline) {
+    iterations++
     val settled = readMain { activity ->
       val root = activity.window.decorView
       val view = findByTag(root, testId)
@@ -295,6 +298,7 @@ fun ActivityScenario<MainActivity>.bringTagOnScreen(testId: String) {
       val stable = now == previous
       previous = now
       lastRect = now
+      if (firstRect == null) firstRect = Rect(now)
       lastDisplay = screenRectOf(root)
       lastVisible = view.getGlobalVisibleRect(Rect())
       // The centre is what gets injected, so the centre is what has to be
@@ -319,30 +323,94 @@ fun ActivityScenario<MainActivity>.bringTagOnScreen(testId: String) {
   // a configuration change, and those need opposite repairs. So the class,
   // the ancestors with their own rectangles, the font scale and the
   // lifecycle state go with it.
+  // WHAT RUN 34780928743 STILL COULD NOT ANSWER, AND WHAT WAS ADDED.
+  //
+  // That run printed the chain and it named a suspect precisely:
+  //
+  //   ReactViewGroup[start-flight-style-guide] at Rect(-68, 29 - 0, 640)
+  //   ReactViewGroup                          at Rect(0, -14856 - 0, 6427)
+  //   ReactScrollView[start-screen]           at Rect(0, 24 - 320, 640)
+  //
+  // The scroll view is the right size. Its CONTENT view is 0 wide and 21283
+  // tall - which is what a text tree measured at a width of zero looks like,
+  // every line one glyph - and the control inside it hangs 68px to the LEFT
+  // of x=0 because an RTL child of a zero-width parent is laid out from a
+  // right edge at zero. The control's real size elsewhere in the same run is
+  // 226x48.
+  //
+  // Two explanations remain and they need OPPOSITE repairs:
+  //
+  //   STALE     a layout pass is pending and never completed, so these are
+  //             the numbers of a tree caught mid-reconfiguration. The font
+  //             scale is system state and this class changes it, so a
+  //             configuration change arriving during startup is a real
+  //             possibility.
+  //   REAL      Android considers this layout FINISHED at width zero, and
+  //             the product would look like this to an operator.
+  //
+  // isLayoutRequested separates them: true means a pass is still owed, false
+  // means the framework thinks it is done. The size of each ancestor, whether
+  // it is attached, the Activity's identity, the font scale the DEVICE
+  // reports, and the first rectangle measured against the last one all go
+  // with it - and then the layout is forced once and measured again, because
+  // "a forced pass fixes it" is the difference between the two answers. The
+  // case still fails either way; this is evidence, not a retry.
   val context = readMain { activity ->
     val view = findByTag(activity.window.decorView, testId)
     val chain = StringBuilder()
     var current: View? = view
     var depth = 0
-    while (current != null && depth < 12) {
+    while (current != null && depth < 14) {
       chain.append("\n      ${current.javaClass.simpleName}")
       (current.tag as? String)?.let { chain.append("[$it]") }
-      chain.append(" at ${screenRectOf(current)} shown=${current.isShown}")
+      chain.append(
+        " at ${screenRectOf(current)} ${current.width}x${current.height}" +
+          " shown=${current.isShown} attached=${current.isAttachedToWindow}" +
+          " layoutRequested=${current.isLayoutRequested}",
+      )
       current = current.parent as? View
       depth++
     }
+    val decor = activity.window.decorView
     "view=${view?.javaClass?.simpleName ?: "<gone>"} " +
       "fontScale=${activity.resources.configuration.fontScale} " +
-      "layoutDirection=${activity.window.decorView.layoutDirection}" +
+      "layoutDirection=${decor.layoutDirection} " +
+      "activity=${activity.javaClass.simpleName}@${Integer.toHexString(activity.hashCode())} " +
+      "decor=${decor.width}x${decor.height} decorLayoutRequested=${decor.isLayoutRequested}" +
       "\n    ancestors, nearest first:$chain"
+  }
+
+  // ONE FORCED LAYOUT, MEASURED. If the rectangle becomes sane the tree was
+  // stale; if it does not, the layout is what the product produced.
+  val forced = readMain { activity ->
+    val root = activity.window.decorView
+    root.requestLayout()
+    root.invalidate()
+    screenRectOf(findByTag(root, testId) ?: root)
+  }
+  instrumentation().waitForIdleSync()
+  val recheckDeadline = SystemClock.uptimeMillis() + 2_000L
+  var afterForcedLayout = forced
+  while (SystemClock.uptimeMillis() < recheckDeadline) {
+    afterForcedLayout = readMain { activity ->
+      val root = activity.window.decorView
+      screenRectOf(findByTag(root, testId) ?: root)
+    }
+    if (afterForcedLayout != lastRect) break
+    instrumentation().waitForIdleSync()
+    SystemClock.sleep(POLL_MILLIS)
   }
 
   throw AssertionError(
     "\"$testId\" could not be brought onto the display within " +
-      "${SCROLL_SETTLE_TIMEOUT_MILLIS}ms. It occupies $lastRect on the display, the display " +
-      "area is $lastDisplay, and getGlobalVisibleRect returned $lastVisible. A press aimed at " +
-      "a control in this state is injected at a coordinate no window contains, so it would " +
-      "report nothing happening whether or not the control works.\n    $context",
+      "${SCROLL_SETTLE_TIMEOUT_MILLIS}ms over $iterations measurement(s). It occupies " +
+      "$lastRect on the display, the display area is $lastDisplay, and getGlobalVisibleRect " +
+      "returned $lastVisible. A press aimed at a control in this state is injected at a " +
+      "coordinate no window contains, so it would report nothing happening whether or not the " +
+      "control works.\n    first measured at ${firstRect ?: "<never measured>"}, last at " +
+      "$lastRect, after one forced layout at $afterForcedLayout (a change here means the tree " +
+      "was stale rather than laid out this way)\n    device font_scale=" +
+      "${readSystemFontScale()}\n    $context",
   )
 }
 
@@ -703,13 +771,85 @@ fun ActivityScenario<MainActivity>.displayBounds(): Rect = readMain { activity -
   rect
 }
 
-/** Sets the system font scale through the shell, as a user would in Settings. */
+/** How long the platform is given to adopt a font scale that was written. */
+const val FONT_SCALE_SETTLE_TIMEOUT_MILLIS = 15_000L
+
+/**
+ * Sets the system font scale through the shell, as a user would in
+ * Settings, AND WAITS UNTIL THE DEVICE SAYS IT HAS IT.
+ *
+ * WHAT THIS USED TO DO, AND WHY THAT WAS WRONG. It wrote the setting,
+ * called waitForIdleSync and then slept 500ms. A font scale is not a value
+ * this process owns: writing it makes the platform recompute the global
+ * configuration and push it to every process, and 500ms was a guess about
+ * how long that takes with nothing checking the guess. A case that launched
+ * an Activity immediately afterwards could therefore start it into a
+ * configuration change in flight.
+ *
+ * That is not offered as the cause of anything. It is a wait with no
+ * condition, which cannot be right whatever else is true, and run
+ * 34780928743 produced the kind of failure a racing configuration change
+ * would produce: a scroll view 320 wide whose content view was 0 wide and
+ * 21283 tall for eight seconds.
+ *
+ * It now polls two sources until both agree, or fails saying what each one
+ * said:
+ *
+ *   settings get system font_scale   the value that was written
+ *   dumpsys activity config          the scale the platform has actually
+ *                                    adopted for the current global
+ *                                    configuration
+ *
+ * The second is a corroboration, not a gate: if its output shape ever
+ * changes and the scale cannot be parsed from it, the parse returns empty
+ * and the wait proceeds on the first source alone - and says so in the
+ * failure message rather than pretending it checked two things.
+ */
 fun setSystemFontScale(scale: String) {
-  instrumentation().uiAutomation
-    .executeShellCommand("settings put system font_scale $scale")
-    .close()
-  instrumentation().waitForIdleSync()
-  SystemClock.sleep(500)
+  shell("settings put system font_scale $scale")
+  val deadline = SystemClock.uptimeMillis() + FONT_SCALE_SETTLE_TIMEOUT_MILLIS
+  var reported = ""
+  var platform = ""
+  while (SystemClock.uptimeMillis() < deadline) {
+    reported = readSystemFontScale()
+    platform = platformFontScale()
+    if (sameScale(reported, scale) && (platform.isEmpty() || sameScale(platform, scale))) {
+      instrumentation().waitForIdleSync()
+      return
+    }
+    instrumentation().waitForIdleSync()
+    SystemClock.sleep(POLL_MILLIS)
+  }
+  throw AssertionError(
+    "the device did not adopt font scale $scale within ${FONT_SCALE_SETTLE_TIMEOUT_MILLIS}ms. " +
+      "`settings get system font_scale` says \"$reported\" and the platform's own " +
+      "configuration says \"${platform.ifEmpty { "<could not be parsed from dumpsys>" }}\". " +
+      "Nothing measured after this point would be a measurement at a known text size.",
+  )
+}
+
+/** Whether two font scales written as text are the same number. */
+private fun sameScale(reported: String, wanted: String): Boolean {
+  val left = reported.toFloatOrNull() ?: return false
+  val right = wanted.toFloatOrNull() ?: return false
+  return kotlin.math.abs(left - right) < 0.01f
+}
+
+/**
+ * The font scale the PLATFORM reports for the current global configuration,
+ * or "" when it cannot be read.
+ *
+ * Configuration.toString() begins with "{" followed by the font scale, and
+ * `dumpsys activity config` prints that after "config=". Parsed
+ * defensively: an unparseable answer is reported as unparseable rather than
+ * as a mismatch, because a dumpsys format change is not a font scale
+ * failure.
+ */
+fun platformFontScale(): String {
+  val text = shell("dumpsys activity config")
+  val marker = text.indexOf("config={")
+  if (marker < 0) return ""
+  return text.substring(marker + "config={".length).takeWhile { !it.isWhitespace() && it != '}' }
 }
 
 /**
