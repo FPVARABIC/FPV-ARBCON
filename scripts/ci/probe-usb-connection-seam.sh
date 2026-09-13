@@ -189,13 +189,58 @@ JAVA
     sed 's/^/      /' "$log" | head -20
   done
 
+  # ------------------------------------------------------------------
+  # 4. WHAT THE STUB'S OWN BYTECODE DOES
+  # ------------------------------------------------------------------
+  # The compile probes cannot answer this, and run 34783334025 made it the
+  # only question left: P3 COMPILED, so a class declared inside
+  # android.hardware.usb can extend UsbDeviceConnection - but a subclass
+  # that compiles still has to RUN, and an SDK stub whose method bodies
+  # throw RuntimeException("Stub!") makes a constructible connection
+  # useless. javap -c answers it out of the same jar the compiler used,
+  # which is also the only jar on this disk that carries the class.
+  # One member's disassembly, or a line saying there wasn't one. An empty
+  # section would read as "nothing to worry about" when it means "the
+  # pattern missed".
+  disassemble() {
+    local label="$1" pattern="$2" body
+    body="$(javap -c -p -classpath "$android_jar" "$TARGET_CLASS" 2>/dev/null \
+      | awk -v want="$pattern" '$0 ~ want {show=1} show {print} show && /^$/ {exit}' \
+      | head -30)"
+    say "  ---- $label ----"
+    if [ -n "$body" ]; then
+      printf '%s\n' "$body" | sed 's/^/    /'
+    else
+      say "    (javap printed no member matching /$pattern/ - the pattern missed, or there is"
+      say "     no such member; either way this section proves nothing)"
+    fi
+  }
+
+  say ""
+  # Any constructor, whatever its arguments: javap prints it fully
+  # qualified, and `public class android.hardware.usb.UsbDeviceConnection {`
+  # has no "(" after the name so it cannot match by accident.
+  disassemble "the constructor's own bytecode" "android[.]hardware[.]usb[.]UsbDeviceConnection[(]"
+  disassemble "close()'s own bytecode" "void close[(][)]"
+  stub_bodies="$(javap -c -p -classpath "$android_jar" "$TARGET_CLASS" 2>/dev/null \
+    | grep -c 'Stub!' || true)"
+  say "  references to the string \"Stub!\" in this class's bytecode: $stub_bodies"
+  if [ "${stub_bodies:-0}" -gt 0 ]; then
+    say "  READ THIS AS: the stub's bodies throw, so a subclass that compiles cannot be used"
+    say "  at run time and a narrow seam is required."
+  else
+    say "  READ THIS AS: nothing in this class throws a stub marker, so a subclass declared in"
+    say "  android.hardware.usb may be constructible AND usable in a JVM unit test."
+  fi
+
   say ""
   if [ "${result[p0]}" != "COMPILED" ]; then
     say "  ::error::the positive control P0 did not compile, so the classpath is wrong"
     say "  and the other three results say nothing about the platform."
   fi
   # ONE LINE, LAST, so it survives a truncated log tail.
-  say "seam probe: P0=${result[p0]} P1=${result[p1]} P2=${result[p2]} P3=${result[p3]}"
+  say "seam probe: P0=${result[p0]} P1=${result[p1]} P2=${result[p2]} P3=${result[p3]} " \
+    "stubBodies=${stub_bodies:-unknown}"
   say "==========================================="
 
   fi

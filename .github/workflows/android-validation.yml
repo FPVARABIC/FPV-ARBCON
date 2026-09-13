@@ -955,6 +955,15 @@ jobs:
             cat "$verdict"
             echo
           done
+          # The seam probe decides how UsbSerialSession gets covered, so it
+          # belongs in the one place a reader can always reach. It used to
+          # live only in the middle of the Pass 1-4 log, which is exactly
+          # where a log tail does not go.
+          for probe in $(find evidence -name 'usb-connection-seam-probe.txt' | sort); do
+            echo "===== ${probe} ====="
+            cat "$probe"
+            echo
+          done
           # LAST, AND ON PURPOSE. Everything above can grow without
           # bound - a crash dump, an ANR list, a coverage inventory - and
           # the log API returns only the tail. The tap geometry is a fixed
@@ -1199,6 +1208,7 @@ jobs:
           path: |
             android/app/build/reports/coverage/
             native-coverage-verdict.txt
+            usb-connection-seam-probe.txt
           if-no-files-found: error
 
       # ANDROID LINT, AS A REAL GATE.
