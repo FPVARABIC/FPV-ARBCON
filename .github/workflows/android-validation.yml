@@ -1150,7 +1150,23 @@ jobs:
             echo "expected report at $report; found instead: ${found:-<nothing>}"
             report="${found:-$report}"
           fi
-          python3 scripts/ci/kotlin-coverage-ledger.py "$report"
+          # The DECLARATION_ONLY check reads the bytecode of the SAME variant
+          # the report measured, so the debug class directory is located the
+          # same way the report is: if the layout moves, that surfaces as a
+          # located path instead of as a silent "no class file found".
+          class_root="android/app/build/tmp/kotlin-classes/debug"
+          if [ ! -d "$class_root" ]; then
+            found="$(find android/app/build -type d -path '*kotlin-classes/debug' | head -1)"
+            echo "expected debug classes at $class_root; found instead: ${found:-<nothing>}"
+            class_root="${found:-$class_root}"
+          fi
+          echo "debug classes: $(find "$class_root" -name '*.class' 2>/dev/null | wc -l) class file(s) under $class_root"
+          # The checker before the check. A classification that says "there
+          # is nothing here to cover" is only worth as much as the code that
+          # verifies it, so its own controls run first and failing them fails
+          # this step.
+          python3 scripts/ci/kotlin-coverage-ledger.py --self-test
+          python3 scripts/ci/kotlin-coverage-ledger.py "$report" --class-root "$class_root"
 
       # Uploaded whether the ledger passed or failed - a failing ledger is
       # exactly when the raw report is worth reading - but not when the
