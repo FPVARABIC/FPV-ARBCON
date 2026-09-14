@@ -1619,3 +1619,17 @@ jobs:
             echo "no probe output - the seam probe step did not run or wrote nothing"
           fi
           echo "::endgroup::"
+          # WHAT THE UNIT-TEST JVM ITSELF SAID. javap reads a jar; only the
+          # test runtime can say which jar it loaded and what happened when
+          # the class was used. UsbDeviceConnectionStubTest prints that with
+          # a marker, and the JVM test task's standard output goes into an
+          # XML report no log tail reaches - so it is grepped out here.
+          echo "::group::USB connection probe, from inside the unit-test JVM"
+          if grep -h "usb-connection probe:" \
+              android/app/build/test-results/testDebugUnitTest/*.xml 2>/dev/null; then
+            :
+          else
+            echo "no probe lines in the JVM test results - the test did not run, or the"
+            echo "results directory is not where it was looked for"
+          fi
+          echo "::endgroup::"
