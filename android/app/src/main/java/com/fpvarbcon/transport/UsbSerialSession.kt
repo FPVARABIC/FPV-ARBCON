@@ -1,6 +1,5 @@
 package com.fpvarbcon.transport
 
-import android.hardware.usb.UsbDeviceConnection
 import com.hoho.android.usbserial.driver.UsbSerialPort
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
@@ -13,7 +12,14 @@ import kotlin.concurrent.withLock
 internal class UsbSerialSession(
   val sessionId: String,
   val deviceId: Int,
-  private val connection: UsbDeviceConnection,
+  /**
+   * Closing the USB connection, and nothing else - see
+   * [UsbConnectionHandle] for the measurement that made this a one-method
+   * interface instead of the platform class. The call site passes
+   * `UsbConnectionHandle { connection.close() }`; nothing else about this
+   * class changed with it.
+   */
+  private val connection: UsbConnectionHandle,
   private val port: UsbSerialPort,
 ) : WriteQueueOwner {
   /**

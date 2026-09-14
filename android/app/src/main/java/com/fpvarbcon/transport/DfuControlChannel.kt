@@ -13,7 +13,12 @@ package com.fpvarbcon.transport
  * UsbDeviceConnection directly:
  *
  *   - UsbDeviceConnection has no public constructor, so a JVM unit test
- *     cannot make one;
+ *     cannot make one. That was written here before it was ever measured;
+ *     run 34785383699 measured it. Its constructor is package-private AND
+ *     takes no arguments, its body is `new RuntimeException("Stub!");
+ *     athrow`, close() is the same, and there are sixteen references to
+ *     that marker in the class. UsbDeviceConnectionStubTest now asserts it
+ *     in the unit-test JVM on every run;
  *   - UsbDevice has none either, so an INSTRUMENTATION test cannot make
  *     one on a device with no board plugged in;
  *   - and a real board is out of scope by instruction.

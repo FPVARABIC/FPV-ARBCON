@@ -1045,7 +1045,11 @@ class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
 
       // 11. Build the completed local session and its id - not registered yet.
       val sessionId = UUID.randomUUID().toString()
-      val session = UsbSerialSession(sessionId, identity.deviceId, connection, port)
+      // The session is handed a way to CLOSE the connection rather than the
+      // connection itself - see UsbConnectionHandle. The real connection
+      // stays here and inside the port, which was opened with it above.
+      val session =
+        UsbSerialSession(sessionId, identity.deviceId, UsbConnectionHandle { connection.close() }, port)
 
       // 12-14. Atomic acceptance: invalidate() drains under this same lock,
       // so this check and the insertion can never straddle a drain - either

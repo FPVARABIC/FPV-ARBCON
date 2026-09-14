@@ -159,6 +159,19 @@ CLASSIFICATION: dict[str, tuple[str, str]] = {
     "com/fpvarbcon/transport/SerialOpenSequence.kt": (JVM_EXECUTED, ""),
     "com/fpvarbcon/transport/SerialReadLoop.kt": (JVM_EXECUTED, ""),
     "com/fpvarbcon/transport/UsbBoundedAttempt.kt": (JVM_EXECUTED, ""),
+    "com/fpvarbcon/transport/UsbConnectionHandle.kt": (
+        DECLARATION_ONLY,
+        "A one-method internal interface - close() - with no body, so the compiler emits no "
+        "method carrying a Code attribute and there is no executable line in it to cover. It "
+        "exists because run 34785383699 disassembled android.hardware.usb.UsbDeviceConnection "
+        "out of the only jar on the runner carrying it and found a package-private constructor "
+        "whose body throws RuntimeException(\"Stub!\"), close() doing the same, and sixteen "
+        "references to that marker in the class. UsbDeviceConnectionStubTest asserts that "
+        "measurement on every run, in the unit-test JVM, with the ClassLoader and code source "
+        "printed - so if it ever stops being true this interface is deleted rather than "
+        "outliving its reason. The BEHAVIOUR is not here: UsbSerialSession kept every decision "
+        "and UsbSerialSessionTest drives the real class through it.",
+    ),
     "com/fpvarbcon/transport/UsbDeviceIdentity.kt": (JVM_EXECUTED, ""),
     "com/fpvarbcon/transport/UsbHotplugMonitor.kt": (JVM_EXECUTED, ""),
     "com/fpvarbcon/transport/UsbIoExecutor.kt": (JVM_EXECUTED, ""),
