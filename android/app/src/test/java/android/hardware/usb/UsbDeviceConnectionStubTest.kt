@@ -117,15 +117,20 @@ class UsbDeviceConnectionStubTest {
       fromReflection,
     )
 
-    // And they must fail for the stated REASON, not for some other one: a
-    // SecurityException or a NoSuchMethodError would mean something else
+    // AND THE REFLECTIVE ONE MUST FAIL FOR THE STATED REASON. A
+    // NoSuchMethodError or a SecurityException would mean something else
     // entirely and must not be read as confirmation.
-    assertEquals(
-      "the subclass constructor failed with something other than the SDK stub marker: " +
-        describe(fromSubclass),
-      "Stub!",
-      rootCause(fromSubclass).message,
-    )
+    //
+    // The REASON is pinned on the reflective route and not on the subclass
+    // route, on purpose. Package-private access is enforced per RUNTIME
+    // package - the pair (classloader, package name) - so if Gradle ever
+    // hands the test classes and android.jar to different loaders, the
+    // subclass route fails with IllegalAccessError before it ever reaches
+    // the constructor's body. That is the same conclusion by a different
+    // road, and pinning a message to it would make this case fail over a
+    // classloader layout rather than over the platform. setAccessible(true)
+    // bypasses the access check entirely, so the reflective route always
+    // reaches the body and always reports what the body does.
     assertEquals(
       "the reflective constructor failed with something other than the SDK stub marker: " +
         describe(fromReflection),
@@ -133,9 +138,9 @@ class UsbDeviceConnectionStubTest {
       rootCause(fromReflection).message,
     )
     assertTrue(
-      "the stub marker arrived as ${rootCause(fromSubclass).javaClass.name}, not a " +
+      "the stub marker arrived as ${rootCause(fromReflection).javaClass.name}, not a " +
         "RuntimeException, so this is not the SDK stub behaviour it is taken for",
-      rootCause(fromSubclass) is RuntimeException,
+      rootCause(fromReflection) is RuntimeException,
     )
   }
 
@@ -150,11 +155,14 @@ class UsbDeviceConnectionStubTest {
     report("close() declared as: $method")
 
     // There is no instance to call it on - that is the point of the case
-    // above - so the question is put to the only thing that can answer it
-    // without one: the declaring class's own bytecode, through the
-    // exception a construction attempt produces. A close() that did not
-    // throw would still be unreachable while the constructor does.
-    val constructed = runCatching { object : UsbDeviceConnection() {} }.exceptionOrNull()
+    // above - so the question is put to the route that cannot be deflected
+    // by an access check: reflection, which reaches the constructor's body
+    // whatever classloader arrangement the test runtime happens to use.
+    val constructed = runCatching {
+      UsbDeviceConnection::class.java.getDeclaredConstructor()
+        .also { it.isAccessible = true }
+        .newInstance()
+    }.exceptionOrNull()
     report("so close() is unreachable because construction threw: ${describe(constructed)}")
     assertNotNull(
       "a UsbDeviceConnection was constructed, so close() IS reachable and this case's reasoning " +
