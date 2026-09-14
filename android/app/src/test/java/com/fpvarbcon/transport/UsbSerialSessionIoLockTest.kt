@@ -28,6 +28,36 @@ import org.junit.Test
  * locking shape - ioLock.withLock { <blocking operation> } for both
  * directions - so these tests prove the real coordination mechanism
  * itself, not a reimplementation of it.
+ *
+ * =====================================================================
+ * THAT LAST SENTENCE WAS NOT TRUE, AND IS WITHDRAWN
+ * =====================================================================
+ *
+ * A class that reproduces UsbSerialSession's locking shape IS a
+ * reimplementation of it. What [FakePort] demonstrates is that
+ * java.util.concurrent.locks.ReentrantLock(true) is fair, which is a
+ * property of the JDK: delete `ioLock.withLock` from the real read() and
+ * every assertion below still passes. Run 34780928743 said so in numbers -
+ * UsbSerialSession.kt at 0 of 33 covered lines - and the coverage was
+ * right.
+ *
+ * The second ground was also wrong. UsbSerialPort at the pinned 3.10.0 is
+ * `public interface UsbSerialPort extends Closeable` with 33 abstract
+ * members: implementing it is typing, not impossibility. Only the first
+ * ground held, and run 34785383699 finally measured it rather than
+ * recalling it.
+ *
+ * THE REAL CLASS IS NOW DRIVEN BY UsbSerialSessionTest, which constructs
+ * the real UsbSerialSession over a real implementation of the library's
+ * port interface and asserts the orderings this file could only mimic -
+ * including a control proving the ordering check is capable of failing.
+ *
+ * WHAT STAYS HERE, and why this file is not simply deleted: the timing
+ * policy below is about CONSTANTS, not about the session, and it is the
+ * only place that asserts the native stop budget holds. That assertion is
+ * still worth making. The fair-lock demonstrations are kept beside it as
+ * what they are - a demonstration of the JDK primitive the design relies
+ * on - and are no longer offered as evidence about UsbSerialSession.
  */
 class UsbSerialSessionIoLockTest {
 
