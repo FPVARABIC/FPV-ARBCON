@@ -334,15 +334,32 @@ class UsbSerialSessionTest {
     )
   }
 
+  /**
+   * THE DRAIN RETURNS THE QUEUED ONE AND LEAVES THE ONE IN FLIGHT ALONE.
+   *
+   * Two contracts are asserted here, and they are the two the lifecycle
+   * note in UsbSerialSessionLifecycle.kt depends on:
+   *
+   *   the queued request is RETURNED, for the caller to reject; the one
+   *   already inside the port is not in that list and is not completed by
+   *   the drain;
+   *
+   *   that in-flight request resolves LATER, independently, through its
+   *   own onComplete, exactly once.
+   */
   @Test
   fun `a write queued and never started is returned by the drain rather than lost`() {
     port.parkWrites = true
     val session = session()
     try {
       val completions = CopyOnWriteArrayList<Result<Int>>()
+      val firstSettled = CountDownLatch(1)
       // The port's write parks, so the queue's consumer thread is stuck on
       // the first request and everything after it stays queued.
-      val first = UsbSerialWriteRequest(byteArrayOf(1), 100) { completions += it }
+      val first = UsbSerialWriteRequest(byteArrayOf(1), 100) {
+        completions += it
+        firstSettled.countDown()
+      }
       val second = UsbSerialWriteRequest(byteArrayOf(2), 100) { completions += it }
       assertEquals(UsbSerialWriteQueue.EnqueueResult.Accepted, session.enqueueWrite(first))
       assertTrue("the queue's consumer never started the first write", writeEntered.await(5, TimeUnit.SECONDS))
@@ -362,6 +379,18 @@ class UsbSerialSessionTest {
         "the drain completed a request itself, so the caller is no longer the one deciding " +
           "what happens to a dropped write: $completions",
         completions.isEmpty(),
+      )
+
+      // Now let the in-flight native call finish. It must settle through
+      // its OWN onComplete, once, and the drained one must still be
+      // untouched - the caller owns that one.
+      writeGate.countDown()
+      assertTrue("the in-flight write never settled", firstSettled.await(5, TimeUnit.SECONDS))
+      assertEquals(
+        "the in-flight write did not settle exactly once through its own onComplete: " +
+          "$completions",
+        listOf(Result.success(1)),
+        completions.toList(),
       )
     } finally {
       writeGate.countDown()
@@ -412,7 +441,7 @@ class UsbSerialSessionTest {
     override fun read(dest: ByteArray, timeout: Int): Int {
       order += "read(timeout=$timeout)"
       readEntered.countDown()
-      if (parkReads) readGate.await(10, TimeUnit.SECONDS)
+      if (parkReads) parkLikeANativeCall(readGate)
       order += "read-exit"
       return readResult
     }
@@ -420,7 +449,43 @@ class UsbSerialSessionTest {
     override fun write(src: ByteArray, timeout: Int) {
       order += "write(${src.size} bytes, timeout=$timeout)"
       writeEntered.countDown()
-      if (parkWrites) writeGate.await(10, TimeUnit.SECONDS)
+      if (parkWrites) parkLikeANativeCall(writeGate)
+    }
+
+    /**
+     * WAITING THE WAY THE REAL PORT WAITS: NOT INTERRUPTIBLE.
+     *
+     * This parked on the latch directly and the drain case failed with
+     * `Failure(java.lang.InterruptedException)` - because
+     * UsbSerialWriteQueue.stopAndDrainPending() interrupts its consumer
+     * thread, and CountDownLatch.await throws when interrupted.
+     *
+     * A REAL UsbSerialPort.write() does not. It bottoms out in
+     * UsbDeviceConnection.bulkTransfer, a native call Thread.interrupt()
+     * cannot break, which is exactly why the queue's own note can say "a
+     * request currently inside performSerialWrite is unaffected by this
+     * interrupt". A double that IS interruptible reports a failure the
+     * device could never produce, and makes the production contract look
+     * broken when it is not.
+     *
+     * So the interrupt is absorbed and re-raised on the way out: the flag
+     * is restored, so the consumer thread still sees it and exits, while
+     * the simulated native call runs to completion first.
+     */
+    private fun parkLikeANativeCall(gate: CountDownLatch) {
+      var interrupted = false
+      try {
+        while (true) {
+          try {
+            gate.await(10, TimeUnit.SECONDS)
+            return
+          } catch (_: InterruptedException) {
+            interrupted = true
+          }
+        }
+      } finally {
+        if (interrupted) Thread.currentThread().interrupt()
+      }
     }
 
     override fun close() {
