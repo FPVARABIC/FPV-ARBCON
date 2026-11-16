@@ -150,6 +150,13 @@ jest.setTimeout(600000);
 /* The registry's preconditions press controls; give them React's act. */
 installAct(act);
 
+// The census keeps its own string/number evidence across screen cases.
+// Framework mocks do not need to retain call arguments (including mounted
+// trees and callbacks) from earlier screens. Keep their implementations.
+afterEach(() => {
+  jest.clearAllMocks();
+});
+
 /**
  * Harness-only progress trace. Off by default; UIX1_TRACE=1 turns it on.
  *

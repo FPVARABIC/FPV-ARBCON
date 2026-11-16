@@ -121,8 +121,12 @@ internal class UsbPermissionRequester(
   private val coordinator = UsbPermissionRequestCoordinator("${context.packageName}.transport.USB_PERMISSION")
   private val pendingReceivers = mutableMapOf<Long, BroadcastReceiver>()
 
-  /** onResult(granted, failureMessage). failureMessage set only for infrastructure failures. */
-  fun requestPermission(device: UsbDevice, onResult: (granted: Boolean, failureMessage: String?) -> Unit) {
+  /**
+   * Returns the request id so a bounded waiter can abandon exactly this
+   * request. Immediate outcomes have no registered request and return null.
+   * onResult(granted, failureMessage): message is set for infrastructure failures.
+   */
+  fun requestPermission(device: UsbDevice, onResult: (granted: Boolean, failureMessage: String?) -> Unit): Long? {
     // EVERY EXIT FROM HERE CALLS BACK.
     //
     // UsbPermissionRequestCoordinator.register states the contract for a
@@ -137,12 +141,12 @@ internal class UsbPermissionRequester(
     // the coordinator's pending map, so no other path owns it.
     if (coordinator.isCancelled()) {
       onResult(false, CANCELLED_MESSAGE)
-      return
+      return null
     }
 
     if (usbManager.hasPermission(device)) {
       onResult(true, null)
-      return
+      return null
     }
 
     val identity = UsbDeviceIdentity(device.deviceId, device.vendorId, device.productId)
@@ -150,7 +154,7 @@ internal class UsbPermissionRequester(
     if (requestId == null) {
       // Cancelled between the check above and the registration.
       onResult(false, CANCELLED_MESSAGE)
-      return
+      return null
     }
     val action = coordinator.actionFor(requestId)
 
@@ -237,6 +241,7 @@ internal class UsbPermissionRequester(
 
       usbManager.requestPermission(device, permissionIntent)
     }
+    return requestId
   }
 
   /**

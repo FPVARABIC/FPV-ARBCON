@@ -177,6 +177,7 @@ CLASSIFICATION: dict[str, tuple[str, str]] = {
     "com/fpvarbcon/transport/UsbIoExecutor.kt": (JVM_EXECUTED, ""),
     "com/fpvarbcon/transport/UsbPermissionRequestCoordinator.kt": (JVM_EXECUTED, ""),
     "com/fpvarbcon/transport/UsbPermissionRequester.kt": (JVM_EXECUTED, ""),
+    "com/fpvarbcon/transport/UsbPermissionWait.kt": (JVM_EXECUTED, ""),
     "com/fpvarbcon/transport/UsbPromiseSettleOnce.kt": (JVM_EXECUTED, ""),
     "com/fpvarbcon/transport/UsbSerialDeviceEnumerator.kt": (JVM_EXECUTED, ""),
     "com/fpvarbcon/transport/UsbSerialDriverType.kt": (JVM_EXECUTED, ""),
