@@ -20,11 +20,8 @@ import com.hoho.android.usbserial.driver.UsbSerialPort
 import com.hoho.android.usbserial.driver.UsbSerialProber
 import java.util.UUID
 import java.io.ByteArrayOutputStream
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
 import java.util.concurrent.CancellationException
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Thin TurboModule bridge for USB serial transport. listDevices(),
@@ -78,7 +75,7 @@ import java.util.concurrent.atomic.AtomicReference
  * queued task until the first one's Runnable returns.
  *
  * The fix: [openDevice] now runs the permission wait (bridged back onto one
- * synchronous call via a [CountDownLatch] - see its own inline note) and the
+   * synchronous call via [awaitUsbPermissionResult]) and the
  * entire native open/configure sequence as one [work] block on its own
  * dedicated, throwaway thread via [runOnDedicatedThreadWithTimeout], bounded
  * to [CONNECT_TIMEOUT_MILLIS] overall. [ioExecutor] is untouched by this -
@@ -922,47 +919,17 @@ class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
    * back onto this one calling thread, so it can be awaited as a single
    * synchronous step inside [openDevice]'s `work` block.
    *
-   * Deliberately has no timeout of its own: the overall
-   * [runOnDedicatedThreadWithTimeout] bound covers however long this wait
-   * (plus the native open/configure sequence that follows it) takes as one
-   * combined budget - see the class-level Pass 5.4 note on why one shared
-   * bound, rather than a separate one here, was chosen. `outcome`'s write
-   * (from whichever thread calls onResult) happens-before this method's own
-   * read of it once [latch] .await() returns, per CountDownLatch's own
-   * documented memory-visibility guarantee - no additional synchronization
-   * is needed for that single handoff.
+   * The overall connect watchdog bounds permission plus native opening.
+   * This wait is bounded too, so an unanswered permission dialog cannot
+   * leave a worker parked forever. On expiry/interruption the request id
+   * is retired and its receiver is unregistered before returning/throwing.
    */
-  private fun awaitPermissionResult(device: UsbDevice): PermissionOutcome {
-    val latch = CountDownLatch(1)
-    // AtomicReference (not a bare local): with the bounded await below the
-    // callback thread may still write after this thread stops waiting, so
-    // the handoff needs an explicitly safe cell rather than relying on
-    // await()'s happens-before alone.
-    val outcome =
-      AtomicReference(
-        PermissionOutcome(granted = false, failureMessage = "Permission result never arrived."),
-      )
-    permissionRequester.requestPermission(device) { granted, failureMessage ->
-      outcome.set(PermissionOutcome(granted, failureMessage))
-      latch.countDown()
-    }
-    // PASS 7.7: BOUNDED wait. The baseline used a bare latch.await() with
-    // no bound of its own, so a permission result that never arrives left
-    // this worker parked forever (the outer connect watchdog abandons the
-    // thread but cannot stop it). The bound is the same overall connect
-    // budget, so behavior for a normally-answered dialog is unchanged; on
-    // expiry the wait returns a truthful timeout outcome and the abandoned
-    // permission request can no longer open USB (the requester settles it
-    // exactly once - see UsbPermissionRequestCoordinator).
-    val answered = latch.await(CONNECT_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)
-    if (!answered) {
-      return PermissionOutcome(
-        granted = false,
-        failureMessage = "Timed out waiting for the USB permission result.",
-      )
-    }
-    return outcome.get()
-  }
+  private fun awaitPermissionResult(device: UsbDevice): PermissionOutcome =
+    awaitUsbPermissionResult(
+      timeoutMillis = CONNECT_TIMEOUT_MILLIS,
+      requestPermission = { onResult -> permissionRequester.requestPermission(device, onResult) },
+      abandonRequest = permissionRequester::abandonRequest,
+    )
 
   /**
    * Runs after the (possibly asynchronous) permission result is known. This
@@ -1817,9 +1784,6 @@ class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
  * superseded reservation must still reject this attempt's own Promise.
  */
 private enum class OpenCompletionOutcome { ACCEPTED, MODULE_INVALIDATED, RESERVATION_SUPERSEDED }
-
-/** [UsbSerialTransportModule.awaitPermissionResult]'s single-value handoff result. */
-private data class PermissionOutcome(val granted: Boolean, val failureMessage: String?)
 
 /**
  * The outcome of one startReading() attempt (see
