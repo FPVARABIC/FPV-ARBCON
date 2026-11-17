@@ -23,7 +23,7 @@
  * that way.
  */
 
-import ar from '../../i18n/locales/ar.json';
+import ar from '../../i18n/locales/nl.json';
 
 /** Internal review/process vocabulary that must never reach the UI. */
 const INTERNAL_TOKENS = [
@@ -75,7 +75,7 @@ describe('no build-status strip in the product surface', () => {
     // ALL is every leaf string in the catalogue - see walk() above.
     const offenders = ALL.filter(
       ([, value]) =>
-        /نسخة\s*(معاينة|تجريبية)/.test(value) || /قيد\s*التحقق/.test(value),
+        /previewversie|bètaversie|testversie/i.test(value) || /in validatie/i.test(value),
     ).map(([path]) => path);
     expect(offenders).toEqual([]);
   });
@@ -96,8 +96,8 @@ describe('no build-status strip in the product surface', () => {
 
 describe('browser capability guidance is not desktop-only advice', () => {
   it('does not send a phone user to a desktop', () => {
-    expect(ar.webPlatform.guidance).not.toContain('على سطح المكتب');
-    expect(ar.errors.WEB_SERIAL_UNSUPPORTED).not.toContain('على سطح المكتب');
+    expect(ar.webPlatform.guidance).not.toContain("op een desktop");
+    expect(ar.errors.WEB_SERIAL_UNSUPPORTED).not.toContain("op een desktop");
   });
 
   it('still names the capability truthfully', () => {
@@ -114,11 +114,11 @@ describe('browser capability guidance is not desktop-only advice', () => {
 
 describe('no development-lifecycle framing reaches the operator', () => {
   it('states product state, not a testing stage', () => {
-    expect(ar.serialConfiguration.readOnlyNote).not.toContain('المرحلة');
-    expect(ar.errors.NOT_IMPLEMENTED).not.toContain('المرحلة');
+    expect(ar.serialConfiguration.readOnlyNote).not.toContain("ontwikkelfase");
+    expect(ar.errors.NOT_IMPLEMENTED).not.toContain("ontwikkelfase");
     // …while still saying the same thing.
-    expect(ar.serialConfiguration.readOnlyNote).toContain('للعرض فقط');
-    expect(ar.errors.NOT_IMPLEMENTED).toContain('غير متاحة');
+    expect(ar.serialConfiguration.readOnlyNote).toContain("Deze waarden zijn alleen voor de show.");
+    expect(ar.errors.NOT_IMPLEMENTED).toContain("Deze functie is momenteel niet beschikbaar.");
   });
 
   it('contains no internal review token anywhere in the shipped strings', () => {
@@ -136,7 +136,7 @@ describe('no development-lifecycle framing reaches the operator', () => {
    * lifecycle leak has to be added here on purpose.
    */
   it('uses "مرحلة" only where it describes a real product process', () => {
-    const users = ALL.filter(([, v]) => v.includes('مرحلة') || v.includes('المرحلة')).map(([p]) => p);
+    const users = ALL.filter(([, v]) => /ontwikkelfase|testfase/i.test(v)).map(([p]) => p);
     for (const path of users) {
       expect(path.startsWith('flash') || path.startsWith('firmware')).toBe(true);
     }

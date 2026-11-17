@@ -16,7 +16,7 @@
  * WIRE TRUTH IN, PROVEN MEANING OUT. Pure: no React, no i18n, no I/O, no
  * clock. Like every other module under src/core it carries no Arabic -
  * it emits i18n KEYS (the convention flashPhaseModel.ts and
- * mspClientErrorCodes.ts already established), and src/i18n/locales/ar.json
+ * mspClientErrorCodes.ts already established), and src/i18n/locales/nl.json
  * owns the wording.
  *
  * WHAT IT DELIBERATELY DOES NOT DO: no readiness percentage, no "aircraft

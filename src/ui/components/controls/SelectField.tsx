@@ -55,7 +55,7 @@ export function SelectField<K extends string = string>({
   options,
   selectedKey,
   onSelect,
-  placeholder = 'اختر…',
+  placeholder = "Kiezen…",
   disabled = false,
   helper,
   testID,
@@ -109,7 +109,7 @@ export function SelectField<K extends string = string>({
         <View style={styles.backdropLayer}>
           <Pressable
             style={styles.backdrop}
-            accessibilityLabel="إغلاق القائمة"
+            accessibilityLabel={"Lijst sluiten"}
             onPress={() => setOpen(false)}
           />
           <View style={styles.sheet} testID={testID ? `${testID}-sheet` : undefined}>
@@ -119,7 +119,7 @@ export function SelectField<K extends string = string>({
               </Text>
               <IconButton
                 icon="x"
-                accessibilityLabel="إغلاق"
+                accessibilityLabel={"Sluiten"}
                 onPress={() => setOpen(false)}
               />
             </View>
@@ -196,7 +196,7 @@ const styles = StyleSheet.create({
   label: {
     ...typography.label,
     color: colors.textPrimary,
-    textAlign: 'right',
+    textAlign: 'left',
   },
   trigger: {
     flexDirection: 'row',
@@ -219,7 +219,7 @@ const styles = StyleSheet.create({
   triggerText: {
     flex: 1,
     color: colors.textPrimary,
-    textAlign: 'right',
+    textAlign: 'left',
   },
   placeholderText: {
     color: colors.textMuted,
@@ -229,7 +229,7 @@ const styles = StyleSheet.create({
   helper: {
     ...typography.helper,
     color: colors.textMuted,
-    textAlign: 'right', maxWidth: PROSE_MEASURE},
+    textAlign: 'left', maxWidth: PROSE_MEASURE},
   backdropLayer: {
     flex: 1,
     alignItems: 'center',
@@ -268,7 +268,7 @@ const styles = StyleSheet.create({
   sheetTitle: {
     flex: 1,
     color: colors.textPrimary,
-    textAlign: 'right',
+    textAlign: 'left',
   },
   optionScroll: {
     flexGrow: 0,
@@ -295,11 +295,11 @@ const styles = StyleSheet.create({
   },
   optionLabel: {
     color: colors.textPrimary,
-    textAlign: 'right',
+    textAlign: 'left',
   },
   optionLabelSelected: {color: colors.accentStrong},
   optionDescription: {
     color: colors.textMuted,
-    textAlign: 'right',
+    textAlign: 'left',
   },
 });

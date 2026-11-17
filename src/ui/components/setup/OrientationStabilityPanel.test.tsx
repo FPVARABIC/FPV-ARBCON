@@ -33,8 +33,8 @@ describe('OrientationStabilityPanel', () => {
         <OrientationStabilityPanel orientationView={{ status: 'WAITING' }} />,
       );
     });
-    expect(text(renderer)).toContain('قراءة فقط');
-    expect(text(renderer)).toContain('يتطلب الفحص قراءة اتجاه مباشرة');
+    expect(text(renderer)).toContain("Alleen lezen");
+    expect(text(renderer)).toContain("Deze controle vereist live-oriëntatiemetingen uit een verbonden sessie.");
     expect(find(renderer, 'orientation-stability-start').props.disabled).toBe(
       true,
     );
@@ -70,8 +70,8 @@ describe('OrientationStabilityPanel', () => {
     expect(
       find(renderer, 'orientation-stability-result-STABLE_LEVEL'),
     ).toBeDefined();
-    expect(text(renderer)).toContain('متوسط الدوران');
-    expect(text(renderer)).toContain('ليست شهادة على سلامة المستشعر');
+    expect(text(renderer)).toContain("Gemiddelde roll");
+    expect(text(renderer)).toContain("Dit beschrijft alleen de weergegeven metingen tijdens de controle. Het bewijst niet dat de sensor goed werkt of de kalibratie geslaagd is.");
     act(() => renderer.unmount());
   });
 
@@ -148,7 +148,7 @@ describe('OrientationStabilityPanel', () => {
       );
     });
     expect(find(renderer, 'orientation-stability-progress')).toBeDefined();
-    expect(text(renderer)).toContain('جارٍ القياس');
+    expect(text(renderer)).toContain("Meten");
     act(() => renderer.unmount());
     jest.useRealTimers();
   });
@@ -215,7 +215,7 @@ describe('OrientationStabilityPanel', () => {
       ).toBeDefined();
       act(() => jest.advanceTimersByTime(5_000));
       expect(find(renderer, 'orientation-stability-interrupted')).toBeDefined();
-      expect(text(renderer)).toContain('لم تصل قراءة اتجاه مباشرة بعد المعايرة');
+      expect(text(renderer)).toContain("Er is na de kalibratie niet op tijd een live-oriëntatiemeting ontvangen. Controleer de verbinding en herhaal de controle.");
       act(() => renderer.unmount());
     } finally {
       jest.useRealTimers();

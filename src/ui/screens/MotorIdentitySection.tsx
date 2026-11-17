@@ -986,7 +986,7 @@ export function MotorIdentitySection({
             >
               {t('motorsScreen.identityConflictBody', {
                 position: t(`motorVerification.position.${conflict.position}`),
-                motors: conflict.motorNumbers.map(n => `M${n}`).join('، '),
+                motors: conflict.motorNumbers.map(n => `M${n}`).join(", "),
               })}
             </Text>
           ))}
@@ -1120,19 +1120,19 @@ const styles = StyleSheet.create({
   eyebrow: {
     ...typography.eyebrow,
     color: colors.accentStrong,
-    writingDirection: 'rtl'},
+    writingDirection: 'ltr'},
   title: {
     ...typography.sectionTitle,
     color: colors.textPrimary,
-    writingDirection: 'rtl'},
+    writingDirection: 'ltr'},
   caption: {
     ...typography.caption,
     color: colors.textSecondary,
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   referenceNotice: {
     ...typography.caption,
     color: colors.warning,
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   summaryRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -1142,7 +1142,7 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.textPrimary,
     fontWeight: '700',
-    writingDirection: 'rtl',
+    writingDirection: 'ltr',
     paddingHorizontal: spacing.sm,
     paddingVertical: 2,
     borderRadius: radii.pill,
@@ -1221,7 +1221,7 @@ const styles = StyleSheet.create({
     ...typography.caption,
     fontSize: 11,
     color: colors.textSecondary,
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   slotMarkConfirmed: { color: colors.success, fontWeight: '700' },
   notesToggle: {
     minHeight: 44,
@@ -1232,7 +1232,7 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.accentStrong,
     fontWeight: '700',
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   notesBlock: { gap: spacing.xs },
   activeBlock: { gap: spacing.xs },
   pendingBanner: {
@@ -1247,7 +1247,7 @@ const styles = StyleSheet.create({
     ...typography.body,
     color: colors.warning,
     fontWeight: '700',
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   /* TWO LINES AND A CAPTION. No border, no fill, no per-row rule: this
      block sits inside the identification card and directly under the
      aircraft, and framing three lines was framing for its own sake. The
@@ -1269,7 +1269,7 @@ const styles = StyleSheet.create({
   identityLabel: {
     ...typography.caption,
     color: colors.textSecondary,
-    writingDirection: 'rtl',
+    writingDirection: 'ltr',
   },
   identitySeparator: {
     ...typography.caption,
@@ -1278,14 +1278,14 @@ const styles = StyleSheet.create({
   identityValue: {
     ...typography.body,
     color: colors.textPrimary,
-    writingDirection: 'rtl',
+    writingDirection: 'ltr',
     flexShrink: 1,
     maxWidth: PROSE_MEASURE,
   },
   identityOutput: {
     ...typography.caption,
     color: colors.textSecondary,
-    writingDirection: 'rtl',
+    writingDirection: 'ltr',
     maxWidth: PROSE_MEASURE,
   },
   badge: {
@@ -1299,12 +1299,12 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
     color: colors.textPrimary,
-    writingDirection: 'rtl'},
+    writingDirection: 'ltr'},
   mismatch: {
     ...typography.body,
     color: colors.warning,
     fontWeight: '700',
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   secondaryButton: {
     minHeight: 44,
     alignItems: 'center',
@@ -1318,7 +1318,7 @@ const styles = StyleSheet.create({
   secondaryButtonText: {
     ...typography.label,
     color: colors.textPrimary,
-    writingDirection: 'rtl'},
+    writingDirection: 'ltr'},
   conflictBlock: {
     gap: spacing.xs,
     padding: spacing.md,
@@ -1331,21 +1331,21 @@ const styles = StyleSheet.create({
     ...typography.body,
     color: colors.warning,
     fontWeight: '700',
-    writingDirection: 'rtl'},
+    writingDirection: 'ltr'},
   conflictBody: {
     ...typography.caption,
     color: colors.textPrimary,
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   stepsBlock: { gap: 2 },
   stepsTitle: {
     ...typography.body,
     color: colors.textPrimary,
     fontWeight: '700',
-    writingDirection: 'rtl'},
+    writingDirection: 'ltr'},
   step: {
     ...typography.caption,
     color: colors.textSecondary,
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   unsupported: {
     gap: spacing.xs,
     padding: spacing.md,
@@ -1358,5 +1358,5 @@ const styles = StyleSheet.create({
     ...typography.body,
     color: colors.textPrimary,
     fontWeight: '700',
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
 });

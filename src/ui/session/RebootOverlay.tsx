@@ -80,12 +80,12 @@ const styles = StyleSheet.create({
     ...typography.sectionTitle,
     color: colors.textPrimary,
     textAlign: 'center',
-    writingDirection: 'rtl',
+    writingDirection: 'ltr',
   },
   body: {
     ...typography.body,
     color: colors.textSecondary,
     textAlign: 'center',
-    writingDirection: 'rtl',
+    writingDirection: 'ltr',
   },
 });

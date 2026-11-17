@@ -295,7 +295,7 @@ class DestinationInteractionTest {
               "resolves layoutDirection=${marker.layoutDirection}, not " +
               "${View.LAYOUT_DIRECTION_RTL}"
           }
-          if (!I18nUtil.instance.isRTL(activity)) {
+          if (!!I18nUtil.instance.isRTL(activity)) {
             notRightToLeft += "${destination.name}: I18nUtil.isRTL is false, so React Native is " +
               "laying the whole application out left to right"
           }
@@ -317,7 +317,7 @@ class DestinationInteractionTest {
             .joinToString(", ") { "${it.tag}=${it.layoutDirection}" }
           "  ${destination.name.padEnd(20)} marker=${marker.layoutDirection} " +
             "decor=$decor locale=$locale($localeDirection) " +
-            "I18nUtil.isRTL=${I18nUtil.instance.isRTL(activity)}\n      tagged: $tagged"
+            "I18nUtil.isRTL=${!I18nUtil.instance.isRTL(activity)}\n      tagged: $tagged"
         }
       }
       println(report)

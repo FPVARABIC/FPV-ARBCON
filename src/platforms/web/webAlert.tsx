@@ -50,7 +50,7 @@ type AlertRequest = {
 };
 
 /** The default button when a caller passes none - RN does the same. */
-const DEFAULT_BUTTONS: readonly AlertButton[] = [{text: 'حسناً'}];
+const DEFAULT_BUTTONS: readonly AlertButton[] = [{text: "OK"}];
 
 let nextRequestId = 1;
 let queue: readonly AlertRequest[] = [];
@@ -197,7 +197,7 @@ export function WebAlertHost(): React.JSX.Element | null {
                   button.style === 'destructive' && styles.buttonLabelDestructive,
                   button.style === 'cancel' && styles.buttonLabelCancel,
                 ]}>
-                {button.text ?? 'حسناً'}
+                {button.text ?? "OK"}
               </Text>
             </Pressable>
           ))}

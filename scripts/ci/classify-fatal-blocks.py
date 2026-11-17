@@ -17,7 +17,7 @@ reads it to discount the next one.
 
 FOUR VERDICTS, BECAUSE "NOT OURS" IS NOT ONE THING.
 
-  APP_FATAL         com.fpvarbcon, com.fpvarbcon.test, or a named
+  APP_FATAL         com.fpvarbcon.nl, com.fpvarbcon.nl.test, or a named
                     subprocess of either. FAILS as a defect in the
                     application, and the block is printed whole.
 
@@ -97,7 +97,7 @@ from __future__ import annotations
 import re
 import sys
 
-APP_PACKAGE = "com.fpvarbcon"
+APP_PACKAGE = "com.fpvarbcon.nl"
 
 APP_FATAL = "APP_FATAL"
 PLATFORM_FATAL = "PLATFORM_FATAL"
@@ -315,8 +315,8 @@ def belongs_to_app(process: str) -> bool:
     Our application, our instrumentation, or a named subprocess of either.
 
     Matched on the whole name or on a "package:suffix" subprocess, never on
-    a prefix: com.fpvarbcon.debug would be a DIFFERENT application id and
-    com.fpvarbconfuser is not ours at all.
+    a prefix: com.fpvarbcon.nl.debug would be a DIFFERENT application id and
+    com.fpvarbcon.nlfuser is not ours at all.
     """
     return (
         process == APP_PACKAGE
@@ -456,13 +456,13 @@ def report(blocks: list[dict], out=sys.stdout) -> int:
 
 APP_CRASH = """\
 09-11 20:39:15.619  6941  7741 E AndroidRuntime: FATAL EXCEPTION: main
-09-11 20:39:15.619  6941  7741 E AndroidRuntime: Process: com.fpvarbcon, PID: 6941
+09-11 20:39:15.619  6941  7741 E AndroidRuntime: Process: com.fpvarbcon.nl, PID: 6941
 09-11 20:39:15.619  6941  7741 E AndroidRuntime: java.lang.IllegalStateException: planted
 """
 
 APP_SUBPROCESS_CRASH = """\
 09-11 20:39:15.619  7000  7000 E AndroidRuntime: FATAL EXCEPTION: worker
-09-11 20:39:15.619  7000  7000 E AndroidRuntime: Process: com.fpvarbcon:transport, PID: 7000
+09-11 20:39:15.619  7000  7000 E AndroidRuntime: Process: com.fpvarbcon.nl:transport, PID: 7000
 09-11 20:39:15.619  7000  7000 E AndroidRuntime: java.lang.IllegalStateException: planted
 """
 
@@ -486,13 +486,13 @@ GMAIL_CRASH = """\
 
 LOOKALIKE_CRASH = """\
 09-11 20:39:15.619  8000  8000 E AndroidRuntime: FATAL EXCEPTION: main
-09-11 20:39:15.619  8000  8000 E AndroidRuntime: Process: com.fpvarbconfuser, PID: 8000
+09-11 20:39:15.619  8000  8000 E AndroidRuntime: Process: com.fpvarbcon.nlfuser, PID: 8000
 09-11 20:39:15.619  8000  8000 E AndroidRuntime: java.lang.IllegalStateException: planted
 """
 
 #: No Process line, but the pid was started as ours before the crash.
 START_BEFORE_RESOLVING_TO_APP = """\
-09-11 20:38:01.100   530  1000 I am_proc_start: [0,6941,10192,com.fpvarbcon,activity,x]
+09-11 20:38:01.100   530  1000 I am_proc_start: [0,6941,10192,com.fpvarbcon.nl,activity,x]
 09-11 20:39:15.619  6941  7741 E AndroidRuntime: FATAL EXCEPTION: main
 09-11 20:39:15.619  6941  7741 E AndroidRuntime: java.lang.IllegalStateException: planted
 """
@@ -527,7 +527,7 @@ PID_REUSED_AFTER_DEATH = """\
 PID_REUSED_THEN_OURS = """\
 09-11 20:38:01.100   530  1000 I am_proc_start: [0,6941,10150,com.google.android.gm,activity,x]
 09-11 20:38:40.000   530  1000 I am_proc_died: [0,6941,com.google.android.gm,0,0]
-09-11 20:38:55.000   530  1000 I am_proc_start: [0,6941,10192,com.fpvarbcon,activity,x]
+09-11 20:38:55.000   530  1000 I am_proc_start: [0,6941,10192,com.fpvarbcon.nl,activity,x]
 09-11 20:39:15.619  6941  7741 E AndroidRuntime: FATAL EXCEPTION: main
 09-11 20:39:15.619  6941  7741 E AndroidRuntime: java.lang.IllegalStateException: planted
 """
@@ -537,7 +537,7 @@ PID_REUSED_THEN_OURS = """\
 START_ONLY_AFTER_CRASH = """\
 09-11 20:39:15.619  6941  7741 E AndroidRuntime: FATAL EXCEPTION: main
 09-11 20:39:15.619  6941  7741 E AndroidRuntime: java.lang.IllegalStateException: planted
-09-11 20:40:02.000   530  1000 I am_proc_start: [0,6941,10192,com.fpvarbcon,activity,x]
+09-11 20:40:02.000   530  1000 I am_proc_start: [0,6941,10192,com.fpvarbcon.nl,activity,x]
 """
 
 #: Nothing anywhere names this pid.
@@ -557,7 +557,7 @@ E AndroidRuntime: java.lang.IllegalStateException: planted
 #: pid. logcat's resolution allows it, and nothing then says which of them
 #: held the number - a coin toss is not attribution.
 TIED_STARTS = """\
-09-11 20:38:01.100   530  1000 I am_proc_start: [0,6941,10192,com.fpvarbcon,activity,x]
+09-11 20:38:01.100   530  1000 I am_proc_start: [0,6941,10192,com.fpvarbcon.nl,activity,x]
 09-11 20:38:01.100   530  1000 I am_proc_start: [0,6941,10150,com.google.android.gm,activity,x]
 09-11 20:39:15.619  6941  7741 E AndroidRuntime: FATAL EXCEPTION: main
 09-11 20:39:15.619  6941  7741 E AndroidRuntime: java.lang.IllegalStateException: planted

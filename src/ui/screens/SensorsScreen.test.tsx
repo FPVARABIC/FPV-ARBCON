@@ -811,7 +811,7 @@ describe('calibration completion is observed, never assumed', () => {
     });
     const outcome = textOf(renderer, 'sensors-calibrate-mag-outcome');
     expect(outcome).toBe(t('sensorsScreen.calibration.outcome.OBSERVATION_CANCELLED'));
-    expect(outcome).not.toContain('تم إلغاء المعايرة');
+    expect(outcome).not.toContain("Kalibratie geannuleerd");
   });
 
   it('38. a magnetometer run with no movement says so, and offers the retry advice', async () => {
@@ -982,7 +982,7 @@ describe('the screen stays inside its own scope, and stays operable', () => {
   it('48. the hardware-verification notice is unconditional and states the behavioural test', async () => {
     const {renderer} = await mount(makeController());
     expect(byTestID(renderer, 'sensors-hardware-verification')).toBeDefined();
-    expect(texts(renderer).join(' ')).toContain('حرّك كل محور منفردًا');
+    expect(texts(renderer).join(' ')).toContain('beweeg elke as afzonderlijk');
   });
 });
 

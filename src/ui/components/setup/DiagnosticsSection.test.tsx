@@ -106,7 +106,7 @@ describe('DiagnosticsSection - Region 4 structure', () => {
   it('renders the exact Arabic section title as a header', () => {
     const renderer = render(view());
     const title = host(renderer, 'diagnostics-title');
-    expect(title.props.children).toBe('التشخيص والجاهزية');
+    expect(title.props.children).toBe("Diagnose en gereedheid");
     expect(title.props.accessibilityRole).toBe('header');
     unmount(renderer);
   });
@@ -136,15 +136,15 @@ describe('DiagnosticsSection - Region 4 structure', () => {
   it('gives every block one accessibility node whose label starts with its own heading', () => {
     const renderer = render(view());
     for (const [testID, heading] of [
-      ['diagnostics-identity', 'متحكم الطيران'],
-      ['diagnostics-compatibility', 'التوافق'],
-      ['diagnostics-reading-state', 'حالة القراءة'],
-      ['diagnostics-sensors', 'المستشعرات المُبلَّغ عن اكتشافها'],
-      ['diagnostics-blockers', 'موانع التسليح'],
+      ['diagnostics-identity', "Vluchtcontroller"],
+      ['diagnostics-compatibility', "Compatibiliteit"],
+      ['diagnostics-reading-state', "Uitleesstatus"],
+      ['diagnostics-sensors', "Door de vluchtcontroller gedetecteerde sensoren"],
+      ['diagnostics-blockers', "Armblokkeringsredenen"],
     ] as const) {
       const node = host(renderer, testID);
       expect(node.props.accessible).toBe(true);
-      expect(label(renderer, testID).startsWith(`${heading}،`)).toBe(true);
+      expect(label(renderer, testID).startsWith(`${heading},`)).toBe(true);
     }
     unmount(renderer);
   });
@@ -164,16 +164,16 @@ describe('DiagnosticsSection - identity and compatibility copy', () => {
     const renderer = render(view());
     expect(texts(renderer)).toEqual(
       expect.arrayContaining([
-        'اللوحة: SPEEDYBEEF405V3',
+        "Printplaat: SPEEDYBEEF405V3",
         // WAS 'البرنامج الثابت: BTFL'. The four-character wire identifier
         // is an external project's name in shorthand, and this panel is
         // this application's own chrome. What an operator can act on is
         // whether the dialect their board speaks has been verified here.
-        'نوع البرنامج الثابت: MSP متوافق',
+        "Firmwaretype: Compatibel met MSP",
       ]),
     );
     expect(texts(renderer).join(' ')).not.toMatch(/BTFL|betaflight/i);
-    expect(texts(renderer)).toContain('متوافق مع هذا الإصدار');
+    expect(texts(renderer)).toContain("Compatibel met deze versie");
     unmount(renderer);
   });
 
@@ -184,9 +184,9 @@ describe('DiagnosticsSection - identity and compatibility copy', () => {
     } as FlightControllerIdentity;
     const renderer = render(view({ identity: other }));
     expect(texts(renderer)).toContain(
-      'واجهة غير مُتحقَّق منها في هذا الإصدار؛ تُعرض القراءات فقط',
+      "Interface niet geverifieerd voor deze versie; alleen metingen beschikbaar",
     );
-    expect(texts(renderer)).not.toContain('متوافق مع هذا الإصدار');
+    expect(texts(renderer)).not.toContain("Compatibel met deze versie");
     unmount(renderer);
   });
 
@@ -194,36 +194,36 @@ describe('DiagnosticsSection - identity and compatibility copy', () => {
     const identifying = render(
       view({ identificationStatus: 'RUNNING', identity: undefined }),
     );
-    expect(texts(identifying)).toContain('جارٍ التعرّف على متحكم الطيران');
+    expect(texts(identifying)).toContain("Vluchtcontroller identificeren…");
     unmount(identifying);
 
     const failed = render(
       view({ identificationStatus: 'FAILED', identity: undefined }),
     );
-    expect(texts(failed)).toContain('تعذّر التعرّف على متحكم الطيران');
-    expect(texts(failed)).toContain('تعذّر التحقّق من التوافق');
+    expect(texts(failed)).toContain("Vluchtcontroller kon niet worden geïdentificeerd");
+    expect(texts(failed)).toContain("Compatibiliteit kon niet worden geverifieerd");
     unmount(failed);
   });
 });
 
 describe('DiagnosticsSection - lifecycle state copy', () => {
   const cases: Array<[string, Partial<SetupDiagnosticsInput>, string]> = [
-    ['disconnected', { connected: false }, 'غير متصل'],
-    ['unsupported', { channelState: 'UNSUPPORTED' }, 'غير مدعوم'],
-    ['channel error', { channelState: 'DISABLED' }, 'تعذرت قراءة البيانات'],
+    ['disconnected', { connected: false }, "Niet verbonden"],
+    ['unsupported', { channelState: 'UNSUPPORTED' }, "Niet ondersteund"],
+    ['channel error', { channelState: 'DISABLED' }, "Gegevens konden niet worden uitgelezen"],
     [
       'unavailable',
       { status: 'UNAVAILABLE', value: undefined },
-      'البيانات غير متاحة',
+      "Gegevens niet beschikbaar",
     ],
-    ['waiting', { status: 'WAITING', value: undefined }, 'بانتظار أول قراءة'],
+    ['waiting', { status: 'WAITING', value: undefined }, "Wachten op eerste meting"],
     [
       'read error',
       { status: 'ERROR', value: undefined },
-      'تعذرت قراءة البيانات',
+      "Gegevens konden niet worden uitgelezen",
     ],
-    ['stale', { status: 'STALE' }, 'القراءة غير محدثة'],
-    ['fresh', {}, 'القراءة محدثة'],
+    ['stale', { status: 'STALE' }, "Meting verouderd"],
+    ['fresh', {}, "Meting actueel"],
   ];
 
   it.each(cases)(
@@ -268,18 +268,18 @@ describe('DiagnosticsSection - sensor truthfulness', () => {
     const renderer = render(view());
     expect(texts(renderer)).toEqual(
       expect.arrayContaining([
-        'المستشعرات المُبلَّغ عن اكتشافها',
-        'ACC — مكتشف',
-        'GPS — مكتشف',
-        'GYRO — مكتشف',
+        "Door de vluchtcontroller gedetecteerde sensoren",
+        "ACC — Gedetecteerd",
+        "GPS — Gedetecteerd",
+        "GYRO — Gedetecteerd",
         // The fixture mask omits these, and their absence is now VISIBLE.
-        'BARO — غير مكتشف',
-        'MAG — غير مكتشف',
-        'RANGEFINDER — غير مكتشف',
-        'OPTICALFLOW — غير مكتشف',
+        "BARO — Niet gedetecteerd",
+        "MAG — Niet gedetecteerd",
+        "RANGEFINDER — Niet gedetecteerd",
+        "OPTICALFLOW — Niet gedetecteerd",
       ]),
     );
-    expect(texts(renderer)).not.toContain('BARO — مكتشف');
+    expect(texts(renderer)).not.toContain("BARO — Gedetecteerd");
     unmount(renderer);
   });
 
@@ -287,14 +287,14 @@ describe('DiagnosticsSection - sensor truthfulness', () => {
     const renderer = render(
       view({ value: value({ sensorPresenceMask: Math.pow(2, 9) }) }),
     );
-    expect(texts(renderer)).toContain('بت غير معروف 0x200');
+    expect(texts(renderer)).toContain("Onbekende bit 0x200");
     unmount(renderer);
   });
 
   it('an empty mask states the reading, never a health conclusion', () => {
     const renderer = render(view({ value: value({ sensorPresenceMask: 0 }) }));
     expect(texts(renderer)).toContain(
-      'لم يُبلِّغ متحكم الطيران عن أي مستشعر في هذه القراءة',
+      "De vluchtcontroller meldt in deze meting geen sensoren",
     );
     unmount(renderer);
   });
@@ -302,7 +302,7 @@ describe('DiagnosticsSection - sensor truthfulness', () => {
   it('says sensors cannot be confirmed when there is no reading', () => {
     const renderer = render(view({ status: 'WAITING', value: undefined }));
     expect(texts(renderer)).toContain(
-      'لا يمكن تأكيد المستشعرات في الوقت الحالي',
+      "Sensoren kunnen momenteel niet worden bevestigd",
     );
     unmount(renderer);
   });
@@ -312,9 +312,9 @@ describe('DiagnosticsSection - blocker truthfulness', () => {
   it('a fresh zero mask says only that the FC reported no blocker in that reading', () => {
     const renderer = render(view());
     const all = texts(renderer).join(' | ');
-    expect(all).toContain('لم يُبلِّغ متحكم الطيران عن أي مانع في هذه القراءة');
-    expect(all).not.toContain('جاهزة للطيران');
-    expect(all).not.toContain('جاهزة للتسليح');
+    expect(all).toContain("De vluchtcontroller meldt in deze meting geen armblokkeringen");
+    expect(all).not.toContain("vliegklaar");
+    expect(all).not.toContain("gereed om te armen");
     unmount(renderer);
   });
 
@@ -324,7 +324,7 @@ describe('DiagnosticsSection - blocker truthfulness', () => {
         value: value({ readiness: { armingDisableFlags: Math.pow(2, 7) } }),
       }),
     );
-    expect(texts(renderer)).toContain('الخانق ليس في وضعه الأدنى (THROTTLE)');
+    expect(texts(renderer)).toContain("Gas staat niet op de minimumstand (THROTTLE)");
     unmount(renderer);
   });
 
@@ -343,7 +343,7 @@ describe('DiagnosticsSection - blocker truthfulness', () => {
       // BST has no proven set-site, so it renders as the neutral
       // token-only fallback instead of an invented Arabic meaning.
       if (bit === 15) {
-        expect(blockerLine).toBe('سبب مانع للتسليح: BST');
+        expect(blockerLine).toBe("Armblokkeringsreden: BST");
       } else {
         expect(blockerLine).toMatch(/\)$/);
       }
@@ -358,8 +358,8 @@ describe('DiagnosticsSection - blocker truthfulness', () => {
     );
     expect(texts(renderer)).toEqual(
       expect.arrayContaining([
-        'لم يتم اكتشاف الجيروسكوب (NO_GYRO)',
-        'الطائرة ليست مستوية (ANGLE)',
+        "Geen gyroscoop gedetecteerd (NO_GYRO)",
+        "Het toestel staat niet horizontaal (ANGLE)",
       ]),
     );
     unmount(renderer);
@@ -371,7 +371,7 @@ describe('DiagnosticsSection - blocker truthfulness', () => {
         value: value({ readiness: { armingDisableFlags: Math.pow(2, 30) } }),
       }),
     );
-    expect(texts(renderer)).toContain('مانع غير معروف: بت 30 (0x40000000)');
+    expect(texts(renderer)).toContain("Onbekende blokkering: bit 30 (0x40000000)");
     unmount(renderer);
   });
 
@@ -385,21 +385,21 @@ describe('DiagnosticsSection - blocker truthfulness', () => {
     );
     const all = texts(renderer).join(' | ');
     expect(all).toContain(
-      'بيانات الجاهزية غير مكتملة أو غير متسقة؛ تعذّر تأكيد موانع التسليح',
+      "Gereedheidsgegevens onvolledig of inconsistent; armblokkeringsredenen niet bevestigd",
     );
     expect(all).not.toContain(
-      'لم يُبلِّغ متحكم الطيران عن أي مانع في هذه القراءة',
+      "De vluchtcontroller meldt in deze meting geen armblokkeringen",
     );
-    expect(all).not.toContain('جاهزة للطيران');
+    expect(all).not.toContain("vliegklaar");
     // The safely decoded prefix (sensors) is still shown.
     expect(texts(renderer)).toEqual(
-      expect.arrayContaining(['ACC — مكتشف', 'GYRO — مكتشف']),
+      expect.arrayContaining(["ACC — Gedetecteerd", "GYRO — Gedetecteerd"]),
     );
     unmount(renderer);
   });
 
   it('says blockers cannot be confirmed for stale, short, failed, unsupported and disconnected data', () => {
-    const unconfirmed = 'لا يمكن تأكيد موانع التسليح في الوقت الحالي';
+    const unconfirmed = "Armblokkeringsredenen kunnen momenteel niet worden bevestigd";
     for (const overrides of [
       { status: 'STALE' as const },
       { value: value({ readiness: { pidProfileCount: 3 } }) },
@@ -411,7 +411,7 @@ describe('DiagnosticsSection - blocker truthfulness', () => {
       const all = texts(renderer).join(' | ');
       expect(all).toContain(unconfirmed);
       expect(all).not.toContain(
-        'لم يُبلِّغ متحكم الطيران عن أي مانع في هذه القراءة',
+        "De vluchtcontroller meldt in deze meting geen armblokkeringen",
       );
       unmount(renderer);
     }
@@ -423,8 +423,8 @@ describe('DiagnosticsSection - blocker truthfulness', () => {
       view({ value: value({ readiness: { armingDisableFlags: mask } }) }),
     );
     const blockerLabel = label(renderer, 'diagnostics-blockers');
-    expect(blockerLabel).toContain('الخانق ليس في وضعه الأدنى (THROTTLE)');
-    expect(blockerLabel).toContain('مانع غير معروف: بت 30 (0x40000000)');
+    expect(blockerLabel).toContain("Gas staat niet op de minimumstand (THROTTLE)");
+    expect(blockerLabel).toContain("Onbekende blokkering: bit 30 (0x40000000)");
     unmount(renderer);
   });
 });

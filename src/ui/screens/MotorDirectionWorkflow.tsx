@@ -166,7 +166,7 @@ export function MotorDirectionWorkflow({
                   onPress={() => onSelectMotor(motorNumber)}
                   accessibilityRole="radio"
                   accessibilityState={{selected}}
-                  accessibilityLabel={`M${motorNumber}، ${t(
+                  accessibilityLabel={`M${motorNumber}, ${t(
                     `motorsScreen.${motorDirectionWorkflowStatusKey(status)}`,
                   )}`}
                   style={[
@@ -266,7 +266,7 @@ const styles = StyleSheet.create({
   distinctionNote: {
     ...typography.caption,
     color: colors.textSecondary,
-    writingDirection: 'rtl',
+    writingDirection: 'ltr',
     maxWidth: PROSE_MEASURE,
   },
   ackRow: {
@@ -284,7 +284,7 @@ const styles = StyleSheet.create({
     ...typography.body,
     color: colors.textPrimary,
     fontWeight: '600',
-    writingDirection: 'rtl',
+    writingDirection: 'ltr',
     flexShrink: 1,
     maxWidth: PROSE_MEASURE,
   },
@@ -292,13 +292,13 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.warning,
     fontWeight: '600',
-    writingDirection: 'rtl',
+    writingDirection: 'ltr',
     maxWidth: PROSE_MEASURE,
   },
   caption: {
     ...typography.caption,
     color: colors.textSecondary,
-    writingDirection: 'rtl',
+    writingDirection: 'ltr',
     maxWidth: PROSE_MEASURE,
   },
   statusBlock: {gap: spacing.xs},
@@ -306,7 +306,7 @@ const styles = StyleSheet.create({
     ...typography.label,
     color: colors.textPrimary,
     fontWeight: '600',
-    writingDirection: 'rtl',
+    writingDirection: 'ltr',
   },
   statusRow: {flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs},
   statusChip: {
@@ -337,7 +337,7 @@ const styles = StyleSheet.create({
     ...typography.caption,
     fontSize: 10,
     lineHeight: 13,
-    writingDirection: 'rtl',
+    writingDirection: 'ltr',
   },
   spinBlock: {gap: spacing.xs},
   questionBlock: {
@@ -352,14 +352,14 @@ const styles = StyleSheet.create({
     ...typography.body,
     color: colors.textPrimary,
     fontWeight: '700',
-    writingDirection: 'rtl',
+    writingDirection: 'ltr',
     maxWidth: PROSE_MEASURE,
   },
   recheckNote: {
     ...typography.caption,
     color: colors.accentStrong,
     fontWeight: '600',
-    writingDirection: 'rtl',
+    writingDirection: 'ltr',
     maxWidth: PROSE_MEASURE,
   },
   answerRow: {flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm},

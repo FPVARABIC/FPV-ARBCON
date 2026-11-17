@@ -22,7 +22,7 @@ import {chromium} from 'playwright-core';
 import {STYLES, query, PREVIEW} from './guide-spec.mjs';
 import {prepare} from './drive.mjs';
 
-const CHROME = '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
+const CHROME = process.env.CHROME_PATH ?? '/usr/bin/chromium';
 
 /**
  * Reads real state out of the DOM react-native-web produced.
@@ -76,16 +76,22 @@ const PROBE = ({testid, kind}) => {
   return {found: true, text: node.innerText || ''};
 };
 
-const browser = await chromium.launch({executablePath: CHROME, args: ['--no-sandbox']});
+const launchBrowser = () => chromium.launch({executablePath: CHROME, args: ['--no-sandbox']});
 const failures = [];
 let checked = 0;
 
 for (const style of STYLES) {
   for (const step of style.steps) {
     if (step.targets.length === 0) continue;
-    const page = await browser.newPage({viewport: {width: 390, height: 4000}, locale: 'ar'});
+    console.log(`Checking ${style.id}/${step.n}…`);
+    const browser = await launchBrowser();
+    const page = await browser.newPage({viewport: {width: 390, height: 4000}, locale: 'nl-NL'});
     await page.goto(`${PREVIEW}?${query(step.fixture)}`, {waitUntil: 'networkidle'});
     await page.waitForTimeout(1400);
+    if (step.fixture.screen === 'pid-feel') {
+      const toggle = page.getByTestId('pid-advanced-toggle');
+      if (await toggle.count() && !await page.getByTestId('pid-feel').count()) await toggle.click();
+    }
     // Same clicks capture.mjs makes, so the check reads the state the
     // picture shows and not the state the page loaded with.
     await prepare(page, step.prepare);
@@ -93,7 +99,7 @@ for (const style of STYLES) {
     for (const target of step.targets) {
       checked += 1;
       const probe = await page.evaluate(PROBE, {testid: target.testid, kind: target.kind});
-      const where = `${style.id} · الخطوة ${step.n} · ${target.testid}`;
+      const where = `${style.id} · stap ${step.n} · ${target.testid}`;
       if (!probe.found) {
         failures.push(`${where}: control NOT FOUND`);
         continue;
@@ -115,10 +121,9 @@ for (const style of STYLES) {
         }
       }
     }
-    await page.close();
+    await browser.close();
   }
 }
-await browser.close();
 
 console.log(`state-aware checks: ${checked}`);
 if (failures.length === 0) {

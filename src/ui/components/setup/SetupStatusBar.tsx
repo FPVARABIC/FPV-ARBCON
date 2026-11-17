@@ -412,7 +412,7 @@ export default function SetupStatusBar({
         <Text style={styles.footnote} testID="setup-status-unknown-bits">
           {sensors.unknownBits
             .map(bit => t('diagnostics.sensorsUnknownBit', {hex: bit.hex}))
-            .join('، ')}
+            .join(", ")}
         </Text>
       ) : null}
 

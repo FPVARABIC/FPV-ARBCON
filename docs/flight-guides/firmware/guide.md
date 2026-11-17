@@ -123,19 +123,21 @@
 
 ---
 
-## تحذيرات
+## Waarschuwingen
+** De update verwijdert al uw instellingen.** inclusief Failsafe, GPS, Rescue, accu standaard en knoppen. Backup is geen extra backup. Het verschil tussen reset en twee minuten.
 
-> **التحديث يمسح كل إعداداتك.** بما فيها Failsafe و GPS Rescue
-> ومعايرة البطارية وربط المفاتيح. النسخة الاحتياطية ليست احتياطًا
-> زائدًا — هي الفرق بين إعادة ضبط ودقيقتين.
 
-> **لا تحدّث بمراوح مركّبة.** أبدًا.
 
-> **انقطاع الاتصال أثناء الكتابة قد يترك اللوحة بلا برنامج ثابت
-> صالح.** استعمل كابلًا تثق به، ولا تحرّك الجهاز أثناء الكتابة.
+**Werk de firmware nooit bij met gemonteerde propellers.**
 
-> **بعد التحديث، إعدادات Failsafe عادت إلى أصلها.** أعد ضبطها قبل
-> أول رحلة.
+
+
+**Als het schrijven uitvalt, kan het printplaat zonder een goed vaste programma achterlaten.** Gebruik een betrouwbare kabel en laat het apparaat niet bewegen tijdens het schrijven.
+
+
+
+Na de update, zijn de Failsafe-instellingen terug naar de oorspronkelijke.
+
 
 ---
 

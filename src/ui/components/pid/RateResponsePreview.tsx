@@ -108,7 +108,7 @@ export default function RateResponsePreview({
     <View style={styles.root} testID={testID}>
       <View style={styles.headingRow}>
         <Text style={styles.title}>{copy.title}</Text>
-        {copy.available ? <Text style={styles.mathNote}>حساب رياضي من قيم الملف، ليس قراءة حيّة</Text> : null}
+        {copy.available ? <Text style={styles.mathNote}>{"Een wiskundige berekening van de dossierswaarden, geen live lezing."}</Text> : null}
       </View>
 
       {copy.available ? (
@@ -117,7 +117,7 @@ export default function RateResponsePreview({
             options={axisChips}
             selectedKey={selectedAxis}
             onSelect={onSelectAxis}
-            accessibilityLabel="محور المعاينة"
+            accessibilityLabel={"Voorbeeldas"}
             testID={`${testID}-axis`}
           />
           <View
@@ -127,8 +127,8 @@ export default function RateResponsePreview({
             accessibilityRole="image"
             accessibilityLabel={
               maximum === undefined
-                ? `${PREVIEW_AXES.find(axis => axis.key === selectedAxis)?.label}: لا يتوفر حساب`
-                : `${PREVIEW_AXES.find(axis => axis.key === selectedAxis)?.label}: الحد المتوقع ${Math.round(maximum)} درجة/ثانية`
+                ? `${PREVIEW_AXES.find(axis => axis.key === selectedAxis)?.label}: Er is geen account.`
+                : `${PREVIEW_AXES.find(axis => axis.key === selectedAxis)?.label}: verwachte limiet ${Math.round(maximum)} graden per seconde`
             }
           >
             <Svg width="100%" height="100%" viewBox={`0 0 ${VIEW_WIDTH} ${VIEW_HEIGHT}`} preserveAspectRatio="none">
@@ -155,16 +155,16 @@ export default function RateResponsePreview({
             </Svg>
           </View>
           <View style={styles.footRow}>
-            <Text style={styles.axisCaption}>وضع العصا ←→ سرعة الدوران °/s</Text>
+            <Text style={styles.axisCaption}>{"stick-positie ←→ rotatie snelheid °/s"}</Text>
             {maximum === undefined ? null : (
               <Text style={styles.maxReadout} testID={`${testID}-max`}>
-                {`أقصى ${PREVIEW_AXES.find(axis => axis.key === selectedAxis)?.label}: ${Math.round(maximum)}°/s`}
+                {`Maximaal ${PREVIEW_AXES.find(axis => axis.key === selectedAxis)?.label}: ${Math.round(maximum)}°/s`}
               </Text>
             )}
           </View>
           {draftCurve?.clipped === true ? (
             <Text style={styles.clipNote} testID={`${testID}-clipped`}>
-              {`محدود عند ${axes[selectedAxis].rateLimit}°/s`}
+              {`Beperkt bij ${axes[selectedAxis].rateLimit}°/s`}
             </Text>
           ) : null}
         </>
@@ -183,19 +183,19 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface, padding: spacing.md, gap: spacing.sm,
   },
   headingRow: {gap: 2},
-  title: {...typography.label, color: colors.textPrimary, textAlign: 'right'},
-  mathNote: {...typography.caption, color: colors.textMuted, textAlign: 'right'},
+  title: {...typography.label, color: colors.textPrimary, textAlign: 'left'},
+  mathNote: {...typography.caption, color: colors.textMuted, textAlign: 'left'},
   chart: {
     borderWidth: 1, borderColor: colors.border, borderRadius: radii.sm,
     backgroundColor: colors.backgroundRaised, overflow: 'hidden',
   },
   footRow: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: spacing.sm},
-  axisCaption: {...typography.caption, color: colors.textMuted, writingDirection: 'rtl'},
+  axisCaption: {...typography.caption, color: colors.textMuted, writingDirection: 'ltr'},
   maxReadout: {...typography.label, color: colors.accentStrong, fontVariant: ['tabular-nums']},
-  clipNote: {...typography.caption, color: colors.warning, textAlign: 'right'},
+  clipNote: {...typography.caption, color: colors.warning, textAlign: 'left'},
   unavailable: {
     borderRadius: radii.sm, borderWidth: 1, borderColor: colors.warning,
     backgroundColor: colors.warningSoft, padding: spacing.sm,
   },
-  unavailableText: {...typography.caption, color: colors.warning, textAlign: 'right', writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+  unavailableText: {...typography.caption, color: colors.warning, textAlign: 'left', writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
 });

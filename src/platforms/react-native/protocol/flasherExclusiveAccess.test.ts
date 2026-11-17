@@ -224,9 +224,9 @@ describe('detectFlightController no longer fails on a port this application hold
 
     expect(failure).toBeInstanceOf(FirmwareDetectionError);
     const text = (failure as Error).message;
-    expect(text).toContain('تطبيق أو تبويب آخر');
+    expect(text).toContain("De schildenaarauto is bezig met een applicatie of een andere bewerking. Sluit alle andere vensters die aan dit printplaat zijn verbonden en probeer opnieuw.");
     // The cable advice must NOT be what an operator reads here.
-    expect(text).not.toContain('أعد توصيل الكابل');
+    expect(text).not.toContain("Sluit de kabel opnieuw aan");
     expect((failure as FirmwareDetectionError).stage).toBe('TRANSPORT_OPEN_FAILED');
   });
 
@@ -246,7 +246,7 @@ describe('detectFlightController no longer fails on a port this application hold
       .then(() => undefined, (error: unknown) => error);
 
     expect(failure).toBeInstanceOf(FirmwareDetectionError);
-    expect((failure as Error).message).toContain('تعذّر تأكيد إغلاق جلسة الاتصال السابقة');
+    expect((failure as Error).message).toContain("Het is niet erg om te bevestigen dat je de vorige contact sessie binnen de app hebt afgesloten, en de port is nog steeds bezig. Haal de kabel uit, maak de verbinding weer en probeer het weer.");
   });
 
   /**

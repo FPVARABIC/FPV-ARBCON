@@ -56,7 +56,7 @@ import React from 'react';
 import ReactTestRenderer from 'react-test-renderer';
 
 import '../../i18n';
-import ar from '../../i18n/locales/ar.json';
+import ar from '../../i18n/locales/nl.json';
 import {MotorsScreenView} from './MotorsScreen';
 import type {
   MotorConfigurationDraft,
@@ -618,7 +618,7 @@ describe('M-F3 §38-§40/§42 - one reason, one block, full-width telemetry', ()
     expect(view.text()).toContain(ar.motorsScreen.holdBlockedNoSession);
     expect(view.text()).toContain(ar.motorsScreen.holdBlockedHint);
     // The removed title's sentence appears nowhere.
-    expect(view.text()).not.toContain('لا يمكن اختبار المحرك الآن');
+    expect(view.text()).not.toContain("De motor kan nu niet worden getest");
   });
 
   it('the live telemetry panel sits OUTSIDE the workspace columns, full width', async () => {

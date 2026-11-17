@@ -25,8 +25,8 @@ function selected(step) {
   const chips = step.targets.filter(t => t.kind === 'option' && t.expect === 'selected').length;
   const toggles = step.targets.filter(t => t.kind === 'switch' && t.expect === 'on').length;
   const parts = [];
-  if (chips > 0) parts.push(`${chips} خيار محدَّد`);
-  if (toggles > 0) parts.push(`${toggles} مفتاح مفعّل`);
+  if (chips > 0) parts.push(`${chips} is een gespecificeerde optie.`);
+  if (toggles > 0) parts.push(`${toggles} is geactiveerd.`);
   return parts.join(' · ');
 }
 
@@ -34,10 +34,10 @@ for (const style of STYLES) {
   const lines = [
     BEGIN,
     '',
-    '## خطوات الضبط — بالترتيب',
+    "De stapjes in de volgorde",
     '',
-    'اتبعها من الأولى إلى الأخيرة. كل خطوة تُظهر الشاشة نفسها بالقيم',
-    'الموصى بها في هذا الدليل، لا بقيم نمط آخر.',
+    "Volg haar van het eerste tot het laatste. Elke stap geeft het scherm dezelfde waarden.",
+    "Aanbevolen in deze handleiding, geen andere stijlwaarden.",
     '',
   ];
 
@@ -45,12 +45,12 @@ for (const style of STYLES) {
     const v = values(step);
     const s = selected(step);
     const sources = [...new Set(step.targets.map(t => t.source).filter(x => x && x !== 'C'))];
-    lines.push(`### الخطوة ${step.n} — ${step.titleAr}`);
+    lines.push(`Stap ${step.n}  —  ${step.titleAr}`);
     lines.push('');
-    lines.push(`**أين:** ${step.screen}`);
+    lines.push(`${step.screen}.`);
     if (v !== '' || s !== '') {
       lines.push('');
-      lines.push(`**الموصى به:** ${[v, s].filter(Boolean).join(' · ')}${sources.length > 0 ? `  ·  المصدر: ${sources.join('، ')}` : ''}`);
+      lines.push(`Aanbevolen: ${[v, s].filter(Boolean).join(' · ')}${sources.length > 0 ? `· Bron: ${sources.join(", ")}` : ''}`);
     }
     lines.push('');
     lines.push(`![${step.titleAr} — ${step.screen}](images/${step.n}-${step.shot}.png)`);
@@ -61,30 +61,30 @@ for (const style of STYLES) {
     }
   }
 
-  lines.push('> كل صورة أعلاه مأخوذة من بناء التطبيق الحالي، ومفحوصة آليًا على');
-  lines.push('> **حالة عنصر التحكم نفسه** — القيمة داخل الحقل، والخيار المحدَّد،');
-  lines.push('> والمفتاح المفعّل — لا على مجرد ظهور النص في الصورة.');
+  lines.push("Alle foto's hierboven zijn afkomstig van de bouw van de huidige app, en worden automatisch gecontroleerd op");
+  lines.push("De waarde binnen het veld, de gespecificeerde optie,");
+  lines.push("De actieve sleutel is niet alleen het verschijnen van de tekst in de foto.");
   lines.push('');
 
   /* Everything the steps do NOT change still gets a verdict here, so a
    * reader never has to wonder whether we forgot a setting - or open
    * another style's corner to find out what we decided. */
   const LABEL = {
-    STEP: 'خطوة',
-    ACTION: 'إجراء — بلا صورة',
-    PILOT_PREFERENCE: 'تفضيل الطيار',
-    KEEP_DEFAULT: 'اتركه كما هو',
-    NOT_APPLICABLE: 'لا ينطبق',
+    STEP: "Stap",
+    ACTION: "Procedure  —  zonder foto",
+    PILOT_PREFERENCE: "Voorkeur van de piloot",
+    KEEP_DEFAULT: "Ongewijzigd laten",
+    NOT_APPLICABLE: "Niet van toepassing",
   };
   const decisions = DECISIONS[style.id] ?? [];
   lines.push('---');
   lines.push('');
-  lines.push('## بقية الإعدادات — قرار لكل واحد');
+  lines.push("De rest van de instellingen is een keuze voor iedereen.");
   lines.push('');
-  lines.push('كل ما لا تغيّره الخطوات أعلاه له قرار مكتوب هنا، حتى لا تبقى');
-  lines.push('تتساءل هل نسيناه. القرارات تخص **هذا النمط وحده**.');
+  lines.push("Alles wat de stappen hierboven niet veranderen, heeft hier een besluit geschreven, zodat je niet blijft.");
+  lines.push("Je vraagt je af of we hem vergeten zijn. De beslissingen zijn alleen van deze stijl.");
   lines.push('');
-  lines.push('| الإعداد | القرار | التفاصيل | المصدر |');
+  lines.push("De voorbereiding, de beslissing, de details, de bron.");
   lines.push('|---|---|---|---|');
   for (const d of decisions) {
     lines.push(`| ${d.what} | **${LABEL[d.kind]}** | ${d.detail} | ${d.source ?? '—'} |`);

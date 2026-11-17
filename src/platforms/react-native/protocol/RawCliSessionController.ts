@@ -101,17 +101,17 @@ export function normalizeCliCommand(command: string): string | undefined {
   const value = command.trim();
   if (value.length === 0 || value.startsWith('#')) return undefined;
   if (value.length > MAX_COMMAND_CHARACTERS) {
-    throw new Error('أمر CLI أطول من الحد الآمن.');
+    throw new Error("CLI is langer dan de veiligheidsgrens.");
   }
   for (const character of value) {
     const code = character.charCodeAt(0);
     if (code < 32 || code > 126) {
-      throw new Error('أمر CLI يحتوي محارف غير مدعومة.');
+      throw new Error("De CLI-opdracht bevat niet-ondersteunde microfoons.");
     }
   }
   if (/^(?:save|exit)\b/i.test(value)) {
     throw new Error(
-      'save وexit يداران من أزرار الجلسة ولا يقبلان داخل قائمة الأوامر.',
+      "save en exit worden van de sessieknoppen afgesloten en worden niet binnen de bestellijst geaccepteerd.",
     );
   }
   return value;
@@ -210,7 +210,7 @@ export class RawCliSessionController {
   clearOutput(): void {
     this.requireActive();
     if (this.waiter !== undefined)
-      throw new Error('انتظر اكتمال أمر CLI الحالي قبل مسح المخرجات.');
+      throw new Error("Wacht tot de huidige CLI-opdracht is voltooid voordat de uitgangen worden gecorrigeerd.");
     this.output = '';
     this.receiveBuffer = '';
     this.notify();
@@ -226,15 +226,15 @@ export class RawCliSessionController {
   }
 
   async begin(sessionKey: SetupUiSessionKey): Promise<void> {
-    if (this.phase !== 'IDLE') throw new Error('هناك جلسة CLI نشطة بالفعل.');
+    if (this.phase !== 'IDLE') throw new Error("Er is een CLI sessie al actief.");
     if (this.appStatePhase() !== 'ACTIVE')
-      throw new Error('أعد التطبيق إلى الواجهة قبل بدء CLI.');
+      throw new Error("Maak de applicatie klaar voor de start van CLI..");
     if (this.motorTestActive(sessionKey.sessionId)) {
-      throw new Error('أنه جلسة اختبار المحركات قبل فتح CLI.');
+      throw new Error("Het is de motortest sessie voor de opening van de CLI..");
     }
     const currentKey = this.coordinator.getSessionKey(sessionKey.sessionId);
     if (!currentKey || currentKey.generation !== sessionKey.generation) {
-      throw new Error('جلسة Flight Controller تغيّرت؛ أعد الاتصال.');
+      throw new Error("De Flight Controller sessie is veranderd. Verbind opnieuw.");
     }
     const client = this.coordinator.getActiveMspClient(sessionKey.sessionId) as
       | MspClient
@@ -244,7 +244,7 @@ export class RawCliSessionController {
       sessionKey.sessionId,
     );
     if (!client || !transport || !scheduler)
-      throw new Error('جلسة MSP غير جاهزة لـCLI.');
+      throw new Error("De MSP-sessie is niet gereed voor CLI.");
 
     this.setPhase('ENTERING');
     const interlock = acquireMotorConfigurationInterlock(client);
@@ -262,12 +262,12 @@ export class RawCliSessionController {
         CLI_IDLE_TIMEOUT_MS,
       );
       if (quiet.status !== 'SETTLED') {
-        throw new Error('لم يهدأ الاتصال بمتحكم الطيران. أعد المحاولة.');
+        throw new Error("De verbinding met vluchtcontroller is niet stil. Probeer het nog eens.");
       }
       const requestedIdentity = this.coordinator.getMotorTestSessionIdentity(
         sessionKey.sessionId,
       );
-      if (!requestedIdentity) throw new Error('تعذر تثبيت هوية جلسة CLI.');
+      if (!requestedIdentity) throw new Error("CLI.-sessie-identiteit niet bevestigd.");
       const acquired = acquireMotorTestLease({
         client,
         requestedIdentity,
@@ -275,7 +275,7 @@ export class RawCliSessionController {
           this.coordinator.getMotorTestSessionIdentity(sessionKey.sessionId),
       });
       if (acquired.kind !== 'ACQUIRED') {
-        throw new Error(`تعذر حجز رابط MSP لـCLI: ${acquired.reason}`);
+        throw new Error(`MSP verbinding niet geboekt voor CLI: ${acquired.reason}`);
       }
       ownership = acquired.lease;
       const releaseRaw = transport.enterRawMode(bytes => this.receive(bytes));
@@ -303,7 +303,7 @@ export class RawCliSessionController {
 
   async execute(command: string): Promise<CliCommandResult> {
     const normalized = normalizeCliCommand(command);
-    if (normalized === undefined) throw new Error('أدخل أمر CLI غير فارغ.');
+    if (normalized === undefined) throw new Error("CLI is niet leeg.");
     this.requireActive();
     this.setPhase('SENDING');
     try {
@@ -331,7 +331,7 @@ export class RawCliSessionController {
       .map(normalizeCliCommand)
       .filter((command): command is string => command !== undefined);
     if (normalized.length === 0)
-      throw new Error('الحزمة لا تحتوي أوامر CLI قابلة للتطبيق.');
+      throw new Error("Het pakket bevat geen toepasselijke CLI-opdrachten.");
     const errors: CliCommandResult[] = [];
     for (let index = 0; index < normalized.length; index += 1) {
       const result = await this.execute(normalized[index]);
@@ -343,7 +343,7 @@ export class RawCliSessionController {
 
   async captureDiffAll(): Promise<string> {
     const result = await this.execute('diff all');
-    if (result.error) throw new Error('فشل إنشاء نسخة diff all.');
+    if (result.error) throw new Error("diff all. verscheen.");
     return result.response
       .replace(/^\s*diff all\s*/i, '')
       .replace(/\n#\s*$/, '')
@@ -376,7 +376,7 @@ export class RawCliSessionController {
     this.requireActive();
     if (this.errorCount > 0) {
       throw new Error(
-        'لن يُرسل save بعد ظهور أخطاء CLI؛ اخرج دون حفظ وراجع الحزمة.',
+        "save zal niet worden verzonden nadat CLI-fouten verschijnen; Ga zonder te bewaren en check het pakket.",
       );
     }
     const {sessionKey} = this.requireResources();
@@ -419,7 +419,7 @@ export class RawCliSessionController {
   ): Promise<string> {
     const resources = this.requireResources();
     if (this.waiter !== undefined)
-      throw new Error('أمر CLI آخر ما زال قيد التنفيذ.');
+      throw new Error("De laatste CLI-opdracht is nog in werking.");
     this.receiveBuffer = '';
     const response = new Promise<string>((resolve, reject) => {
       const waiter: PromptWaiter = {
@@ -430,7 +430,7 @@ export class RawCliSessionController {
         idleTimer: setTimeout(() => {
           if (this.waiter !== waiter) return;
           this.waiter = undefined;
-          reject(new Error('انتهت مهلة انتظار CLI prompt.'));
+          reject(new Error("CLI prompt. is uit."));
         }, timeout),
       };
       this.waiter = waiter;
@@ -466,7 +466,7 @@ export class RawCliSessionController {
     waiter.idleTimer = setTimeout(() => {
       if (this.waiter !== waiter) return;
       this.waiter = undefined;
-      waiter.reject(new Error('انتهت مهلة انتظار CLI prompt.'));
+      waiter.reject(new Error("CLI prompt. is uit."));
     }, waiter.idleMs);
     if (!/(?:^|\n)#\s*$/.test(sanitizeCliOutput(this.receiveBuffer))) return;
     waiter.settleTimer = setTimeout(() => {
@@ -492,13 +492,13 @@ export class RawCliSessionController {
 
   private requireActive(): Resources {
     if (this.phase !== 'ACTIVE' || this.resources === undefined) {
-      throw new Error('ابدأ جلسة CLI أولًا.');
+      throw new Error("Begin eerst met de CLI sessie.");
     }
     return this.resources;
   }
 
   private requireResources(): Resources {
-    if (!this.resources) throw new Error('جلسة CLI غير موجودة.');
+    if (!this.resources) throw new Error("CLI is niet aanwezig.");
     return this.resources;
   }
 
@@ -512,7 +512,7 @@ export class RawCliSessionController {
     this.waiter = undefined;
     if (waiter) {
       this.clearWaiterTimers(waiter);
-      waiter.reject(new Error('أُغلقت جلسة CLI.'));
+      waiter.reject(new Error("CLI. is afgesloten."));
     }
     if (resources) {
       resources.releaseRaw();

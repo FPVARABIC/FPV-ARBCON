@@ -96,7 +96,7 @@ function buildIdentity(): string {
   }
 }
 
-const UNKNOWN = 'غير متاح';
+const UNKNOWN = "Niet beschikbaar";
 
 function orUnknown(value: string | number | boolean | undefined): string {
   return value === undefined ? UNKNOWN : String(value);
@@ -133,14 +133,14 @@ function describePoll(
   lines: string[],
 ): void {
   if (scheduler === undefined) {
-    lines.push(`${pollId}: لا يوجد مجدول تليمترية لهذه الجلسة إطلاقًا`);
+    lines.push(`${pollId}: Geen telemetrieplanner voor deze sessie.`);
     return;
   }
   const poll = scheduler.polls.find(entry => entry.id === pollId);
   if (poll === undefined) {
     // A registered-then-unregistered poll and a never-registered one are
     // both "missing" here; the events ring above is what separates them.
-    lines.push(`${pollId}: غير مُسجَّل (MISSING)`);
+    lines.push(`${pollId}: niet geregistreerd (MISSING)`);
     return;
   }
   const ageMs =
@@ -148,83 +148,79 @@ function describePoll(
       ? Math.max(0, Math.round(wallClockMs - poll.updatedAtMs))
       : undefined;
   lines.push(
-    `${poll.id}: cmd=${poll.command} حالة=${poll.status} مسجَّل=نعم ` +
-      `فترة=${poll.intervalMs}ms تقادم=${poll.staleAfterMs}ms أولوية=${poll.priority}`,
+    `${poll.id}: cmd=${poll.command} status=${poll.status} geregistreerd=ja` +
+      ` interval=${poll.intervalMs}ms verouderdNa=${poll.staleAfterMs}ms prioriteit=${poll.priority}`,
   );
   lines.push(
-    `  طلبات=${poll.requestCount} استجابات=${poll.responseCount} أخطاء=${poll.errorCount} ` +
-      `قيد التنفيذ=${poll.inFlight} آخر كود خطأ للمجدول=${orUnknown(poll.lastErrorCode)}`,
+    `verzoeken=${poll.requestCount} antwoorden=${poll.responseCount} fouten=${poll.errorCount}` +
+      ` inBehandeling=${poll.inFlight} laatsteSchedulerfout=${orUnknown(poll.lastErrorCode)}`,
   );
-  lines.push(`  sampleSeq=${orUnknown(poll.sampleSeq)} عمر العيّنة=${ageMs === undefined ? UNKNOWN : `${ageMs}ms`}`);
+  lines.push(`sampleSeq=${orUnknown(poll.sampleSeq)} meetleeftijd=${ageMs === undefined ? UNKNOWN : `${ageMs}ms`}`);
 }
 
 export function buildTelemetryReport(snapshot: TelemetryReportSnapshot = {}): string {
   const {scheduler, render} = snapshot;
   const lines: string[] = [];
-  lines.push('FPV-ARBCON — تقرير تليمترية تقني');
-  lines.push(`البنية: ${buildIdentity()}`);
-  lines.push(`الوقت منذ فتح الصفحة: ${now()}ms`);
+  lines.push("FPV-ARBCON  —  Technisch telemetrieverslag");
+  lines.push(`Build: ${buildIdentity()}`);
+  lines.push(`Tijd sinds de pagina is geopend: ${now()}ms`);
 
-  lines.push('--- الجلسة ---');
+  lines.push("- De sessie...");
   lines.push(`sessionId: ${orUnknown(snapshot.sessionId)}`);
-  lines.push(`الجيل: ${orUnknown(snapshot.generation)}`);
-  lines.push(`حالة الملكية: ${orUnknown(snapshot.ownershipState)}`);
-  lines.push(`حالة التعريف: ${orUnknown(snapshot.identificationStatus)}`);
-  lines.push(`طور التطبيق: ${orUnknown(snapshot.appStatePhase)}`);
+  lines.push(`Gen: ${orUnknown(snapshot.generation)}`);
+  lines.push(`Eigendomsstatus: ${orUnknown(snapshot.ownershipState)}`);
+  lines.push(`Identificatiestatus: ${orUnknown(snapshot.identificationStatus)}`);
+  lines.push(`Appstatus: ${orUnknown(snapshot.appStatePhase)}`);
   lines.push(
-    `تبويب Setup نشط: ${
-      snapshot.setupActive === undefined ? UNKNOWN : snapshot.setupActive ? 'نعم' : 'لا'
-    }`,
+    `Setup actief: ${snapshot.setupActive === undefined ? UNKNOWN : snapshot.setupActive ? "Ja" : "Nee"}`,
   );
 
-  lines.push('--- المجدول ---');
+  lines.push("- Het schema...");
   if (scheduler === undefined) {
-    lines.push('لا يوجد مجدول تليمترية لهذه الجلسة (لم يبدأ أو أُنهي)');
+    lines.push("Er is geen telemetrieplanner voor deze sessie.");
   } else {
-    lines.push(`عدد النبضات (tick): ${scheduler.tickCount}`);
-    lines.push(`طلبات قيد التنفيذ: ${scheduler.inFlightCount}`);
+    lines.push(`tick: ${scheduler.tickCount}`);
+    lines.push(`Aanvragen in behandeling: ${scheduler.inFlightCount}`);
     lines.push(
-      `أسباب الإيقاف المؤقت النشطة: ${
-        scheduler.pauseReasons.length === 0 ? 'لا يوجد' : scheduler.pauseReasons.join('، ')
-      }`,
+      `Oorzaken van de actieve tijdelijke stop: ${scheduler.pauseReasons.length === 0 ? "Er is geen." : scheduler.pauseReasons.join(", ")}`,
     );
-    lines.push(`عدد الاستطلاعات المسجّلة: ${scheduler.polls.length}`);
+    lines.push(`Geregistreerde polls: ${scheduler.polls.length}`);
   }
 
-  lines.push('--- الاستطلاعات ---');
+  lines.push("Polls");
   describePoll(scheduler, 'attitude', snapshot.wallClockMs, lines);
   describePoll(scheduler, 'battery', snapshot.wallClockMs, lines);
 
-  lines.push('--- الوضعية المعروضة ---');
+  lines.push("- De aangeboden situatie...");
   if (render === undefined) {
-    lines.push('لا توجد مشاهدة عرض');
+    lines.push("Er is geen show.");
   } else {
-    lines.push(`مصدر الجلسة: ${orUnknown(render.sessionToken)}`);
-    lines.push(`حالة العرض: ${orUnknown(render.lastStatus)}`);
-    lines.push(`آخر sampleSeq وصل إلى الواجهة: ${orUnknown(render.lastSampleSeq)}`);
+    lines.push(`${orUnknown(render.sessionToken)}`);
+    lines.push(`Weergavestatus: ${orUnknown(render.lastStatus)}`);
+    lines.push(`Laatste sampleSeq op de interface: ${orUnknown(render.lastSampleSeq)}.`);
     lines.push(
       `roll=${orUnknown(render.lastRollDeg)} pitch=${orUnknown(render.lastPitchDeg)} yaw=${orUnknown(
         render.lastYawDeg,
       )}`,
     );
     lines.push(
-      `عيّنات hero=${render.heroSampleCount} عيّنات الراسم=${render.rendererSampleCount} ` +
-        `أوضاع مختلفة=${render.distinctPoseCount}`,
+      `hero-metingen=${render.heroSampleCount} renderer-metingen=${render.rendererSampleCount} ` +
+        `verschillendeHoudingen=${render.distinctPoseCount}`,
     );
-    lines.push(`آخر تغيّر فعلي للوضعية: ${render.lastPoseChangeAtMs === undefined ? UNKNOWN : `${render.lastPoseChangeAtMs}ms`}`);
+    lines.push(`De laatste verandering in status: ${render.lastPoseChangeAtMs === undefined ? UNKNOWN : `${render.lastPoseChangeAtMs}ms`}.`);
   }
 
   const bytes = readByteCounters();
-  lines.push('--- البايتات والأخطاء ---');
+  lines.push("- Bytes en fouten.");
   lines.push(
     `bytes: sent=${bytes.bytesWritten} (${bytes.writeCount} writes) received=${bytes.bytesReceived} (${bytes.receiveChunks} chunks)`,
   );
-  lines.push(`آخر كود خطأ MSP: ${orUnknown(lastMspErrorCode)}`);
-  lines.push(`آخر كود خطأ ناقل: ${orUnknown(lastTransportErrorCode)}`);
+  lines.push(`Laatste MSP-foutcode: ${orUnknown(lastMspErrorCode)}.`);
+  lines.push(`Laatste transportfoutcode: ${orUnknown(lastTransportErrorCode)}.`);
 
-  lines.push('--- الأحداث ---');
+  lines.push("De gebeurtenissen...");
   if (events.length === 0) {
-    lines.push('(لا أحداث مسجلة بعد)');
+    lines.push("Nog geen geregistreerde gebeurtenissen.");
   }
   for (const entry of events) {
     const detail = entry.detail

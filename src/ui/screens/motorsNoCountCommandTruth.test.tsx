@@ -56,7 +56,7 @@ import {Text} from 'react-native';
 import ReactTestRenderer from 'react-test-renderer';
 
 import '../../i18n';
-import ar from '../../i18n/locales/ar.json';
+import ar from '../../i18n/locales/nl.json';
 import {presentConnectedBoard} from '../session/__testUtils__/connectedBoard';
 import MainTabsScreen from './MainTabsScreen';
 import {
@@ -346,7 +346,7 @@ describe('M-E3 CASE A - a board that reported no motor count', () => {
     const rendered = shell.text();
     expect(rendered).not.toContain('M1');
     expect(rendered).not.toContain('Motor 1');
-    expect(rendered).not.toContain('المحرك 1');
+    expect(rendered).not.toContain("Motor 1");
 
     /* (E) THE WIRE. Every reachable action, then count the frames. */
     const attempted = await attemptEveryMotorAction(shell);

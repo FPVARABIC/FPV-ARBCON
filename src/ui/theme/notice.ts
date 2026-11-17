@@ -57,8 +57,8 @@ export const noticeInline: ViewStyle = {
 /** Notice body text. One step below body, which is where context belongs. */
 export const noticeText: TextStyle = {
   ...typography.caption,
-  textAlign: 'right',
-  writingDirection: 'rtl',
+  textAlign: 'left',
+  writingDirection: 'ltr',
 };
 
 /** Notice title. Same size as the body, distinguished by weight, not scale. */

@@ -36,10 +36,9 @@ import {
 import type { RootStackParamList } from './src/navigation/types';
 import { colors } from './src/ui/theme';
 
-if (!I18nManager.isRTL) {
-  I18nManager.allowRTL(true);
-  I18nManager.forceRTL(true);
-}
+// Dutch must also start LTR on devices previously configured for RTL.
+I18nManager.allowRTL(false);
+I18nManager.forceRTL(false);
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 

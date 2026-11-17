@@ -72,7 +72,7 @@ describe('buildConnectionReport', () => {
   it('reports the build identity line', () => {
     // Jest has no Vite define, so the guarded read reports 'dev' - which
     // is itself the correct answer for a non-Vite build.
-    expect(buildConnectionReport()).toContain('البنية: dev');
+    expect(buildConnectionReport()).toContain("Structuur: dev");
   });
 
   it('keeps the FIRST ten entries when the buffer overflows', () => {

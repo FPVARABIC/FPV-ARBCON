@@ -79,7 +79,7 @@ function StyleCard({
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`افتح دليل ${corner.titleAr}`}
+      accessibilityLabel={`Maak de ${corner.titleAr}-handleiding open.`}
       testID={`guide-card-${corner.id}`}
       onPress={onPress}
       style={state => {
@@ -103,7 +103,7 @@ function StyleCard({
             <Text style={styles.chipText}>{corner.difficultyAr}</Text>
           </View>
           <View style={styles.chip}>
-            <Text style={styles.chipText}>{corner.steps.length} خطوات</Text>
+            <Text style={styles.chipText}>{corner.steps.length} {"Stapjes."}</Text>
           </View>
         </View>
 
@@ -124,7 +124,7 @@ function StyleCard({
         <Text style={styles.aircraft}>{corner.aircraft.join(' · ')}</Text>
 
         <View style={styles.cta}>
-          <Text style={styles.ctaText}>افتح الركن</Text>
+          <Text style={styles.ctaText}>{"Maak de hoek open."}</Text>
           <Icon name="chevron-forward" size={20} color={colors.accentStrong} />
         </View>
       </View>
@@ -143,8 +143,8 @@ export default function FlightStyleGuideScreen({
   return (
     <View style={styles.root} testID="flight-style-guide-screen">
       <GuideHeader
-        eyebrow="اختر النمط الذي تطيره"
-        title="دليل أنماط الطيران"
+        eyebrow={"Kies de stijl die je vliegt."}
+        title={"Vliegpatroon handleiding."}
         onBack={() => navigation.goBack()}
       />
       <ScrollView
@@ -162,10 +162,7 @@ export default function FlightStyleGuideScreen({
           },
         ]}>
         <Text style={styles.intro}>
-          كل نمط ركن مستقل: خطواته مرقّمة من الأولى إلى الأخيرة، وصوره
-          بقيمه هو، وقرار مكتوب لكل إعداد لا تغيّره خطواته. لن تحتاج إلى
-          فتح نمط آخر لتكمل نمطك.
-        </Text>
+          {"Elk hoekpatroon is onafhankelijk. De waarde ervan is, en de schriftelijke beslissing van elke voorbereiding verandert zijn stappen niet. Je hoeft niet. Een ander patroon openen om je patroon aan te vullen."}</Text>
 
         <View style={styles.grid} testID="guide-card-group">
           {FLIGHT_STYLES.map(corner => (
@@ -183,12 +180,9 @@ export default function FlightStyleGuideScreen({
         </View>
 
         <View style={styles.verification}>
-          <Text style={styles.verificationTitle}>ما تعنيه أرقام هذا الدليل</Text>
+          <Text style={styles.verificationTitle}>{"Wat betekenen de nummers van deze handleiding?"}</Text>
           <Text style={styles.verificationText}>
-            كل رقم مأخوذ من مصادر البرنامج الثابت الرسمية ومذكور مصدره بجانبه،
-            وقدرة التطبيق على ضبطه مثبتة باختبارات. ليست قيمًا مجرّبة في
-            رحلة، ولا مُثبتة على عتاد. كلها نقاط بداية.
-          </Text>
+            {"Elk nummer is afkomstig van officiële firmware-bronnen en staat naast de bron. De mogelijkheid van de applicatie op zijn knoppen is getest. Het is geen beproefde waarde. Een reis, niet altijd bevestigd. Het zijn allemaal beginpunten."}</Text>
         </View>
       </ScrollView>
     </View>
@@ -208,8 +202,8 @@ const styles = StyleSheet.create({
   intro: {
     ...typography.body,
     color: colors.textSecondary,
-    textAlign: 'right',
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    textAlign: 'left',
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   /* A real grid: the CELL owns the width (one, two or three per row) and
      the card fills it. Gutters come from cell padding rather than `gap`,
      because a percentage width and a gap cannot both be satisfied - that
@@ -240,12 +234,12 @@ const styles = StyleSheet.create({
     writingDirection: 'ltr',
     textAlign: 'right',
   },
-  cardTitle: {...typography.title, color: colors.textPrimary, textAlign: 'right'},
+  cardTitle: {...typography.title, color: colors.textPrimary, textAlign: 'left'},
   cardDescription: {
     ...typography.body,
     color: colors.textSecondary,
-    textAlign: 'right',
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    textAlign: 'left',
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   metaRow: {flexDirection: 'row', gap: spacing.sm, paddingTop: spacing.sm},
   chip: {
     borderRadius: radii.pill,
@@ -257,8 +251,8 @@ const styles = StyleSheet.create({
   aircraft: {
     ...typography.caption,
     color: colors.textMuted,
-    textAlign: 'right',
-    writingDirection: 'rtl',
+    textAlign: 'left',
+    writingDirection: 'ltr',
     paddingTop: 2, maxWidth: PROSE_MEASURE},
   cta: {
     flexDirection: 'row',
@@ -268,10 +262,10 @@ const styles = StyleSheet.create({
   },
   ctaText: {...typography.label, color: colors.accentStrong},
   verification: {...noticeSurface, backgroundColor: colors.infoSoft, borderColor: colors.info, gap: 4},
-  verificationTitle: {...typography.label, color: colors.textPrimary, textAlign: 'right'},
+  verificationTitle: {...typography.label, color: colors.textPrimary, textAlign: 'left'},
   verificationText: {
     ...typography.body,
     color: colors.textSecondary,
-    textAlign: 'right',
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    textAlign: 'left',
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
 });

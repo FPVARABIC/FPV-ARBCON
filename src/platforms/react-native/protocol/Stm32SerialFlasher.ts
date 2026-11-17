@@ -71,7 +71,7 @@ export function assertRequiredStm32Commands(commands: ReadonlySet<number>): void
     if (!commands.has(required)) {
       throw new Stm32BootloaderError(
         'STM32_MISSING_REQUIRED_COMMAND',
-        `STM32 bootloader لا يدعم الأمر الآمن المطلوب 0x${required.toString(16)}؛ لن يبدأ المسح.`,
+        `STM32 bootloader ondersteunt niet de gewenste beveiligingsopdracht 0x${required.toString(16)}; Het onderzoek begint niet.`,
         'PRE_DESTRUCTIVE',
       );
     }
@@ -79,7 +79,7 @@ export function assertRequiredStm32Commands(commands: ReadonlySet<number>): void
   if (!commands.has(COMMAND.erase) && !commands.has(COMMAND.extendedErase)) {
     throw new Stm32BootloaderError(
       'STM32_NO_ERASE_COMMAND',
-      'STM32 bootloader لا يعلن أي أمر مسح مدعوم.',
+      "STM32 bootloader kondigt geen ondersteunde bestelling aan.",
       'PRE_DESTRUCTIVE',
     );
   }
@@ -98,7 +98,7 @@ export function requireStm32GetIdShape(countMinusOne: number, body: Uint8Array):
   if (countMinusOne !== 1 || body.length !== 2) {
     throw new Stm32BootloaderError(
       'STM32_GET_ID_SHAPE_INVALID',
-      `استجابة STM32 chip ID غير مطابقة للشكل المطلوب (N=${countMinusOne}، ${body.length} بايت).`,
+      `STM32 chip ID reactie niet overeenkomt met de gewenste vorm (N=${countMinusOne}, ${body.length} byte).`,
       'PRE_DESTRUCTIVE',
     );
   }
@@ -242,7 +242,7 @@ export class Stm32SerialFlasher {
       if (profile === undefined) {
         throw new Stm32BootloaderError(
           'STM32_CHIP_UNSUPPORTED',
-          `STM32 chip ID 0x${chipId.toString(16)} غير مدعوم بأمان.`,
+          `STM32 chip ID 0x${chipId.toString(16)} is niet veilig ondersteund.`,
           'PRE_DESTRUCTIVE',
         );
       }
@@ -293,7 +293,7 @@ export class Stm32SerialFlasher {
       // eslint-disable-next-line no-bitwise -- AN3155 packet checksum.
       for (const byte of block.bytes) checksum ^= byte;
       packet[packet.length - 1] = checksum;
-      await this.sendAndAck(packet, 'كتابة Flash');
+      await this.sendAndAck(packet, "Flashgeheugen schrijven");
       written += length;
       this.report(
         'writing',
@@ -310,13 +310,13 @@ export class Stm32SerialFlasher {
       await this.sendAddress(block.range.start);
       const count = block.bytes.length - 1;
       // eslint-disable-next-line no-bitwise -- AN3155 read length complement.
-      await this.sendAndAck(Uint8Array.of(count, (~count) & 0xff), 'تهيئة read-back');
+      await this.sendAndAck(Uint8Array.of(count, (~count) & 0xff), "read-back-configuratie");
       const actual = await this.channel.readExactly(block.bytes.length, 5000);
       for (let index = 0; index < block.bytes.length; index += 1) {
         if (actual[index] !== block.bytes[index]) {
           throw new Stm32BootloaderError(
             'STM32_VERIFY_MISMATCH',
-            `فشل read-back verify عند 0x${(block.range.start + index).toString(16)}.`,
+            `read-back verify mislukt bij 0x${(block.range.start + index).toString(16)}.`,
             this.destructiveState,
           );
         }
@@ -346,14 +346,14 @@ export class Stm32SerialFlasher {
     let response = (await this.channel.readExactly(1, 3000))[0];
     // Some FC serial bridges echo the autobaud byte; consume exactly that echo once.
     if (response === 0x7f) response = (await this.channel.readExactly(1, 3000))[0];
-    this.expectAck(response, 'المزامنة');
+    this.expectAck(response, "Synchroniseren");
   }
 
   private async getCommands(): Promise<ReadonlySet<number>> {
     await this.command(COMMAND.get);
     const countMinusOne = (await this.channel.readExactly(1, 3000))[0];
     const body = await this.channel.readExactly(countMinusOne + 1, 3000);
-    await this.readAck('قراءة قدرات bootloader');
+    await this.readAck("Bootloadermogelijkheden uitlezen");
     // First byte is the bootloader version; the rest are supported commands.
     return new Set(Array.from(body.slice(1)));
   }
@@ -362,7 +362,7 @@ export class Stm32SerialFlasher {
     await this.command(COMMAND.getId);
     const countMinusOne = (await this.channel.readExactly(1, 3000))[0];
     const id = await this.channel.readExactly(countMinusOne + 1, 3000);
-    await this.readAck('قراءة chip ID');
+    await this.readAck("Chip-ID uitlezen");
     return requireStm32GetIdShape(countMinusOne, id);
   }
 
@@ -437,14 +437,14 @@ export class Stm32SerialFlasher {
         this.destructiveState = 'ERASE_OUTCOME_UNKNOWN';
         throw new Stm32BootloaderError(
           'STM32_NACK',
-          'STM32 أرسل NACK أثناء المسح.',
+          "STM32 stuurde NACK tijdens het onderzoek.",
           'ERASE_OUTCOME_UNKNOWN',
         );
       } else {
         this.destructiveState = 'ERASE_OUTCOME_UNKNOWN';
         throw new Stm32BootloaderError(
           'STM32_UNEXPECTED_RESPONSE',
-          `استجابة STM32 غير متوقعة 0x${response.toString(16)} أثناء المسح.`,
+          `STM32 onverwachte reactie 0x${response.toString(16)} tijdens het onderzoek.`,
           'ERASE_OUTCOME_UNKNOWN',
         );
       }
@@ -461,7 +461,7 @@ export class Stm32SerialFlasher {
 
   private async command(value: number): Promise<void> {
     // eslint-disable-next-line no-bitwise -- AN3155 command complement.
-    await this.sendAndAck(Uint8Array.of(value, value ^ 0xff), `الأمر 0x${value.toString(16)}`);
+    await this.sendAndAck(Uint8Array.of(value, value ^ 0xff), `Het is 0x${value.toString(16)}`);
   }
 
   private async sendAddress(address: number): Promise<void> {
@@ -469,7 +469,7 @@ export class Stm32SerialFlasher {
     const packet = Uint8Array.of(address >>> 24, address >>> 16, address >>> 8, address);
     await this.sendAndAck(
       Uint8Array.of(...packet, packet[0] ^ packet[1] ^ packet[2] ^ packet[3]),
-      'العنوان',
+      "Het adres.",
     );
     /* eslint-enable no-bitwise */
   }
@@ -490,13 +490,13 @@ export class Stm32SerialFlasher {
     if (response === NACK) {
       throw new Stm32BootloaderError(
         'STM32_NACK',
-        `STM32 أرسل NACK أثناء ${context}.`,
+        `STM32 stuurde NACK tijdens ${context}.`,
         this.destructiveState,
       );
     }
     throw new Stm32BootloaderError(
       'STM32_UNEXPECTED_RESPONSE',
-      `استجابة STM32 غير متوقعة 0x${response.toString(16)} أثناء ${context}.`,
+      `STM32 onverwachte reactie 0x${response.toString(16)} tijdens ${context}.`,
       this.destructiveState,
     );
   }
@@ -519,7 +519,7 @@ export class Stm32SerialFlasher {
     if (this.signal?.aborted === true || this.cancelledInternally) {
       throw new Stm32BootloaderError(
         'STM32_CANCELLED',
-        'أُلغيَ تفليش STM32.',
+        "flashen STM32. is geannuleerd.",
         this.destructiveState,
       );
     }

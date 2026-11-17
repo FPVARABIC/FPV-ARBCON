@@ -40,7 +40,7 @@ const quote = text => `'${String(text).replace(/\\/g, '\\\\').replace(/'/g, "\\'
 /** The safety block each guide.md ends with, as plain sentences. */
 function warningsOf(styleId) {
   const markdown = readFileSync(`${IMAGE_ROOT}/${styleId}/guide.md`, 'utf8');
-  const section = markdown.split(/^## تحذيرات\s*$/m)[1];
+  const section = markdown.split(/^## Waarschuwingen\s*$/m)[1];
   if (section === undefined) return [];
   const body = section.split(/^## /m)[0];
   return body
@@ -70,8 +70,8 @@ function recommended(step) {
   const options = step.targets.filter(t => t.kind === 'option' && t.expect === 'selected').length;
   const switches = step.targets.filter(t => t.kind === 'switch' && t.expect === 'on').length;
   const extra = [];
-  if (options > 0) extra.push(`${options} خيار محدَّد`);
-  if (switches > 0) extra.push(`${switches} مفتاح مفعّل`);
+  if (options > 0) extra.push(`${options} is een gespecificeerde optie.`);
+  if (switches > 0) extra.push(`${switches} is geactiveerd.`);
   return [...shown, ...extra];
 }
 

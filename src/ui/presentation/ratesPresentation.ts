@@ -47,12 +47,12 @@ import {
  */
 export function ratesTypeName(type: RatesType): string {
   switch (type.kind) {
-    case 'BETAFLIGHT': return 'قياسي';
+    case 'BETAFLIGHT': return "Standaard";
     case 'RACEFLIGHT': return 'Raceflight';
     case 'KISS': return 'KISS';
     case 'ACTUAL': return 'Actual';
     case 'QUICK': return 'Quick';
-    case 'UNKNOWN': return `نوع غير معروف (${type.raw})`;
+    case 'UNKNOWN': return `Onbekend type (${type.raw})`;
   }
 }
 
@@ -93,7 +93,7 @@ export interface RateAxisPresentation {
 }
 
 const RATE_LIMIT_FIELD: RateFieldPresentation = Object.freeze({
-  label: 'الحد الأقصى', scale: 1, min: 200, max: 1998, unit: '°/s',
+  label: "Maximum", scale: 1, min: 200, max: 1998, unit: '°/s',
 });
 
 /**
@@ -129,21 +129,21 @@ export function rateAxisPresentation(type: RatesType): RateAxisPresentation | un
   const scales = FORMULA_SCALES[index];
   return Object.freeze({
     rcRate: Object.freeze({
-      label: scales.rcRateDegreesPerSecond ? 'حساسية المركز' : 'RC Rate',
+      label: scales.rcRateDegreesPerSecond ? "Gevoeligheid rond het midden" : 'RC Rate',
       scale: scales.rcRate,
       min: 1,
       max: limits.rcRate,
       ...(scales.rcRateDegreesPerSecond ? {unit: '°/s'} : {}),
     }),
     superRate: Object.freeze({
-      label: scales.superRateDegreesPerSecond ? 'أقصى معدل' : 'قوة المنحنى',
+      label: scales.superRateDegreesPerSecond ? "Maximale draaisnelheid" : "Curvesterkte",
       scale: scales.superRate,
       min: 0,
       max: limits.superRate,
       ...(scales.superRateDegreesPerSecond ? {unit: '°/s'} : {}),
     }),
     expo: Object.freeze({
-      label: 'ليونة المركز',
+      label: "Zachtheid rond het midden",
       scale: scales.expo,
       min: 0,
       max: limits.expo,
@@ -257,20 +257,20 @@ export interface PreviewCopy {
  */
 export function previewCopy(availability: RatePreviewAvailability): PreviewCopy {
   if (availability.kind === 'EXACT_PREVIEW') {
-    return Object.freeze({available: true, title: 'معاينة الاستجابة'});
+    return Object.freeze({available: true, title: "Responsvoorbeeld"});
   }
   if (availability.reason === 'QUICK_RATES_RC_EXPO_NOT_OBSERVABLE') {
     return Object.freeze({
       available: false,
-      title: 'لا تتوفر معاينة دقيقة لـ Quick',
-      explanation: 'يعتمد شكل المنحنى على إعداد داخلي لا يرسله المتحكم عبر MSP، ولن نرسم منحنى مبنيًا على تخمين. يمكنك ضبط Quick وحفظه كالمعتاد.',
+      title: "Geen nauwkeurig voorbeeld voor Quick beschikbaar",
+      explanation: "De vorm van de curve is afhankelijk van een interne instelling die de controller niet via MSP stuurt, en we zullen geen curve tekenen op basis van speculatie. Je kunt Quick instellen en als gewoonlijk opslaan.",
       technicalReason: 'quickRatesRcExpo',
     });
   }
   return Object.freeze({
     available: false,
-    title: `نوع Rates غير معروف (${availability.raw})`,
-    explanation: 'لا نعرف المعادلة التي يستخدمها هذا النوع، فلا نرسم منحنى ولا نسمح بتعديل يعتمد عليها.',
+    title: `Onbekend rate-type (${availability.raw})`,
+    explanation: "We weten niet welke vergelijking deze soort gebruikt, we maken geen curves en we laten geen correcties toe.",
   });
 }
 

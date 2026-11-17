@@ -179,10 +179,10 @@ export function describeOrientationForAccessibility(state: OrientationViewState)
   const pitch = Math.round(state.pitchDeg);
   const yaw = Math.round(state.yawDeg);
 
-  const rollText = roll === 0 ? 'بدون ميل جانبي' : `ميلان ${Math.abs(roll)} درجة ${roll > 0 ? 'لليمين' : 'لليسار'}`;
+  const rollText = roll === 0 ? "Geen rolhoek" : `Rolhoek van ${Math.abs(roll)} graden ${roll > 0 ? "naar rechts" : "naar links"}`;
   const pitchText =
-    pitch === 0 ? 'المقدمة أفقية' : `${pitch > 0 ? 'ارتفاع المقدمة' : 'انخفاض المقدمة'} ${Math.abs(pitch)} درجة`;
-  const yawText = `الاتجاه ${yaw} درجة`;
+    pitch === 0 ? "Neus horizontaal" : `${pitch > 0 ? "Neus omhoog" : "Neus omlaag"} ${Math.abs(pitch)} graden`;
+  const yawText = `Koers ${yaw} graden`;
 
-  return `${rollText}، ${pitchText}، ${yawText}`;
+  return `${rollText}, ${pitchText}, ${yawText}`;
 }

@@ -140,7 +140,7 @@ describe('the footer asks for nothing the app has no business holding', () => {
   it('shows no account number, card, IBAN or personal detail', () => {
     const text = screenText(renderHome());
 
-    for (const forbidden of ['IBAN', 'Visa', 'Mastercard', 'PayPal', 'حساب بنكي', 'رقم الحساب', 'بطاقة']) {
+    for (const forbidden of ['IBAN', 'Visa', 'Mastercard', 'PayPal', "bankrekening", "rekeningnummer", "betaalkaart"]) {
       expect(text).not.toContain(forbidden);
     }
     // Nothing that looks like an account or card number: no run of six
@@ -152,15 +152,15 @@ describe('the footer asks for nothing the app has no business holding', () => {
   it('says plainly that it leaves the app, and names where it goes', () => {
     const text = screenText(renderHome());
     expect(text).toContain('ko-fi.com');
-    expect(text).toContain('خارج التطبيق');
+    expect(text).toContain("ko-fi.com opent in de browser buiten de app. De app vraagt geen betaaldata. Alle functies blijven beschikbaar zonder hem.");
   });
 
   it('states that support is optional and unlocks nothing', () => {
     const text = screenText(renderHome());
-    expect(text).toContain('دعمك اختياري');
-    expect(text).toContain('كل الميزات تبقى متاحة بدونه');
+    expect(text).toContain("Als de applicatie werkt, kun je de ontwikkeling en verbetering ondersteunen. Je steun is mijn keuze. Het helpt ons nieuwe functies toe te voegen en de ervaring voor iedereen te verbeteren.");
+    expect(text).toContain("ko-fi.com opent in de browser buiten de app. De app vraagt geen betaaldata. Alle functies blijven beschikbaar zonder hem.");
     // No urgency, no guilt, no scarcity - this is a footer, not a pitch.
-    for (const pitch of ['الآن فقط', 'عرض', 'اشترك', 'ترقية', 'نسخة مدفوعة', 'مجانًا لفترة']) {
+    for (const pitch of ["alleen nu", "Tonen", "abonneer", "upgraden", "betaalde versie", "tijdelijk gratis"]) {
       expect(text).not.toContain(pitch);
     }
   });
@@ -171,10 +171,10 @@ describe('the footer stays a footer', () => {
     const renderer = renderHome();
     const order = screenText(renderer);
 
-    const guide = order.indexOf('دليل أنماط الطيران');
-    const configure = order.indexOf('فتح إعداد الدرون');
-    const safety = order.indexOf('لن يبدأ أي مسح أو كتابة');
-    const support = order.indexOf('ساهم في تطوير');
+    const guide = order.indexOf("Vliegpatroon handleiding.");
+    const configure = order.indexOf("Open de drone.");
+    const safety = order.indexOf("Wissen of schrijven begint pas");
+    const support = order.indexOf("Draag bij aan de ontwikkeling");
 
     expect(guide).toBeGreaterThanOrEqual(0);
     expect(support).toBeGreaterThan(configure);
@@ -221,7 +221,7 @@ describe('the footer stays a footer', () => {
     // Lucide `coffee` glyph, which renders in the app's own stroke
     // weight and colour instead of the platform's emoji font.
     const label = screenText(renderHome());
-    expect(label).toContain('ادعم المشروع');
+    expect(label).toContain("Ondersteun het project.");
     expect(label).not.toMatch(/\p{Extended_Pictographic}/u);
     expect(source).toContain('icon="coffee"');
   });

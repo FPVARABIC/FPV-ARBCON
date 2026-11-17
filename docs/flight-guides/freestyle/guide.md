@@ -182,22 +182,21 @@
 
 ---
 
-## تحذيرات
+## Waarschuwingen
+De motoren sessie beheert motoren inderdaad. propellers is altijd ontbindd, zonder uitzondering.
 
-> **جلسة المحركات تدير المحركات فعلًا.** المراوح مفكوكة، دائمًا،
-> بلا استثناء.
 
-> **فلتر RPM يتطلب DShot ثنائي الاتجاه يعمل بشكل صحيح.** الإعدادات
-> الرسمية تحمل تحذيرًا صريحًا: تشغيل ضبط يعتمد على فلتر RPM بدون
-> فلترة RPM سليمة **قد يؤدي إلى حريق** (S1.8, S1.9). تحقق من أن قراءة
-> RPM تصل قبل أن تطير.
 
-> **بعد أي تغيير في الضبط: سلّح على الأرض واستمع.** يجب أن يكون الصوت
-> نظيفًا بلا طحن. ثم حوّم وتحقق من حرارة المحركات. إن كان أي شيء
-> غريبًا، لا تطر (S1.8, S1.9).
+** RPM-filter vereist dat DShot bi-directional correct werkt.** De officiële instellingen bevatten een uitdrukkelijke waarschuwing: het opzetten van een RPM-filter gebaseerde aanpassing zonder een goed RPM-filter ** kan een brand veroorzaken** (S1.8, S1.9). Controleer of de RPM leest voordat je vliegt.
 
-> **أوقف «Hardware ADC Filter» في راديو EdgeTX/OpenTX.** كل إعداد رابط
-> رسمي يكرر هذا التحذير (S1.1–S1.7).
+
+
+Na een verandering in de instelling: rust op de grond en luister. Het geluid moet schoon zijn zonder slijpen. Verwarm en controleer de motoren temperatuur. Als er iets vreemds is, denk er niet aan. S1.8,  S1.9 ).
+
+
+
+** Stop  — Hardware ADC Filter —  op de radio EdgeTX/OpenTX.** elke opstelling van de link herhaalt deze waarschuwing (S1.1 — S1.7).
+
 
 ---
 

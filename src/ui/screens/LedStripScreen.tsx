@@ -535,7 +535,7 @@ export default function LedStripScreen({
               {t('ledStripScreen.gap.unreachable', {
                 indexes: snapshot.truth.unreachableEntries
                   .map(entry => entry.index + 1)
-                  .join('، '),
+                  .join(", "),
               })}
             </Text>
             <Text style={styles.caption}>{t('ledStripScreen.gap.noAutoFix')}</Text>
@@ -609,7 +609,7 @@ export default function LedStripScreen({
                         : t('ledStripScreen.grid.cellLabel', {
                             x,
                             y,
-                            numbers: indexes.map(i => i + 1).join('، '),
+                            numbers: indexes.map(i => i + 1).join(", "),
                           })
                     }
                     disabled={!editable}
@@ -1808,7 +1808,7 @@ const styles = StyleSheet.create({
   layerRow: {
     ...typography.caption,
     color: colors.textSecondary,
-    textAlign: 'right',
+    textAlign: 'left',
   },
   swatchGrid: {
     flexDirection: 'row',

@@ -41,7 +41,7 @@ describe('Modes configuration model', () => {
     expect(modeIsActive(snapshot().definitions[0], 1, undefined)).toBe(true);
     expect(modeIsActive(snapshot().definitions[1], 1, undefined)).toBe(false);
     expect(modeIsActive(snapshot().definitions[2], 0, [0, 1])).toBe(true);
-    expect(modeArabicName('ANGLE')).toBe('تثبيت الزاوية');
+    expect(modeArabicName('ANGLE')).toBe("Angle-stabilisatie");
     expect(modeArabicName('CUSTOM MODE')).toBe('CUSTOM MODE');
   });
 });

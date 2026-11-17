@@ -81,7 +81,7 @@ describe('EscDirectionPanel', () => {
     });
     expect(port.setEscDirection).toHaveBeenCalledWith(3, 'REVERSED');
     expect(JSON.stringify(tree.toJSON())).toContain(
-      'لم يثبت التطبيق الاتجاه ميكانيكيًا',
+      "De app heeft de werkelijke draairichting niet gemeten",
     );
     act(() => tree.unmount());
   });
@@ -127,7 +127,7 @@ describe('EscDirectionPanel', () => {
     });
 
     const rendered = JSON.stringify(tree.toJSON());
-    expect(rendered).not.toContain('أقرّ متحكم الطيران أمر الاتجاه والحفظ');
+    expect(rendered).not.toContain("De vluchtcontroller heeft de richting- en opslagopdracht bevestigd");
     expect(rendered).toContain('M2');
     act(() => tree.unmount());
   });

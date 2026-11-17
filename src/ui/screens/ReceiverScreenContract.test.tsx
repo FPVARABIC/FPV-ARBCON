@@ -19,7 +19,7 @@ import {readFileSync} from 'fs';
 import {join} from 'path';
 import ReactTestRenderer, {act} from 'react-test-renderer';
 import '../../i18n';
-import ar from '../../i18n/locales/ar.json';
+import ar from '../../i18n/locales/nl.json';
 import {decodeRxConfig, RECEIVER_MODE_CAPABILITY, type ReceiverConfigurationSnapshot} from '../../core';
 // A TYPE-only import from the mocked module: erased at compile time, so
 // it cannot pull the real protocol layer into this test.
@@ -419,7 +419,7 @@ describe('P3-AQ G: RSSI is reported, Link Quality is not invented', () => {
     const body = pageText(renderer);
     expect(body).not.toMatch(/\bLQ\b/);
     expect(body).not.toMatch(/Link\s*Quality/i);
-    expect(JSON.stringify(ar.receiverScreen)).not.toMatch(/جودة الاتصال|Link Quality/i);
+    expect(JSON.stringify(ar.receiverScreen)).not.toMatch(/verbindingskwaliteit|Link Quality/i);
     act(() => renderer.unmount());
   });
 });
@@ -644,7 +644,7 @@ describe('P4: mode and provider editing, without disturbing P3', () => {
     const {renderer} = await mount();
     // The helper says the opposite of "supported by this flight controller".
     expect(pageText(renderer)).toContain(ar.receiverScreen.providerHelper);
-    expect(pageText(renderer)).not.toContain('مدعوم من وحدة التحكم');
+    expect(pageText(renderer)).not.toContain("Ondersteund door de controller");
     act(() => renderer.unmount());
   });
 

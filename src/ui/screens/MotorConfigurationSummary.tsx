@@ -137,11 +137,11 @@ const styles = StyleSheet.create({
   title: {
     ...typography.sectionTitle,
     color: colors.textPrimary,
-    writingDirection: 'rtl'},
+    writingDirection: 'ltr'},
   caption: {
     ...typography.caption,
     color: colors.textSecondary,
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   readOnlyBadge: {
     borderRadius: radii.pill,
     backgroundColor: colors.accentSoft,
@@ -152,7 +152,7 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.accentStrong,
     fontWeight: '700',
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   factRow: { flexDirection: 'row', gap: spacing.sm },
   fact: {
     flex: 1,
@@ -167,7 +167,7 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.textMuted,
     textAlign: 'center',
-    writingDirection: 'rtl',
+    writingDirection: 'ltr',
   },
   factValue: {
     ...typography.mono,
@@ -180,13 +180,13 @@ const styles = StyleSheet.create({
     color: colors.success,
     fontWeight: '700',
     textAlign: 'center',
-    writingDirection: 'rtl',
+    writingDirection: 'ltr',
   },
   factValueDanger: {
     ...typography.body,
     color: colors.error,
     fontWeight: '700',
     textAlign: 'center',
-    writingDirection: 'rtl',
+    writingDirection: 'ltr',
   },
 });

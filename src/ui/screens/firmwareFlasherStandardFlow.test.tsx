@@ -272,7 +272,7 @@ describe('build configuration is rendered from the official options document', (
     const text = screenText(renderer);
     // The official default radio protocol and its telemetry consequence.
     expect(text).toContain('CRSF');
-    expect(text).toContain('مضمّن تلقائياً مع بروتوكول الراديو');
+    expect(text).toContain("Automatisch opgenomen bij het radioprotocol");
     // OSD arrives inside generalOptions with group OSD and a grouped name.
     expect(text).toContain('MSP DisplayPort');
     expect(text).toContain('DShot');
@@ -421,7 +421,7 @@ describe('versions: stable by default, other channels reachable', () => {
     await selectKakuteH7(renderer);
 
     expect(exists(renderer, 'simple-no-stable')).toBe(true);
-    expect(screenText(renderer)).toContain('لا يوجد إصدار مستقر');
+    expect(screenText(renderer)).toContain("Geen stabiele versie voor deze printplaat. Getoond kanaal: ");
     act(() => renderer.unmount());
   });
 });
@@ -434,7 +434,7 @@ describe('board identity: detected, matched, and verified before flashing', () =
     await press(renderer, 'simple-auto-detect');
     await flush(20);
 
-    expect(screenText(renderer)).toContain('تم التعرف على اللوحة MATEKH743');
+    expect(screenText(renderer)).toContain("Printplaat herkend: MATEKH743");
     expect(exists(renderer, 'simple-detected-target')).toBe(true);
     act(() => renderer.unmount());
   });
@@ -451,7 +451,7 @@ describe('board identity: detected, matched, and verified before flashing', () =
     // The outcome must be READABLE while the screen sits idle - the
     // progress line only exists during an operation.
     expect(exists(renderer, 'simple-detection-note')).toBe(true);
-    expect(text).toContain('اختر Target يدويًا');
+    expect(text).toContain("Kies Target handmatig");
     expect(exists(renderer, 'simple-target-selector')).toBe(true);
     act(() => renderer.unmount());
   });
@@ -493,7 +493,7 @@ describe('entering DFU is offered - and honest when it cannot work', () => {
 
     expect(rebootToBootloader).toHaveBeenCalledTimes(1);
     expect(exists(renderer, 'simple-dfu-ready')).toBe(true);
-    expect(screenText(renderer)).toContain('وضع DFU');
+    expect(screenText(renderer)).toContain("DFU-modus");
     act(() => renderer.unmount());
   });
 
@@ -507,7 +507,7 @@ describe('entering DFU is offered - and honest when it cannot work', () => {
 
     expect(rebootToBootloader).not.toHaveBeenCalled();
     expect(exists(renderer, 'simple-manual-dfu')).toBe(true);
-    expect(screenText(renderer)).toContain('ادخل وضع DFU يدويًا');
+    expect(screenText(renderer)).toContain("Deze firmware ondersteunt geen softwarematige herstart naar DFU. Start DFU handmatig door BOOT ingedrukt te houden terwijl u USB aansluit. Het apparaat wordt automatisch gevonden of via DFU-apparaat kiezen.");
     act(() => renderer.unmount());
   });
 
@@ -524,7 +524,7 @@ describe('entering DFU is offered - and honest when it cannot work', () => {
     await flush(20);
 
     expect(exists(renderer, 'simple-manual-dfu')).toBe(true);
-    expect(screenText(renderer)).toContain('للسماح للمتصفح');
+    expect(screenText(renderer)).toContain("De printplaat staat in DFU-modus. Tik één keer op DFU-apparaat kiezen om de browser toegang te geven.");
     // One chooser, offered once, from a real press.
     expect(client.requestDfuDevicePermission).not.toHaveBeenCalled();
     await press(renderer, 'simple-choose-dfu-device');
@@ -538,7 +538,7 @@ describe('entering DFU is offered - and honest when it cannot work', () => {
     await selectKakuteH7(renderer);
 
     expect(exists(renderer, 'simple-manual-dfu')).toBe(false);
-    expect(screenText(renderer)).not.toContain('ادخل وضع DFU يدويًا');
+    expect(screenText(renderer)).not.toContain("Start DFU-modus handmatig");
     act(() => renderer.unmount());
   });
 });
@@ -582,8 +582,8 @@ describe('the standard screen is usable without opening Advanced', () => {
   it('shows no wall of warnings before the operator has done anything', async () => {
     const {renderer} = await renderScreen();
     const text = screenText(renderer);
-    expect(text).not.toContain('تحذير');
-    expect(text).not.toContain('ادخل وضع DFU يدويًا');
+    expect(text).not.toContain("Waarschuwing");
+    expect(text).not.toContain("Start DFU-modus handmatig");
     expect(exists(renderer, 'simple-manual-dfu')).toBe(false);
     act(() => renderer.unmount());
   });

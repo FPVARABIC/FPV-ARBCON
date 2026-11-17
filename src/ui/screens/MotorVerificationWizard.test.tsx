@@ -119,7 +119,7 @@ describe('Phase 2I - the wizard requires an eligible receipt', () => {
     const rendering = rendered.json();
     expect(rendering).toContain('M3');
     // M3's expectation is Rear Left / CW.
-    expect(rendering).toContain('خلفي يسار');
+    expect(rendering).toContain("Linksachter");
     rendered.unmount();
   });
 });
@@ -262,8 +262,8 @@ describe('Phase 2I - the read-only report', () => {
       rendered.query('report-overall-OBSERVATIONS_MATCH_EXPECTED'),
     ).toBeDefined();
     const rendering = rendered.json();
-    expect(rendering).toContain('تطابق ملاحظاتك مع الترتيب والاتجاه المتوقعَين');
-    expect(rendering).toContain('هذه المطابقة لا تعني أن الدرون أصبح آمنًا للإقلاع.');
+    expect(rendering).toContain("Je opmerkingen komen overeen met de volgorde en richting die je verwacht.");
+    expect(rendering).toContain("Deze overeenkomst betekent niet dat het toestel veilig kan opstijgen.");
     expect(rendered.query('report-match-caveat')).toBeDefined();
     rendered.unmount();
   });
@@ -273,7 +273,7 @@ describe('Phase 2I - the read-only report', () => {
       <MotorTestReport expectedDirectionFor={propsOutExpected} state={fullyMatching()} safeTeardownConfirmed />,
     );
     expect(rendered.json()).toContain(
-      'هذه النتيجة مبنية على ملاحظتك البصرية، وليست قياسًا تلقائيًا من وحدة التحكم.',
+      "Dit resultaat is gebaseerd op uw visuele waarneming, niet op een automatische meting door de vluchtcontroller.",
     );
     rendered.unmount();
   });

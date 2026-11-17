@@ -29,7 +29,7 @@ import ReactTestRenderer, {act} from 'react-test-renderer';
 
 import '../../i18n';
 import i18n from '../../i18n';
-import ar from '../../i18n/locales/ar.json';
+import ar from '../../i18n/locales/nl.json';
 import {
   evaluateMotorDirectionCommandCapability,
   MOTOR_DIRECTION_COMMAND_MAX_MOTORS,
@@ -330,7 +330,7 @@ describe('31/32 - expected exists alone, and nothing pretends to read the ESC', 
   it('never labels any of the three as the ESC current direction', () => {
     const rendered = textOf(tree);
     // The one phrase this whole model exists to prevent.
-    expect(rendered).not.toContain('الاتجاه الحالي هو');
+    expect(rendered).not.toContain("De huidige richting is");
     // And the section states outright that it cannot be read - with
     // authoring collapsed and nothing opened.
     expect(rendered).toContain(ar.motorsScreen.directionNoReadback);
@@ -884,7 +884,7 @@ describe('39 - yaw_motors_reversed never becomes a per-motor direction', () => {
     );
     expect(panel).toContain('yawMotorsReversed');
     expect(ar.motorConfiguration.propsDirectionDetail).toContain(
-      'لا يثبت الاتجاه الميكانيكي الفعلي للمحركات',
+      "Wisselt props-in en props-out in de mixer. Dit bevestigt de echte mechanische motordraairichting niet.",
     );
   });
 });

@@ -43,11 +43,11 @@ describe('firmware file validation', () => {
   it('rejects malformed UF2 block counts, signatures, and overlapping targets', () => {
     expect(() => parseUf2(new Uint8Array(511))).toThrow(FirmwareFileError);
     const badCount = uf2Block(0, 2);
-    expect(() => parseUf2(badCount)).toThrow(/ترقيم/);
+    expect(() => parseUf2(badCount)).toThrow(new RegExp("UF2 blokken zijn geteld of zijn niet in overeenstemming met de filegrootte\\."));
     const combined = new Uint8Array(1024);
     combined.set(uf2Block(0, 2), 0);
     combined.set(uf2Block(1, 2, 0x10000002), 512);
-    expect(() => parseUf2(combined)).toThrow(/متداخلة/);
+    expect(() => parseUf2(combined)).toThrow(new RegExp("Het UF2-bestand bevat overlappende geheugengebieden\\."));
   });
 
   it('validates the ESP header, segments, and aligned checksum', () => {
@@ -65,6 +65,6 @@ describe('firmware file validation', () => {
     bytes[0] = 0;
     expect(parsed.kind).toBe('BIN');
     expect(parsed.bytes[0]).toBe(0xe9);
-    expect(() => parseFirmwareFile('firmware.bin.txt', espImage())).toThrow(/الصيغ/);
+    expect(() => parseFirmwareFile('firmware.bin.txt', espImage())).toThrow(new RegExp("De aanvaarde formules zijn alleen\\.hex,\\.uf2 en\\.bin\\."));
   });
 });

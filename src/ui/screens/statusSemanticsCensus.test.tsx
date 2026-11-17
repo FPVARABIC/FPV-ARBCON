@@ -354,8 +354,8 @@ describe('the four confusions this application must not make', () => {
        this asserts is the narrower thing it depends on: the words exist
        and differ. A stale marker that read identically to the live one
        would make that suite's difference a colour change. */
-    const live = 'قياس حي';
-    const stale = 'القراءة غير محدثة';
+    const live = "Livemeting";
+    const stale = "Meting verouderd";
     expect(stale).not.toBe(live);
     expect(stale.length).toBeGreaterThan(0);
   });

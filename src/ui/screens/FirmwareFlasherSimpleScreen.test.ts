@@ -9,7 +9,7 @@ import {
   simpleFlasherNavigationLocked,
 } from './FirmwareFlasherSimpleScreen';
 import type {FirmwareRelease} from '../../core/firmware-flasher';
-import catalogue from '../../i18n/locales/ar.json';
+import catalogue from '../../i18n/locales/nl.json';
 
 function release(
   value: string,

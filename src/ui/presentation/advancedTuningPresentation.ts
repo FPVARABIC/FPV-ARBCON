@@ -71,8 +71,8 @@ export interface AdvancedFieldCopy {
 
 /** settings.c lookupTableOffOn. */
 const OFF_ON: readonly AdvancedChoice[] = Object.freeze([
-  {value: 0, label: 'إيقاف'},
-  {value: 1, label: 'تشغيل'},
+  {value: 0, label: "Stoppen"},
+  {value: 1, label: "Inschakelen"},
 ]);
 
 /**
@@ -95,122 +95,122 @@ const COPY: Readonly<Record<AdvancedFieldKey, AdvancedFieldCopy>> = Object.freez
   /* ---- D Max ------------------------------------------------------- */
   dMaxRoll: {
     label: 'D Max — Roll',
-    hint: 'أعلى قيمة D يسمح المتحكم ببلوغها عند الحركة السريعة.',
+    hint: "De hoogste waarde van D laat de controller bereiken bij snelle beweging.",
     detail:
-      'D Max ليس قيمة D ثانية. D العادية تعمل دائمًا؛ D Max هو السقف الذي '
-      + 'يرفع المتحكم إليه التخميد مؤقتًا عند الحركات الحادة ثم يعود. القيمة 0 '
-      + 'تعطّل الرفع وتُبقي D ثابتة.',
+      "D Max is geen tweede D-waarde. De normale D blijft actief. D Max is de bovengrens waarnaar de controller de demping tijdelijk verhoogt bij snelle bewegingen. De waarde 0 schakelt D Max op die as uit."
+      + "De vluchtcontroller verhoogt de demping tijdelijk bij scherpe bewegingen en verlaagt deze daarna weer. Waarde 0 "
+      + "gas werkt niet en D blijft stabiel.",
     wireName: 'd_max_roll',
   },
   dMaxPitch: {
     label: 'D Max — Pitch',
-    hint: 'أعلى قيمة D يسمح المتحكم ببلوغها عند الحركة السريعة.',
-    detail: 'كما في Roll، لمحور Pitch. القيمة 0 تُبقي D ثابتة على هذا المحور.',
+    hint: "De hoogste waarde van D laat de controller bereiken bij snelle beweging.",
+    detail: "Zoals bij Roll, de Pitch.-axis De 0-waarde houdt D vast op deze as.",
     wireName: 'd_max_pitch',
   },
   dMaxYaw: {
     label: 'D Max — Yaw',
-    hint: 'أعلى قيمة D يسمح المتحكم ببلوغها عند الحركة السريعة.',
-    detail: 'كما في Roll، لمحور Yaw. القيمة 0 تُبقي D ثابتة على هذا المحور.',
+    hint: "De hoogste waarde van D laat de controller bereiken bij snelle beweging.",
+    detail: "Zoals bij Roll, de Yaw.-axis De 0-waarde houdt D vast op deze as.",
     wireName: 'd_max_yaw',
   },
   dMaxGain: {
-    label: 'حساسية رفع D Max',
-    hint: 'كم يستجيب الرفع لسرعة تغيّر أمر العصا.',
+    label: "D Max-versterkingsgevoeligheid",
+    hint: "Hoe reageert gas op de snelheid van verandering van de stick-opdracht.",
     detail:
-      'يحدد مقدار الرفع نحو D Max لكل وحدة من معدّل التغيّر. القيمة الأعلى '
-      + 'تبلغ السقف أسرع. لا علاقة لهذه القيمة بشريحة D Max في الضبط المبسّط: '
-      + 'تلك قيمة مخزّنة أخرى.',
+      "De hoeveelheid gas wordt bepaald door D Max per eenheid van de variabele. De hoogste waarde."
+      + "Het plafond komt sneller. Deze waarde heeft niets te maken met het D Max-diagram in de vereenvoudigde instelling:"
+      + "Dat is nog een opslagwaarde.",
     wireName: 'd_max_gain',
   },
   dMaxAdvance: {
-    label: 'استباق D Max',
-    hint: 'كم يبدأ الرفع مبكرًا قبل أن تصل الحركة.',
+    label: "D Max-anticipatie",
+    hint: "Hoe vroeg begint gas voordat de beweging komt.",
     detail:
-      'يقدّم بداية الرفع بالاعتماد على معدّل تغيّر أمر العصا بدلًا من الخطأ '
-      + 'المقاس، فيصل التخميد قبل الاهتزاز لا بعده.',
+      "Het begin van gas is gebaseerd op de veranderingspercentage van de stick in plaats van de fout."
+      + "De maat, de vervulding voor de bewing en daarna.",
     wireName: 'd_max_advance',
   },
 
   /* ---- Feedforward ------------------------------------------------- */
   feedforwardTransition: {
-    label: 'بدء Feedforward',
-    hint: 'من أي انحراف للعصا يبدأ Feedforward بالعمل. 0 يعني من البداية.',
+    label: "Feedforward-overgang",
+    hint: "Van elke afwijking van de stok begint Feedforward te werken. 0 betekent vanaf het begin.",
     detail:
-      'نسبة من مدى العصا يُلغى فيها Feedforward قرب المنتصف، فيبقى التحويم '
-      + 'هادئًا. القيمة 0 تُبقيه فعّالًا على كامل المدى.',
+      "Het percentage van stick dat Feedforward in de buurt van het midden wordt afgeschaft, blijft verdwijnen."
+      + "Rustig maar. De 0-waarde houdt hem effectief op de lange termijn.",
     wireName: 'feedforward_transition',
   },
   feedforwardSmoothFactor: {
-    label: 'تنعيم Feedforward',
-    hint: 'يقلّل حدّة الدفعة على حساب قليل من التأخير.',
+    label: "Feedforward-filtering",
+    hint: "Het vermindert de uitwerking op het koste van een beetje vertraging.",
     detail:
-      'مرشّح تنعيم على مخرج Feedforward. القيم الأعلى تعطي إحساسًا سينمائيًا '
-      + 'وتأخيرًا أكبر؛ الأدنى أحدّ وأسرع.',
+      "Feedforward.-directeur. De hoogste waarden geven een filmgevoel."
+      + "En een grotere vertraging. De kleinste en de snelste.",
     wireName: 'feedforward_smooth_factor',
   },
   feedforwardMaxRateLimit: {
-    label: 'حدّ Feedforward عند الطرف',
-    hint: 'يمنع تجاوز السرعة القصوى عند دفع العصا إلى آخرها.',
+    label: "Feedforward-begrenzing aan het uiteinde",
+    hint: "Het verhindert de maximale snelheid te overschrijden wanneer stick naar de laatste wordt aangedreven.",
     detail:
-      'يقلّص Feedforward كلما اقترب الأمر من أقصى معدّل دوران، فلا يطلب '
-      + 'المتحكم سرعة تفوق ما تسمح به Rates. القيمة 0 تعطّل الحد.',
+      "Feedforward neemt af als het dicht bij de maximale rotatiepunt komt."
+      + "Rates. heeft een supersnelle snelheid. De 0-waarde verstoort de grens.",
     wireName: 'feedforward_max_rate_limit',
   },
 
   /* ---- TPA --------------------------------------------------------- */
   tpaMode: {
-    label: 'نمط TPA',
-    hint: 'أي المعاملات يخفّضها TPA مع ارتفاع الخانق.',
+    label: "TPA-modus",
+    hint: "Alle transacties die TPA vermindert met gas's verhoging.",
     detail:
-      'TPA يخفّض قوة التصحيح عند الخانق العالي حيث تكون الطائرة أكثر قابلية '
-      + 'للاهتزاز. النمط يحدد ما يُخفَّض: P وD معًا، أو D وحدها.',
+      "TPA vermindert de corrigerende kracht bij de hogere gas, waar het vliegtuig meer haalbaar is."
+      + "Om te schudden. Het patroon bepaalt wat de afkorting is: P en D samen, of D alleen.",
     wireName: 'tpa_mode',
     choices: Object.freeze([
-      {value: 0, label: 'P وD'},
-      {value: 1, label: 'D فقط'},
+      {value: 0, label: "P en D"},
+      {value: 1, label: "Alleen D"},
     ]),
   },
   tpaRate: {
-    label: 'مقدار TPA',
-    hint: 'كم يُخفَّض التصحيح عند أقصى خانق.',
+    label: "TPA-sterkte",
+    hint: "Hoe kort de correctie is bij het maximale knokken.",
     detail:
-      'نسبة التخفيض عند بلوغ الخانق الأقصى. القيمة 0 تعطّل TPA. المتحكم يقصّ '
-      + 'أي قيمة أعلى من 100 عند الكتابة.',
+      "Vermindering bij maximaal gas. De waarde. 0 Het is kapot. TPA. De controller knipt."
+      + "Een waarde hoger dan 100 bij het schrijven.",
     wireName: 'tpa_rate',
   },
   tpaBreakpoint: {
-    label: 'نقطة بدء TPA',
-    hint: 'قيمة الخانق التي يبدأ عندها التخفيض، بوحدة الأمر (1000–2000).',
+    label: "TPA-breekpunt",
+    hint: "De waarde van gas die begint te dalen, in orde eenheid (1000–2000).",
     detail:
-      'تحت هذه النقطة لا يعمل TPA إطلاقًا؛ فوقها يتدرّج التخفيض حتى الخانق '
-      + 'الأقصى. الوحدة هي وحدة أمر الاستقبال نفسها، لا نسبة مئوية.',
+      "Onder dit punt werkt TPA helemaal niet. Hierboven gaat de afname naar gas."
+      + "Het maximale. Eenheid is de eenheid van de ontvangst zelf, geen percentage.",
     wireName: 'tpa_breakpoint',
   },
 
   /* ---- I-term and anti-gravity ------------------------------------- */
   itermRelax: {
-    label: 'تخفيف I-term',
-    hint: 'يمنع تراكم I أثناء الحركات السريعة.',
+    label: "I-term Relax",
+    hint: "I verhindert accumulatie tijdens snelle bewegingen.",
     detail:
-      'أثناء حركة سريعة يتراكم I على خطأ سيزول وحده، فترتد الطائرة عند التوقف. '
-      + 'التخفيف يوقف التراكم على المحاور المختارة. INC يسمح بالتراكم في اتجاه '
-      + 'الحركة فقط.',
+      "Tijdens een snelle beweging verzamelt I zich per ongeluk alleen, het vliegtuig trekt bij stilstand."
+      + "Verlichting stopt de accumulatie op de geselecteerde assen. INC laat zich in de richting accumuleren."
+      + "Alleen de beweging.",
     wireName: 'iterm_relax',
     choices: Object.freeze([
-      {value: 0, label: 'إيقاف'},
-      {value: 1, label: 'Roll وPitch'},
-      {value: 2, label: 'كل المحاور'},
-      {value: 3, label: 'Roll وPitch — INC'},
-      {value: 4, label: 'كل المحاور — INC'},
+      {value: 0, label: "Stoppen"},
+      {value: 1, label: "Roll en Pitch"},
+      {value: 2, label: "Alle assen"},
+      {value: 3, label: "Roll en Pitch — INC"},
+      {value: 4, label: "Alle assen — INC"},
     ]),
   },
   itermRelaxType: {
-    label: 'مرجع تخفيف I-term',
-    hint: 'هل يقيس التخفيف حركة العصا أم دوران الطائرة؟',
+    label: "Referentie voor I-term Relax",
+    hint: "Meten de verlichting de beweging van de stick of de rotatie van het vliegtuig?",
     detail:
-      'SETPOINT يقيس أمر العصا، وهو الخيار المعتاد. GYRO يقيس الدوران الفعلي، '
-      + 'وهو أبطأ استجابة وأكثر تحفّظًا.',
+      "SETPOINT meet de stick-optie, een gebruikelijke optie. GYRO meet de werkelijke rotatie."
+      + "Hij is langzamer en meer conservatief.",
     wireName: 'iterm_relax_type',
     choices: Object.freeze([
       {value: 0, label: 'GYRO'},
@@ -218,108 +218,108 @@ const COPY: Readonly<Record<AdvancedFieldKey, AdvancedFieldCopy>> = Object.freez
     ]),
   },
   itermRelaxCutoff: {
-    label: 'تردد تخفيف I-term',
-    hint: 'كم يُعتبر التغيّر «سريعًا»، بالهرتز.',
+    label: "I-term Relax-frequentie",
+    hint: "Hoe snel is verandering, in Hz.",
     detail:
-      'تردد قطع المرشّح الذي يقرر أن الحركة سريعة بما يكفي لإيقاف التراكم. '
-      + 'القيم الأعلى تجعل التخفيف أقل تدخّلًا.',
+      "De frequency van de filter die besluit dat de beweging snel genoeg is om de accumulatie te stoppen."
+      + "De hogere waarden maken de verlichting minder ingrijpend.",
     wireName: 'iterm_relax_cutoff',
   },
   itermRotation: {
-    label: 'تدوير I-term مع Yaw',
-    hint: 'ينقل I المتراكم بين المحاور عند الدوران حول Yaw.',
+    label: "I-term met Yaw meedraaien",
+    hint: "De I verplaatst de accumulatie tussen de axes als hij rond de Yaw. draait.",
     detail:
-      'عند لفّة Yaw يصبح ما تراكم على Roll مناسبًا لـPitch والعكس. التفعيل '
-      + 'يدوّر القيم مع الطائرة بدل تركها على المحور الخطأ.',
+      "Bij het opknappen van Yaw wordt wat op Roll ophoopt geschikt voor Pitch en vice versa. Activering."
+      + "De waarden draaien met het vliegtuig in plaats van het op de verkeerde as te laten liggen.",
     wireName: 'iterm_rotation',
     choices: OFF_ON,
   },
   antiGravityGain: {
-    label: 'مقاومة الجاذبية',
-    hint: 'يرفع I مؤقتًا عند تغيّر الخانق المفاجئ.',
+    label: "Anti-Gravity",
+    hint: "I wordt tijdelijk opgeheven bij een onverwachte verandering van gas.",
     detail:
-      'دفع الخانق يميل بالطائرة قبل أن يلحق I. القيمة ترفع I مؤقتًا بمقدار '
-      + 'يتناسب مع سرعة تغيّر الخانق. القيمة 0 تعطّل الميزة.',
+      "De gas-schuiving neigt naar het vliegtuig voordat de I. wordt opgevangen. I wordt tijdelijk verhoogd."
+      + "Pas op de snelheid van verandering van gas. De 0-waarde verstoort het voordeel.",
     wireName: 'anti_gravity_gain',
   },
 
   /* ---- Limits and assistance --------------------------------------- */
   angleLimit: {
-    label: 'أقصى ميل في وضع Angle',
-    hint: 'بالدرجات. يحدّ ميل الطائرة في الأوضاع المستوية فقط.',
+    label: "Maximale helling in Angle-modus",
+    hint: "Op de graden. Hij beperkt de helling van het vliegtuig alleen op vlakte.",
     detail:
-      'لا أثر له في وضع Acro. يحدّ زاوية الميل التي يصل إليها وضع Angle عند '
-      + 'دفع العصا إلى آخرها.',
+      "Geen sporen van Acro.. pitch beperkt de hoek die de Angle-positie bereikt bij"
+      + "stick naar de laatste.",
     wireName: 'angle_limit',
   },
   acroTrainerAngleLimit: {
-    label: 'حدّ Acro Trainer',
-    hint: 'بالدرجات. أقصى ميل يسمح به وضع التدريب.',
+    label: "Acro Trainer-limiet",
+    hint: "Op de graden. De maximale afstand die de trainingsmodus toelaat.",
     detail:
-      'يعمل فقط حين يكون وضع Acro Trainer مفعّلًا من شاشة الأوضاع. خارج ذلك '
-      + 'الوضع لا أثر لهذه القيمة.',
+      "Het werkt alleen als de Acro Trainer-modus is geactiveerd op het modusskerm. Dat is niet waar."
+      + "De situatie heeft geen invloed op deze waarde.",
     wireName: 'acro_trainer_angle_limit',
   },
   rateAccelLimit: {
-    label: 'حدّ تسارع Roll/Pitch',
-    hint: 'أقصى معدّل تغيّر للأمر، بوحدة درجة/ثانية لكل ثانية. 0 يعني بلا حد.',
+    label: "Versnellingslimiet Roll/Pitch",
+    hint: "Maximale wisselkoers per seconde. 0 betekent oneindig.",
     detail:
-      'يمنع قفزة مفاجئة في الأمر من إجهاد المحركات. القيمة 0 هي الافتراضي '
-      + 'وتعني أن المتحكم لا يفرض حدًا.',
+      "Een plotselinge sprong verhindert de stress van motoren. De 0 is standaard."
+      + "Het betekent dat de controller geen grenzen oplegt.",
     wireName: 'acc_limit',
   },
   yawRateAccelLimit: {
-    label: 'حدّ تسارع Yaw',
-    hint: 'كسابقه، لمحور Yaw وحده. 0 يعني بلا حد.',
+    label: "Versnellingslimiet Yaw",
+    hint: "Net als de vorige, Yaw-axis alleen. 0 betekent oneindig.",
     detail:
-      'Yaw أبطأ ميكانيكيًا من المحورين الآخرين، ولذلك له حدّه المستقل.',
+      "Yaw is mechanisch langzamer dan de andere axes, dus het heeft een onafhankelijke limiet.",
     wireName: 'acc_limit_yaw',
   },
   motorOutputLimit: {
-    label: 'حدّ خرج المحركات',
-    hint: 'نسبة مئوية من أقصى خرج. 100 تعني بلا تقييد.',
+    label: "Motoruitgangslimiet",
+    hint: "Een percentage van de maxima is uitgegaan. 100 betekent onbeperkt.",
     detail:
-      'يقصّ أعلى ما يصل إلى المحركات. يستخدَم لخفض القدرة عمدًا. القيمة الدنيا '
-      + 'التي يقبلها المتحكم هي 1.',
+      "Snij het hoger af tot motoren. Gebruikt om het vermogen opzettelijk te verminderen. Minderwaarde"
+      + "De controleur accepteert 1.",
     wireName: 'motor_output_limit',
   },
 
   /* ---- Battery and thrust ------------------------------------------ */
   throttleBoost: {
-    label: 'دفعة الخانق',
-    hint: 'يحدّ استجابة الخانق للتغيّر السريع. 0 يعطّلها.',
+    label: "Throttle Boost",
+    hint: "gas beperkt de reactie op snelle verandering. 0 maakt het uit.",
     detail:
-      'مرشّح يبرز التغيّرات السريعة في الخانق، فتبدو الاستجابة أسرع دون رفع '
-      + 'الخانق نفسه.',
+      "Een filter die de snelle veranderingen in gas onderstreept, zodat de reactie sneller lijkt te zijn zonder te verhogen."
+      + "gas zelf.",
     wireName: 'throttle_boost',
   },
   thrustLinearization: {
-    label: 'تخطيط الدفع',
-    hint: 'يعوّض عدم خطية الدفع عند الخانق المنخفض. 0 يعطّلها.',
+    label: "Thrust Linearization",
+    hint: "Het compenseren van de niet-linee bij de lage gas. 0 maakt het uit.",
     detail:
-      'دفع المروحة لا يتناسب خطيًا مع أمر المحرك؛ التعويض يعيد توزيع الأمر '
-      + 'ليصبح إحساس التصحيح متشابهًا عبر مدى الخانق.',
+      "De ventilator niet lineair past bij de motor-opdracht. Compensatie redistribueert de zaak."
+      + "Het correctiegevoel is gelijk over de gas-spanne.",
     wireName: 'thrust_linear',
   },
   vbatSagCompensation: {
-    label: 'تعويض هبوط الجهد',
-    hint: 'يحافظ على ثبات الإحساس مع تفريغ البطارية. 0 يعطّله.',
+    label: "Compensatie van spanningsdaling",
+    hint: "Het behoud van de gevoelige stabiliteit met accu ontlasting. 0 maakt het uit.",
     detail:
-      'يرفع الخرج تدريجيًا كلما هبط جهد البطارية تحت الحمل، فلا تضعف الاستجابة '
-      + 'في آخر الرحلة. يحتاج قراءة جهد صحيحة.',
+      "De uitslag stijgt geleidelijk als de accu-spanning onder de zwangerschap daalt, laat de reactie niet afnemen."
+      + "Op de laatste reis. Het heeft een goede inspanning nodig.",
     wireName: 'vbat_sag_compensation',
   },
   autoProfileCellCount: {
-    label: 'ربط الملف بعدد الخلايا',
-    hint: 'يختار المتحكم ملف PID تلقائيًا حسب البطارية المركّبة.',
+    label: "Profiel aan celaantal koppelen",
+    hint: "De controller selecteert automatisch het PID-bestand op basis van de accu-compact.",
     detail:
-      'القيمة ليست عددًا عاديًا: «تبديل تلقائي» تعني الانتقال دائمًا إلى الملف '
-      + 'الذي يطابق عدد الخلايا المكتشف، و«بلا تبديل» تعني تعطيل الميزة، وأي '
-      + 'رقم من 1 إلى 8 يعني أن هذا الملف مخصّص لذلك العدد من الخلايا.',
+      "De waarde is geen gewone getal: 'Automatisch schakelen' betekent altijd naar het bestand gaan."
+      + "Dat komt overeen met het aantal ontdekte cellen, en zonder vervanging... betekent dat de functie is gestopt."
+      + "Een getal van 1 tot 8 betekent dat dit bestand speciaal is voor dat aantal cellen.",
     wireName: 'auto_profile_cell_count',
     choices: Object.freeze([
-      {value: -1, label: 'تبديل تلقائي'},
-      {value: 0, label: 'بلا تبديل'},
+      {value: -1, label: "Automatisch wisselen"},
+      {value: 0, label: "Niet wisselen"},
       {value: 1, label: '1S'},
       {value: 2, label: '2S'},
       {value: 3, label: '3S'},
@@ -333,112 +333,112 @@ const COPY: Readonly<Record<AdvancedFieldKey, AdvancedFieldCopy>> = Object.freez
 
   /* ---- Gyro filters (GLOBAL) --------------------------------------- */
   gyroLpf1Type: {
-    label: 'نوع Gyro LPF1',
-    hint: 'شكل المرشّح: حدّة القطع مقابل التأخير.',
+    label: "Gyro LPF1-type",
+    hint: "De vorm van de kandidaat: scherpheid voor vertraging.",
     detail:
-      'PT1 أخف تأخيرًا وأقل حدّة؛ BIQUAD أحدّ وأبطأ؛ PT2 وPT3 بينهما بترتيب '
-      + 'متزايد الحدّة.',
+      "PT1 is lichter en minder scherp. BIQUAD één en langzamer; PT2 en PT3 in volgorde."
+      + "Het wordt steeds groter.",
     wireName: 'gyro_lpf1_type',
     choices: LOWPASS_TYPES,
   },
   gyroLpf2StaticHz: {
-    label: 'Gyro LPF2 — التردد',
-    hint: 'مرشّح ثانٍ ثابت بعد LPF1. 0 يعطّله.',
+    label: "Gyro LPF2 — Frequentie",
+    hint: "Een vaste tweede kandidaat na LPF1.. 0 maakt het uit.",
     detail:
-      'LPF2 مرشّح ثابت لا ديناميكي، يعمل بعد LPF1 لتنظيف ما تبقّى من ضجيج '
-      + 'عالي التردد.',
+      "LPF2 is een vaste, niet-dynamische filter, die na LPF1 werkt om de rest van het geluid te zuiveren."
+      + "Hoge frequentie.",
     wireName: 'gyro_lpf2_static_hz',
   },
   gyroLpf2Type: {
-    label: 'نوع Gyro LPF2',
-    hint: 'شكل المرشّح الثاني.',
-    detail: 'الخيارات نفسها المتاحة لـLPF1، وبنفس المقايضة بين الحدّة والتأخير.',
+    label: "Gyro LPF2-type",
+    hint: "De vorm van de tweede kandidaat.",
+    detail: "Dezelfde opties beschikbaar voor LPF1, en dezelfde wisselkoers tussen limiet en vertraging.",
     wireName: 'gyro_lpf2_type',
     choices: LOWPASS_TYPES,
   },
   gyroSoftNotchHz1: {
-    label: 'Gyro Notch 1 — المركز',
-    hint: 'التردد الذي يُقصّ. 0 يعطّل هذا الـnotch.',
+    label: "Gyro Notch 1 — Middenfrequentie",
+    hint: "De frequentie die afneemt. 0 maakt deze notch. uit.",
     detail:
-      'الـnotch يزيل نطاقًا ضيقًا حول تردد معروف - رنين إطار أو مروحة - دون '
-      + 'التأثير على بقية الطيف.',
+      "notch verwijdert een nauwkeurige band rond een bekende frequentie - een frame of ventilator - zonder"
+      + "Het effect op de rest van het spectrum.",
     wireName: 'gyro_notch1_hz',
   },
   gyroSoftNotchCutoff1: {
-    label: 'Gyro Notch 1 — العرض',
-    hint: 'كلما اقترب من المركز ضاق النطاق المقصوص.',
+    label: "Gyro Notch 1 — Bandbreedte",
+    hint: "Hoe dichter je bij het centrum komt, hoe kleiner de band.",
     detail:
-      'إذا بلغ العرض المركز أو تجاوزه فسيعطّل المتحكم الـnotch كليًا عند '
-      + 'الكتابة، وسنعرض ذلك كتصحيح من البرنامج الثابت لا كنجاح صامت.',
+      "notch-controller zal volledig uitwerken als de scherpstelling het centrum bereikt of overschrijdt."
+      + "Schrijven, we presenteren het als correctie van firmware en niet als een stil succes.",
     wireName: 'gyro_notch1_cutoff',
   },
   gyroSoftNotchHz2: {
-    label: 'Gyro Notch 2 — المركز',
-    hint: 'notch ثانٍ مستقل. 0 يعطّله.',
-    detail: 'يعمل بنفس قواعد الأول تمامًا، لتردد رنين ثانٍ.',
+    label: "Gyro Notch 2 — Middenfrequentie",
+    hint: "notch is een onafhankelijke seconde. 0 maakt het uit.",
+    detail: "Het werkt precies op dezelfde regels als de eerste.",
     wireName: 'gyro_notch2_hz',
   },
   gyroSoftNotchCutoff2: {
-    label: 'Gyro Notch 2 — العرض',
-    hint: 'كلما اقترب من المركز ضاق النطاق المقصوص.',
-    detail: 'وله التصحيح نفسه إن بلغ المركز: يعطّل المتحكم الـnotch عند الكتابة.',
+    label: "Gyro Notch 2 — Bandbreedte",
+    hint: "Hoe dichter je bij het centrum komt, hoe kleiner de band.",
+    detail: "Het heeft dezelfde correctie als het centrum bereikt: het notch-controller stopt bij het schrijven.",
     wireName: 'gyro_notch2_cutoff',
   },
 
   /* ---- D-term filters (PID PROFILE) -------------------------------- */
   dtermLpf1Type: {
-    label: 'نوع D-term LPF1',
-    hint: 'شكل مرشّح D الأول.',
+    label: "D-term LPF1-type",
+    hint: "De vorm van de eerste D-filter.",
     detail:
-      'D هو أكثر ما يضخّم الضجيج، ولذلك يميل مرشّحه إلى أن يكون أحدّ من مرشّح '
-      + 'الـgyro. المقايضة نفسها: حدّة مقابل تأخير.',
+      "D maakt het meeste lawaai, dus zijn kandidaat is geneigd om een van de kandidaten te zijn."
+      + "De gyro.. De ruil zelf: hardheid voor vertraging.",
     wireName: 'dterm_lpf1_type',
     choices: LOWPASS_TYPES,
   },
   dtermLpf1DynExpo: {
-    label: 'انحناء D-term الديناميكي',
-    hint: 'كيف يتوزّع التردد بين الحد الأدنى والأعلى مع الخانق.',
+    label: "Dynamische D-term-curve",
+    hint: "Hoe wordt de frequentie verdeeld tussen minimum en maximum met gas.",
     detail:
-      'القيمة 0 توزيع خطي مع الخانق. القيم الأعلى تُبقي التردد منخفضًا لمدى '
-      + 'أطول ثم ترفعه بسرعة قرب الخانق العالي.',
+      "De waarde 0 is lineair verdeeld met gas. De hogere waarden houden de frequentie lang laag."
+      + "Langer en dan snel bij de hoge gas.",
     wireName: 'dterm_lpf1_dyn_expo',
   },
   dtermLpf2StaticHz: {
-    label: 'D-term LPF2 — التردد',
-    hint: 'مرشّح ثانٍ ثابت على D. 0 يعطّله.',
-    detail: 'يعمل بعد LPF1 على مسار D وحده، ولا يمسّ إشارة الـgyro الأصلية.',
+    label: "D-term LPF2 — Frequentie",
+    hint: "Een tweede kandidaat, vast op D.. 0 maakt het uit.",
+    detail: "Het werkt na LPF1 alleen op het D-traject en raakt het oorspronkelijke gyro-signaal niet aan.",
     wireName: 'dterm_lpf2_static_hz',
   },
   dtermLpf2Type: {
-    label: 'نوع D-term LPF2',
-    hint: 'شكل مرشّح D الثاني.',
-    detail: 'الخيارات نفسها المتاحة لبقية المرشّحات المنخفضة.',
+    label: "D-term LPF2-type",
+    hint: "D tweede filtervorm.",
+    detail: "Dezelfde opties als voor de rest van de ondergeschikte kandidaten.",
     wireName: 'dterm_lpf2_type',
     choices: LOWPASS_TYPES,
   },
   dtermNotchHz: {
-    label: 'D-term Notch — المركز',
-    hint: 'قصّ تردد بعينه من مسار D. 0 يعطّله.',
+    label: "D-term Notch — Middenfrequentie",
+    hint: "Een bepaalde frequentie van de D.-baan. 0 maakt het uit.",
     detail:
-      'يفيد حين يظهر رنين في D وحده. لا يمكن ضبط العرض عند المركز أو فوقه: '
-      + 'المتحكم يقبل القيمة ثم يُلغيها عند حفظ الإعدادات، فنرفضها قبل الإرسال '
-      + 'بدل الادّعاء بأنها حُفظت.',
+      "Het is nuttig als een resonant alleen in D verschijnt. Je kunt de weergave niet aanpassen bij of boven het centrum:"
+      + "De controller accepteert de waarde en verwijdert die bij het opslaan van de instellingen."
+      + "In plaats van te beweren dat ze bewaard waren.",
     wireName: 'dterm_notch_hz',
   },
   dtermNotchCutoff: {
-    label: 'D-term Notch — العرض',
-    hint: 'يجب أن يبقى أصغر من المركز.',
+    label: "D-term Notch — Bandbreedte",
+    hint: "Hij moet kleiner blijven dan het centrum.",
     detail:
-      'لإيقاف الـnotch اجعل المركز 0؛ رفع العرض إلى المركز ليس طريقة إيقاف '
-      + 'صالحة على هذا المسار.',
+      "Om de notch te stoppen, zet het 0 centraal. Het aanbieden naar het centrum is geen manier om te stoppen."
+      + "Geldig op deze route.",
     wireName: 'dterm_notch_cutoff',
   },
   yawLowpassHz: {
-    label: 'مرشّح Yaw',
-    hint: 'مرشّح منخفض إضافي على مخرج Yaw. 0 يعطّله.',
+    label: "Yaw-filter",
+    hint: "Een extra laag filter op de Yaw.-uitvoerder. 0 maakt het uit.",
     detail:
-      'Yaw أبطأ ولا يحتاج نطاقًا واسعًا، فمرشّح إضافي عليه يهدّئ المحركات دون '
-      + 'أثر محسوس على القيادة.',
+      "Yaw Langzamer en ruimter. Een extra kandidaat moet rustig zijn. motoren Don."
+      + "Een duidelijke invloed op het bestuur.",
     wireName: 'yaw_lowpass_hz',
   },
 } as const);
@@ -483,7 +483,7 @@ export const ADVANCED_GROUPS: readonly AdvancedGroup[] = Object.freeze([
   Object.freeze({
     key: 'D_MAX',
     title: 'D Max',
-    hint: 'سقف مؤقت لقيمة D عند الحركات الحادة. ليس قيمة D ثانية.',
+    hint: "Een tijdelijk maximum van D bij scherpe bewegingen. Niet de waarde van D een seconde.",
     scope: 'PID_PROFILE',
     fields: Object.freeze<AdvancedFieldKey[]>([
       'dMaxRoll', 'dMaxPitch', 'dMaxYaw', 'dMaxGain', 'dMaxAdvance',
@@ -492,7 +492,7 @@ export const ADVANCED_GROUPS: readonly AdvancedGroup[] = Object.freeze([
   Object.freeze({
     key: 'FEEDFORWARD',
     title: 'Feedforward',
-    hint: 'استجابة مبنية على أمر العصا مباشرة، قبل أن يقيس المتحكم أي خطأ.',
+    hint: "Een reactie gebaseerd op een stick-opdracht direct, voordat de controller een fout meet.",
     scope: 'PID_PROFILE',
     fields: Object.freeze<AdvancedFieldKey[]>([
       'feedforwardTransition', 'feedforwardSmoothFactor', 'feedforwardMaxRateLimit',
@@ -501,14 +501,14 @@ export const ADVANCED_GROUPS: readonly AdvancedGroup[] = Object.freeze([
   Object.freeze({
     key: 'TPA',
     title: 'TPA',
-    hint: 'خفض التصحيح عند الخانق العالي، حيث تكون الطائرة أكثر عرضة للاهتزاز.',
+    hint: "Vermindering van de correctie bij een hoge gas, waarbij het vliegtuig meer gevoelig is voor trillingen.",
     scope: 'PID_PROFILE',
     fields: Object.freeze<AdvancedFieldKey[]>(['tpaMode', 'tpaRate', 'tpaBreakpoint']),
   }),
   Object.freeze({
     key: 'ITERM',
-    title: 'I-term ومقاومة الجاذبية',
-    hint: 'كيف يتعامل المتحكم مع الخطأ المتراكم أثناء الحركة وتغيّر الخانق.',
+    title: "I-term en Anti-Gravity",
+    hint: "Hoe de controller de accumulatie van fouten in beweging aanpakt en gas verandert.",
     scope: 'PID_PROFILE',
     fields: Object.freeze<AdvancedFieldKey[]>([
       'itermRelax', 'itermRelaxType', 'itermRelaxCutoff', 'itermRotation', 'antiGravityGain',
@@ -516,8 +516,8 @@ export const ADVANCED_GROUPS: readonly AdvancedGroup[] = Object.freeze([
   }),
   Object.freeze({
     key: 'LIMITS',
-    title: 'الحدود والمساعدات',
-    hint: 'سقوف لا تغيّر إحساس الطيران في وضع Acro، لكنها تحدّ ما يُسمح به.',
+    title: "Limieten en ondersteuning",
+    hint: "De daken veranderen het gevoel van vliegen niet in de Acro-modus, maar ze beperken wat toegestaan is.",
     scope: 'PID_PROFILE',
     fields: Object.freeze<AdvancedFieldKey[]>([
       'angleLimit', 'acroTrainerAngleLimit', 'rateAccelLimit', 'yawRateAccelLimit',
@@ -526,8 +526,8 @@ export const ADVANCED_GROUPS: readonly AdvancedGroup[] = Object.freeze([
   }),
   Object.freeze({
     key: 'BATTERY',
-    title: 'البطارية والدفع',
-    hint: 'تعويضات تحافظ على ثبات الإحساس مع تغيّر الجهد والدفع.',
+    title: "Accu en aandrijving",
+    hint: "Compensatie houdt het gevoel stabiel met een verandering van spanning en druk.",
     scope: 'PID_PROFILE',
     fields: Object.freeze<AdvancedFieldKey[]>([
       'throttleBoost', 'thrustLinearization', 'vbatSagCompensation', 'autoProfileCellCount',
@@ -535,8 +535,8 @@ export const ADVANCED_GROUPS: readonly AdvancedGroup[] = Object.freeze([
   }),
   Object.freeze({
     key: 'GYRO_FILTERS',
-    title: 'مرشّحات Gyro',
-    hint: 'مشتركة بين كل ملفات PID: تعديلها هنا يغيّرها في كل الملفات.',
+    title: "Gyrofilters",
+    hint: "Het is gemeenschappelijk tussen alle PID:-bestanden. Het wijzigen hier verandert het in alle bestanden.",
     scope: 'GLOBAL',
     fields: Object.freeze<AdvancedFieldKey[]>([
       'gyroLpf1Type', 'gyroLpf2StaticHz', 'gyroLpf2Type',
@@ -545,8 +545,8 @@ export const ADVANCED_GROUPS: readonly AdvancedGroup[] = Object.freeze([
   }),
   Object.freeze({
     key: 'DTERM_FILTERS',
-    title: 'مرشّحات D-term',
-    hint: 'تخصّ ملف PID الحالي وحده، ولا تتبعها بقية الملفات.',
+    title: "D-term-filters",
+    hint: "Het is alleen het huidige PID-bestand, niet gevolgd door de rest.",
     scope: 'PID_PROFILE',
     fields: Object.freeze<AdvancedFieldKey[]>([
       'dtermLpf1Type', 'dtermLpf1DynExpo', 'dtermLpf2StaticHz', 'dtermLpf2Type',
@@ -580,20 +580,20 @@ export const ADVANCED_CATALOGUE_FIELDS: readonly AdvancedFieldKey[] = Object.fre
  * greyed-out zeros with no explanation.
  */
 export const RPM_FILTER_COPY = Object.freeze({
-  title: 'مرشّح RPM',
-  hint: 'يلغي ضجيج المراوح بالاعتماد على سرعة دوران كل محرك، ويتحرّك مع تغيّر السرعة.',
-  scopeBadge: 'مشترك بين كل الملفات',
+  title: "RPM-filter",
+  hint: "De propellers maakt het geluid af, afhankelijk van de snelheid van elke motor, en beweegt met een verandering van snelheid.",
+  scopeBadge: "Gedeeld door alle profielen",
   /** Shown ONLY under a contract whose message has no tail. §5. */
-  tailAbsentNote: 'الإعدادات الإضافية لمرشّح RPM تتوفر عبر MSP في الإصدارات الأحدث.',
+  tailAbsentNote: "Bijkomende instellingen voor de RPM-candidaten zijn beschikbaar via MSP in de nieuwste versies.",
   /** What a harmonics of zero actually means, said once. */
-  disabledNote: 'عدد التوافقيات صفر يعني أن المرشّح متوقف.',
-  detailTitle: 'التفاصيل التقنية',
+  disabledNote: "Een nul van de overeenkomsten betekent dat de kandidaat gestopt is.",
+  detailTitle: "Technische details",
   detail:
-    'الحقول السبعة كلها ضمن رسالة إعدادات المرشّحات نفسها. الأولان - عدد '
-    + 'التوافقيات والتردد الأدنى - موجودان في كل الإصدارات المدعومة. أما مدى '
-    + 'التلاشي والـQ والأوزان الثلاثة فتظهر في ذيل الرسالة ابتداءً من إصدار '
-    + 'MSP 1.48، ويقرر التطبيق وجودها من إصدار البروتوكول الذي أثبته عند '
-    + 'التعرّف على اللوحة، لا من طول الرسالة ولا من كون القيمة صفرًا.',
+    "De zeven velden zitten allemaal in de tekst van de filters. De eerste twee. Een getal."
+    + "De compatibiliteit en de minimumfrequentie zijn aanwezig in alle ondersteunde versies. Maar hoe?"
+    + "Het verdwijnen, Q en de drie gewichten verschijnen in de achterkant van het bericht vanaf de release."
+    + "MSP 1.48, en de applicatie bepaalt zijn bestaan uit de versie van het protocol dat hij bij"
+    + "Identificatie op het printplaat, niet van de lengte van het bericht of van het feit dat de waarde nul is.",
 });
 
 export interface RpmFieldCopy {
@@ -612,38 +612,38 @@ export interface RpmFieldCopy {
  */
 export const RPM_FIELD_COPY: Readonly<Record<RpmFilterFieldKey, RpmFieldCopy>> = Object.freeze({
   harmonics: {
-    label: 'عدد التوافقيات',
-    hint: 'كم مضاعفًا من تردد دوران المحرك يلاحقه المرشّح. صفر يوقفه.',
+    label: "Aantal harmonischen",
+    hint: "Hoe vaak draait de motor op de kandidaat? Nul stopt hem.",
     wireName: 'rpm_filter_harmonics',
   },
   minHz: {
-    label: 'أدنى تردد (هرتز)',
-    hint: 'لا يعمل المرشّح تحت هذا التردد، حتى لا يلاحق دورانًا بطيئًا جدًا.',
+    label: "Minimale frequentie (Hz)",
+    hint: "De filter werkt niet onder deze frequentie, zodat hij niet te langzaam loopt.",
     wireName: 'rpm_filter_min_hz',
   },
   fadeRangeHz: {
-    label: 'مدى التلاشي (هرتز)',
-    hint: 'المدى الذي يخفّ فيه أثر المرشّح تدريجيًا قرب أدنى تردد بدل أن يتوقف فجأة.',
+    label: "Uitfaderingsbereik (Hz)",
+    hint: "De mate waarin het effect van de filter geleidelijk afneemt bij de minimumfrequentie in plaats van plotseling te stoppen.",
     wireName: 'rpm_filter_fade_range_hz',
   },
   q: {
-    label: 'حدّة المرشّح Q',
-    hint: 'كلما ارتفعت صار المرشّح أضيق: يزيل نطاقًا أرفع حول التردد المستهدف.',
+    label: "Filterkwaliteit Q",
+    hint: "Hoe hoger het filter wordt, hoe kleiner het wordt: het verwijdert een hoger bereik rond de doelfrequentie.",
     wireName: 'rpm_filter_q',
   },
   weight1: {
-    label: 'وزن التوافقية الأولى ٪',
-    hint: 'قوة المرشّح على المضاعف الأول، من صفر إلى مئة بالمئة.',
+    label: "Gewicht eerste harmonische %",
+    hint: "De kracht van de kandidaat op de eerste verdubbeling, van nul tot honderd procent.",
     wireName: 'rpm_filter_weights[0]',
   },
   weight2: {
-    label: 'وزن التوافقية الثانية ٪',
-    hint: 'قوة المرشّح على المضاعف الثاني، من صفر إلى مئة بالمئة.',
+    label: "Gewicht tweede harmonische %",
+    hint: "De kracht van de kandidaat op de tweede verdubbeling, van nul tot honderd procent.",
     wireName: 'rpm_filter_weights[1]',
   },
   weight3: {
-    label: 'وزن التوافقية الثالثة ٪',
-    hint: 'قوة المرشّح على المضاعف الثالث، من صفر إلى مئة بالمئة.',
+    label: "Gewicht derde harmonische %",
+    hint: "De sterkte van de kandidaat op de derde verdubbeling, van nul tot honderd procent.",
     wireName: 'rpm_filter_weights[2]',
   },
 });

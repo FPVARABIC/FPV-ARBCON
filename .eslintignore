@@ -7,3 +7,5 @@ dist-web/
 # minified output would otherwise be linted as if it were source.
 e2e/touch-targets/dist/
 node_modules/
+
+e2e/flight-guides/dist/

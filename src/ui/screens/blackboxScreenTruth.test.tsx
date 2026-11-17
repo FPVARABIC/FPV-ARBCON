@@ -17,7 +17,7 @@ import ReactTestRenderer, {act} from 'react-test-renderer';
 
 import '../../i18n';
 import i18n from '../../i18n';
-import ar from '../../i18n/locales/ar.json';
+import ar from '../../i18n/locales/nl.json';
 import {
   classifyBlackboxConfig,
   classifyDataflash,
@@ -801,7 +801,7 @@ describe('erasing the onboard flash', () => {
     const outcome = textIn(tree, 'blackbox-erase-outcome');
     expect(outcome).toBe(ar.blackbox.erase.observationCancelled);
     // It must say the BOARD may still be working, not that the erase stopped.
-    expect(outcome).toContain('قد يستمر المتحكم');
+    expect(outcome).toContain('De vluchtcontroller kan doorgaan');
     act(() => tree.unmount());
   });
 
@@ -852,7 +852,7 @@ describe('erasing the onboard flash', () => {
     });
     const outcome = textIn(tree, 'blackbox-erase-outcome');
     expect(outcome).toBe(ar.blackbox.erase.timedOut);
-    expect(outcome).toContain('قد يظل المتحكم يعمل');
+    expect(outcome).toContain('De vluchtcontroller kan nog bezig zijn');
     act(() => tree.unmount());
   });
 
@@ -938,7 +938,7 @@ describe('liveness claims', () => {
         'جارٍ التسجيل',
         'تم تسجيل رحلتك',
         'آخر تسجيل ناجح',
-        'مباشر',
+        "Live",
       ]) {
         expect(text).not.toContain(forbidden);
       }
@@ -960,7 +960,7 @@ describe('liveness claims', () => {
       const tree = await render(portFor(snapshotOf({sampleRateRaw})));
       const text = textOf(tree);
       expect(text).not.toContain('kHz');
-      expect(text).not.toContain('كيلوهرتز · ');
+      expect(text).not.toContain("kHz · ");
       act(() => tree.unmount());
     }
   });

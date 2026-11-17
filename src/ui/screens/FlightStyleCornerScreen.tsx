@@ -56,11 +56,11 @@ type Props = NativeStackScreenProps<RootStackParamList, 'FlightStyleCorner'>;
 const CORNER_MAX_WIDTH = 760;
 
 const DECISION_LABEL: Readonly<Record<GuideDecisionKind, string>> = {
-  STEP: 'خطوة',
-  ACTION: 'إجراء',
-  PILOT_PREFERENCE: 'تفضيل الطيار',
-  KEEP_DEFAULT: 'اتركه كما هو',
-  NOT_APPLICABLE: 'لا ينطبق',
+  STEP: "Stap",
+  ACTION: "Actie",
+  PILOT_PREFERENCE: "Voorkeur van de piloot",
+  KEEP_DEFAULT: "Ongewijzigd laten",
+  NOT_APPLICABLE: "Niet van toepassing",
 };
 
 /**
@@ -127,7 +127,7 @@ function StepBlock({
 
       {step.recommended.length > 0 ? (
         <View style={styles.recommend}>
-          <Text style={styles.recommendLabel}>الموصى به</Text>
+          <Text style={styles.recommendLabel}>{"De aanbevolen."}</Text>
           <View style={styles.recommendValues}>
             {/* KEYED BY POSITION, NOT BY VALUE.
                 A step can recommend the same number twice - Freestyle's
@@ -146,7 +146,7 @@ function StepBlock({
             ))}
           </View>
           {step.sources.length > 0 ? (
-            <Text style={styles.sources}>المصدر: {step.sources.join(' · ')}</Text>
+            <Text style={styles.sources}>{"De bron:"}{step.sources.join(' · ')}</Text>
           ) : null}
         </View>
       ) : null}
@@ -159,7 +159,7 @@ function StepBlock({
           style={[styles.shot, {aspectRatio: step.width / step.height}]}
           resizeMode="contain"
           accessible
-          accessibilityLabel={`لقطة الخطوة ${step.n}: ${step.titleAr}`}
+          accessibilityLabel={`${step.n}: ${step.titleAr}`}
         />
       )}
 
@@ -193,14 +193,13 @@ export default function FlightStyleCornerScreen({
     return (
       <View style={styles.root} testID="flight-style-corner-screen">
         <GuideHeader
-          eyebrow="دليل أنماط الطيران"
-          title="نمط غير معروف"
+          eyebrow={"Vliegpatroon handleiding."}
+          title={"Onbekend patroon."}
           onBack={() => navigation.goBack()}
         />
         <View style={styles.missing}>
           <Text style={styles.missingText}>
-            لا يوجد ركن بهذا الاسم. ارجع إلى الفهرس واختر نمطًا من القائمة.
-          </Text>
+            {"Er is geen hoek met die naam. Ga terug naar de index en kies een stijl uit de lijst."}</Text>
         </View>
       </View>
     );
@@ -271,11 +270,9 @@ export default function FlightStyleCornerScreen({
         </View>
 
         <View style={styles.sectionHead}>
-          <Text style={styles.sectionTitle}>خطوات الضبط — بالترتيب</Text>
+          <Text style={styles.sectionTitle}>{"De aanpassingsstappen in volgorde"}</Text>
           <Text style={styles.sectionHint}>
-            اتبعها من الأولى إلى الأخيرة. كل صورة من بناء التطبيق الحالي،
-            بالقيم الموصى بها في هذا الدليل وحده.
-          </Text>
+            {"Volg haar van het eerste tot het laatste. Elke foto van de bouw van de huidige app, Alleen de aanbevolen waarden in deze handleiding."}</Text>
         </View>
 
         {corner.steps.map(step => (
@@ -286,12 +283,9 @@ export default function FlightStyleCornerScreen({
           <>
             <View style={styles.sectionHead}>
               <Text style={styles.sectionTitle}>
-                بقية الإعدادات — قرار لكل واحد
-              </Text>
+                {"De rest van de instellingen is een keuze voor iedereen."}</Text>
               <Text style={styles.sectionHint}>
-                كل ما لا تغيّره الخطوات أعلاه له قرار مكتوب، حتى لا تبقى
-                تتساءل هل نسيناه. القرارات تخص هذا النمط وحده.
-              </Text>
+                {"Alles wat de stappen hierboven niet veranderen, heeft een schriftelijk besluit, zodat je niet blijft. Je vraagt je af of we hem vergeten zijn. Beslissingen zijn alleen voor deze stijl."}</Text>
             </View>
             <View style={styles.decisions} testID="guide-decisions">
               {corner.decisions.map(decision => (
@@ -308,7 +302,7 @@ export default function FlightStyleCornerScreen({
                     {decision.detail}
                   </GuideText>
                   {decision.source === null ? null : (
-                    <Text style={styles.sources}>المصدر: {decision.source}</Text>
+                    <Text style={styles.sources}>{"De bron:"}{decision.source}</Text>
                   )}
                 </View>
               ))}
@@ -318,7 +312,7 @@ export default function FlightStyleCornerScreen({
 
         {corner.warnings.length === 0 ? null : (
           <View style={styles.warnings} testID="guide-warnings">
-            <Text style={styles.warningsTitle}>تحذيرات</Text>
+            <Text style={styles.warningsTitle}>{"Waarschuwingen"}</Text>
             {corner.warnings.map(warning => (
               <View key={warning.slice(0, 40)} style={styles.warningRow}>
                 <View style={styles.warningBar} />
@@ -331,10 +325,9 @@ export default function FlightStyleCornerScreen({
         )}
 
         <View style={styles.status}>
-          <Text style={styles.statusTitle}>حالة التحقق</Text>
+          <Text style={styles.statusTitle}>{"De status van de verificatie"}</Text>
           <Text style={styles.statusText}>
-            {corner.verification} — القيم من مصادر رسمية، وقدرة التطبيق على
-            ضبطها مثبتة باختبارات. حالة العتاد: {corner.hardwareStatus}.
+            {corner.verification} {"—  de waarden van officiële bronnen, en de mogelijkheid van toepassing op Ze is getest. Gewone toestand:"}{corner.hardwareStatus}.
           </Text>
         </View>
       </ScrollView>
@@ -366,8 +359,8 @@ const styles = StyleSheet.create({
   description: {
     ...typography.body,
     color: colors.textSecondary,
-    textAlign: 'right',
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    textAlign: 'left',
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   metaRow: {flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm},
   chip: {
     borderRadius: radii.pill,
@@ -386,12 +379,12 @@ const styles = StyleSheet.create({
   /* Was spacing.lg. A section heading needs separation, not a gap
    the size of a paragraph. */
   sectionHead: {paddingTop: spacing.md, gap: 2},
-  sectionTitle: {...typography.sectionTitle, color: colors.textPrimary, textAlign: 'right'},
+  sectionTitle: {...typography.sectionTitle, color: colors.textPrimary, textAlign: 'left'},
   sectionHint: {
     ...typography.caption,
     color: colors.textMuted,
-    textAlign: 'right',
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    textAlign: 'left',
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   step: {
     backgroundColor: colors.surface,
     borderRadius: radii.lg,
@@ -420,19 +413,19 @@ const styles = StyleSheet.create({
   },
   /* Was typography.heading - the size a SCREEN title uses. A step
    inside a numbered list is one level down from that. */
-  stepTitle: {...typography.bodyStrong, color: colors.textPrimary, flex: 1, textAlign: 'right'},
+  stepTitle: {...typography.bodyStrong, color: colors.textPrimary, flex: 1, textAlign: 'left'},
   stepWhere: {
     ...typography.caption,
     color: colors.textMuted,
-    textAlign: 'right',
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    textAlign: 'left',
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   recommend: {
     backgroundColor: colors.surfaceRaised,
     borderRadius: radii.md,
     padding: spacing.sm,
     gap: 4,
   },
-  recommendLabel: {...typography.label, color: colors.accentStrong, textAlign: 'right'},
+  recommendLabel: {...typography.label, color: colors.accentStrong, textAlign: 'left'},
   recommendValues: {flexDirection: 'row', flexWrap: 'wrap', gap: 6},
   valueChip: {
     borderRadius: radii.sm,
@@ -453,8 +446,8 @@ const styles = StyleSheet.create({
   sources: {
     ...typography.caption,
     color: colors.textMuted,
-    textAlign: 'right',
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    textAlign: 'left',
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   shot: {
     width: '100%',
     /*
@@ -491,7 +484,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: spacing.sm,
   },
-  decisionWhat: {...typography.bodyStrong, color: colors.textPrimary, flex: 1, textAlign: 'right'},
+  decisionWhat: {...typography.bodyStrong, color: colors.textPrimary, flex: 1, textAlign: 'left'},
   verdict: {
     borderRadius: radii.pill,
     backgroundColor: colors.surfaceAlt,
@@ -506,23 +499,23 @@ const styles = StyleSheet.create({
     borderColor: colors.warning,
     gap: spacing.sm,
   },
-  warningsTitle: {...typography.label, color: colors.warning, textAlign: 'right'},
+  warningsTitle: {...typography.label, color: colors.warning, textAlign: 'left'},
   warningRow: {flexDirection: 'row', gap: spacing.sm},
   warningBar: {width: 3, borderRadius: 2, backgroundColor: colors.warning},
   warningBody: {flex: 1},
   warningText: {...typography.caption, color: colors.textSecondary, maxWidth: PROSE_MEASURE},
   status: {...noticeSurface, backgroundColor: colors.successSoft, borderColor: colors.success, gap: 4},
-  statusTitle: {...typography.label, color: colors.textPrimary, textAlign: 'right'},
+  statusTitle: {...typography.label, color: colors.textPrimary, textAlign: 'left'},
   statusText: {
     ...typography.caption,
     color: colors.textSecondary,
-    textAlign: 'right',
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    textAlign: 'left',
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   missing: {flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.xl},
   missingText: {
     ...typography.body,
     color: colors.textSecondary,
     textAlign: 'center',
-    writingDirection: 'rtl',
+    writingDirection: 'ltr',
   },
 });

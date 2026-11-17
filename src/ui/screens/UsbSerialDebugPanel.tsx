@@ -135,16 +135,16 @@ function deriveMspStatusMessage(
   identificationState: MspIdentificationState,
 ): MspStatusMessage | null {
   if (mspClientState === 'DISCONNECTED') {
-    return {text: 'انتهت جلسة الاتصال بوحدة التحكم أو تم فصلها.', tone: 'warning'};
+    return {text: "De verbinding met de besturingssessie is afgelopen of is afgesloten.", tone: 'warning'};
   }
   if (mspClientState === 'RECOVERY_FAILED') {
-    return {text: 'تعذّرت استعادة اتصال MSP. أعد الاتصال بوحدة التحكم للمتابعة.', tone: 'warning'};
+    return {text: "De MSP-verbinding kon niet worden hersteld. Neem contact op met de controller.", tone: 'warning'};
   }
   if (identificationState.status === 'RUNNING') {
-    return {text: 'جارٍ التعرّف على وحدة التحكم…', tone: 'info'};
+    return {text: "Een identificator op de controller...", tone: 'info'};
   }
   if (identificationState.status === 'FAILED') {
-    return {text: 'تعذّر التعرّف على نوع وحدة التحكم، مع بقاء الاتصال قائمًا.', tone: 'warning'};
+    return {text: "Het type vluchtcontroller kon niet worden bepaald. De verbinding blijft actief.", tone: 'warning'};
   }
   return null;
 }
@@ -230,7 +230,7 @@ export default function UsbSerialDebugPanel({sessionId, client, mspActive}: Prop
     const mspClient = mspSessionCoordinator.getActiveMspClient(sessionId);
     const transport = mspSessionCoordinator.getActiveTransport(sessionId);
     if (!mspClient || !transport) {
-      setPollingAuditError('لا يوجد اتصال نشط بمتحكم الطيران لتشغيل هذا القياس.');
+      setPollingAuditError("Er is geen actieve verbinding met vluchtcontroller om deze meting aan te zetten.");
       return;
     }
     setPollingAuditStatus('running');
@@ -431,9 +431,7 @@ export default function UsbSerialDebugPanel({sessionId, client, mspActive}: Prop
 
       {mspActive ? (
         <Text style={styles.mspActiveNotice} accessibilityRole="text">
-          التحكم بالقراءة والإرسال معطّل لأن بروتوكول MSP نشط حاليًا لهذه الجلسة - هذه اللوحة تعرض البيانات
-          الواردة فقط دون التدخل فيها.
-        </Text>
+          {"Lees- en verzendbeheer is uitgeschakeld omdat het MSP-protocol voor deze sessie momenteel actief is. Alleen binnenkomen zonder ingrijpen."}</Text>
       ) : null}
 
       {mspStatusMessage ? (
@@ -448,13 +446,13 @@ export default function UsbSerialDebugPanel({sessionId, client, mspActive}: Prop
       {identificationState.status === 'SUCCEEDED' ? (
         <View testID="msp-identity-section" style={styles.identitySection}>
           <Text style={styles.identityLabel}>
-            معرّف البرنامج الثابت: <Text style={styles.identityValue}>{identificationState.identity.firmware.identifier}</Text>
+            {"firmware-ID:"}<Text style={styles.identityValue}>{identificationState.identity.firmware.identifier}</Text>
           </Text>
           <Text style={styles.identityLabel}>
-            الفئة: <Text style={styles.identityValue}>{firmwareFamilyLabel(identificationState.identity.firmware.knownFamily)}</Text>
+            {"De categorie:"}<Text style={styles.identityValue}>{firmwareFamilyLabel(identificationState.identity.firmware.knownFamily)}</Text>
           </Text>
           <Text style={styles.identityLabel}>
-            اللوحة: <Text style={styles.identityValue}>{describeFlightControllerHardware(identificationState.identity.board)}</Text>
+            {"Het printplaat:"}<Text style={styles.identityValue}>{describeFlightControllerHardware(identificationState.identity.board)}</Text>
           </Text>
           {identificationMetrics ? (
             <Text testID="msp-identification-metrics" style={styles.metricsText}>
@@ -473,15 +471,14 @@ export default function UsbSerialDebugPanel({sessionId, client, mspActive}: Prop
       {mspActive ? (
         <View testID="polling-capacity-audit-section" style={styles.pollingAuditSection}>
           <Text style={styles.pollingAuditLabel}>
-            ⚠ قياس مؤقت (Pass 7.0) - سعة الاستقصاء (MSP_ATTITUDE)
-          </Text>
+            {"—  Voorlopige meting (Pass 7.0) - onderzoekscapaciteit (MSP_ATTITUDE)"}</Text>
           <Pressable
             testID="polling-capacity-audit-run"
             disabled={pollingAuditStatus === 'running'}
             onPress={handleRunPollingAudit}
             style={[styles.button, pollingAuditStatus === 'running' && styles.buttonDisabled]}>
             <Text style={styles.buttonText}>
-              {pollingAuditStatus === 'running' ? 'جارٍ القياس…' : 'تشغيل قياس السعة'}
+              {pollingAuditStatus === 'running' ? "De meters..." : "Capaciteitsmeting openen"}
             </Text>
           </Pressable>
           {pollingAuditError ? (

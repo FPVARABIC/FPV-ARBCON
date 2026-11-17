@@ -26,7 +26,7 @@ describe('ratesTypeName', () => {
   it('names each of the five formulas the way pilots name them', () => {
     // The default formula is named neutrally: `brandSurface.test.ts`
     // forbids the firmware project's own name in text we author.
-    expect(ratesTypeName(classifyRatesType(RATES_TYPE_BETAFLIGHT))).toBe('قياسي');
+    expect(ratesTypeName(classifyRatesType(RATES_TYPE_BETAFLIGHT))).toBe("Standaard");
     expect(ratesTypeName(classifyRatesType(RATES_TYPE_RACEFLIGHT))).toBe('Raceflight');
     expect(ratesTypeName(classifyRatesType(RATES_TYPE_KISS))).toBe('KISS');
     expect(ratesTypeName(classifyRatesType(RATES_TYPE_ACTUAL))).toBe('Actual');
@@ -267,7 +267,7 @@ describe('previewCopy', () => {
     expect(copy.technicalReason).toBe('quickRatesRcExpo');
     expect(copy.title).not.toContain('quick_rates');
     // Saving a QUICK profile is a separate capability and stays available.
-    expect(copy.explanation).toContain('حفظه');
+    expect(copy.explanation).toContain("De vorm van de curve is afhankelijk van een interne instelling die de controller niet via MSP stuurt, en we zullen geen curve tekenen op basis van speculatie. Je kunt Quick instellen en als gewoonlijk opslaan.");
   });
 
   it('carries the unrecognised raw value into the title', () => {

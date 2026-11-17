@@ -75,7 +75,7 @@ describe('advanced tuning presentation', () => {
 
   it('says what D Max IS, so it cannot be read as a second D', () => {
     // §7 in as many words: "D Max is NOT another D value."
-    expect(advancedFieldCopy('dMaxRoll').detail).toContain('ليس قيمة D ثانية');
+    expect(advancedFieldCopy('dMaxRoll').detail).toContain("geen tweede D-waarde");
   });
 
   it('names the auto-profile sentinels rather than offering a bare number', () => {
@@ -157,19 +157,19 @@ describe('advanced tuning presentation', () => {
      one sentence where the older protocol has no such fields. */
   describe('the RPM filter copy', () => {
     it('offers an operator sentence for a contract without the tail, not a row of zeros', () => {
-      expect(RPM_FILTER_COPY.tailAbsentNote).toContain('الإصدارات الأحدث');
+      expect(RPM_FILTER_COPY.tailAbsentNote).toContain("Bijkomende instellingen voor de RPM-candidaten zijn beschikbaar via MSP in de nieuwste versies.");
       // No greyed-out numbers to explain, so no "why is this disabled".
       expect(RPM_FILTER_COPY.tailAbsentNote).not.toContain('0');
     });
 
     it('states that presence is decided by the protocol version, not by bytes or zeros', () => {
       expect(RPM_FILTER_COPY.detail).toContain('1.48');
-      expect(RPM_FILTER_COPY.detail).toContain('لا من طول الرسالة');
-      expect(RPM_FILTER_COPY.detail).toContain('صفرًا');
+      expect(RPM_FILTER_COPY.detail).toContain("Identificatie op het printplaat, niet van de lengte van het bericht of van het feit dat de waarde nul is.");
+      expect(RPM_FILTER_COPY.detail).toContain("Identificatie op het printplaat, niet van de lengte van het bericht of van het feit dat de waarde nul is.");
     });
 
     it('says all seven fields are global, so a profile switch is not implicated', () => {
-      expect(RPM_FILTER_COPY.scopeBadge).toBe('مشترك بين كل الملفات');
+      expect(RPM_FILTER_COPY.scopeBadge).toBe("Gedeeld door alle profielen");
     });
 
     it('gives every RPM field a label, a hint and its wire name', () => {
@@ -191,7 +191,7 @@ describe('advanced tuning presentation', () => {
       // pg/rpm_filter.h: "effect or 'weight' (0% - 100%)", and msp.c
       // refuses any weight above 100. Both agree, so the unit is proven.
       for (const field of ['weight1', 'weight2', 'weight3'] as const) {
-        expect(rpmFieldCopy(field).label).toContain('٪');
+        expect(rpmFieldCopy(field).label).toContain("harmonische %");
         expect(rpmFilterBoundFor(field)).toMatchObject({min: 0, max: 100});
       }
     });

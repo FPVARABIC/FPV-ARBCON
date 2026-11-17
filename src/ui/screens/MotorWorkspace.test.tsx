@@ -148,12 +148,12 @@ describe('MotorWorkspace - structure', () => {
     expect(findAll(renderer, 'motor-slider-master')).toHaveLength(1);
     expect(findAll(renderer, 'motor-workspace-stop')).toHaveLength(1);
     const body = text(renderer);
-    expect(body).toContain('جلسة المحركات');
-    expect(body).toContain('التحكم بالمحركات');
-    expect(body).toContain('إيقاف المحركات');
+    expect(body).toContain("motoren sessie");
+    expect(body).toContain("Beheer van motoren");
+    expect(body).toContain("Stop motoren.");
     // The propeller warning lives ONCE at page level, not inside the
     // workspace - asserted in MotorsScreen.test.tsx.
-    expect(body.split('أزل المراوح').length - 1).toBe(0);
+    expect(body.split("Verwijder de propellers").length - 1).toBe(0);
   });
 
   it.each([1, 2, 4, 6, 8])(
@@ -230,12 +230,12 @@ describe('MotorWorkspace - facade calls', () => {
       />,
     );
     const body = text(renderer);
-    expect(body).toContain('عكسي');
-    expect(body).toContain('أمامي');
+    expect(body).toContain("Ondersteboven");
+    expect(body).toContain("Voor");
     // The legend renders label and value as adjacent text children.
-    expect(body).toContain('محايد / إيقاف');
+    expect(body).toContain("Neutraal / stop");
     expect(body).toContain('"1500"');
-    expect(body.replace(/[\s\"]|,/g, '')).not.toContain('محايد/إيقاف1000');
+    expect(body.replace(/[\s\"]|,/g, '')).not.toContain("Neutraal/stop1000");
   });
 
   /* THE LEGEND LABELS A PHYSICAL AXIS, SO ITS ORDER IS NOT EDITORIAL.
@@ -282,7 +282,7 @@ describe('MotorWorkspace - facade calls', () => {
         })
         .filter((k): k is string => typeof k === 'string')
         .join(' ');
-    const legend = rows.find(node => textOf(node).includes('عكسي'));
+    const legend = rows.find(node => textOf(node).includes("Ondersteboven"));
     expect(legend).toBeDefined();
     const flat = ([] as unknown[]).concat(legend?.props.style).filter(Boolean);
     expect(
@@ -309,7 +309,7 @@ describe('MotorWorkspace - facade calls', () => {
     );
     expect(findAll(renderer, 'motor-workspace-unsupported')).toHaveLength(1);
     expect(findAll(renderer, 'motor-slider-1')).toHaveLength(0);
-    expect(text(renderer)).toContain('غير متاح');
+    expect(text(renderer)).toContain("niet beschikbaar");
   });
 
   it('analog non-3D workspace is available with its policy bounds', () => {
@@ -339,7 +339,7 @@ describe('MotorWorkspace - facade calls', () => {
         onEnableChange={() => {}}
       />,
     );
-    expect(text(renderer)).toContain('غير مسموح');
+    expect(text(renderer)).toContain("Niet toegestaan.");
     // No call reached the port during render.
     expect(port.calls).toHaveLength(0);
   });
@@ -391,8 +391,8 @@ describe('MotorWorkspace - no physical claims', () => {
       />,
     );
     const body = text(renderer);
-    expect(body).not.toContain('المحرك يعمل');
-    expect(body).not.toContain('توقف المحرك فعليًا');
+    expect(body).not.toContain("De motor draait");
+    expect(body).not.toContain("De motor is daadwerkelijk gestopt");
   });
 });
 

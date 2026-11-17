@@ -133,7 +133,7 @@ describe('MotorOutputReorderPanel', () => {
       [0, 2, 4, 6],
     );
     expect(JSON.stringify(tree.toJSON())).toContain(
-      'تم حفظ ترتيب المخارج والتحقق منه',
+      "De uitgangen zijn opgeslagen en gecontroleerd. vluchtcontroller opnieuw opstarten en M1 — M4 testen voordat u propellers installeert.",
     );
     act(() => tree.unmount());
   });

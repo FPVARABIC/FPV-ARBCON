@@ -35,7 +35,7 @@
 import fs from 'fs';
 import path from 'path';
 
-import ar from '../../../i18n/locales/ar.json';
+import ar from '../../../i18n/locales/nl.json';
 
 const REPO_ROOT = path.resolve(__dirname, '../../../..');
 const KOTLIN_MAIN = path.join(REPO_ROOT, 'android/app/src/main/java/com/fpvarbcon');

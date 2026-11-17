@@ -188,32 +188,32 @@ describe('describeOrientationForAccessibility', () => {
 
   it('describes a LIVE state with roll right, pitch up, and a heading', () => {
     const state: OrientationViewState = {status: 'LIVE', rollDeg: 4, pitchDeg: 2, yawDeg: 274};
-    expect(describeOrientationForAccessibility(state)).toBe('ميلان 4 درجة لليمين، ارتفاع المقدمة 2 درجة، الاتجاه 274 درجة');
+    expect(describeOrientationForAccessibility(state)).toBe("Rolhoek van 4 graden naar rechts, Neus omhoog 2 graden, Koers 274 graden");
   });
 
   it('describes negative roll as left and negative pitch as nose-down', () => {
     const state: OrientationViewState = {status: 'LIVE', rollDeg: -4, pitchDeg: -2, yawDeg: 90};
     expect(describeOrientationForAccessibility(state)).toBe(
-      'ميلان 4 درجة لليسار، انخفاض المقدمة 2 درجة، الاتجاه 90 درجة',
+      "Rolhoek van 4 graden naar links, Neus omlaag 2 graden, Koers 90 graden",
     );
   });
 
   it('describes zero roll/pitch with level wording rather than "0 degrees left/up"', () => {
     const state: OrientationViewState = {status: 'LIVE', rollDeg: 0, pitchDeg: 0, yawDeg: 0};
-    expect(describeOrientationForAccessibility(state)).toBe('بدون ميل جانبي، المقدمة أفقية، الاتجاه 0 درجة');
+    expect(describeOrientationForAccessibility(state)).toBe("Geen rolhoek, Neus horizontaal, Koers 0 graden");
   });
 
   it('rounds fractional degrees before formatting', () => {
     const state: OrientationViewState = {status: 'LIVE', rollDeg: 4.6, pitchDeg: -1.4, yawDeg: 273.5};
     // Math.round: 4.6 -> 5, -1.4 -> -1, 273.5 -> 274
     expect(describeOrientationForAccessibility(state)).toBe(
-      'ميلان 5 درجة لليمين، انخفاض المقدمة 1 درجة، الاتجاه 274 درجة',
+      "Rolhoek van 5 graden naar rechts, Neus omlaag 1 graden, Koers 274 graden",
     );
   });
 
   it('works for STALE the same as LIVE (same rollDeg/pitchDeg/yawDeg fields, ageMs simply ignored)', () => {
     const state: OrientationViewState = {status: 'STALE', rollDeg: 4, pitchDeg: 2, yawDeg: 274, ageMs: 900};
-    expect(describeOrientationForAccessibility(state)).toBe('ميلان 4 درجة لليمين، ارتفاع المقدمة 2 درجة، الاتجاه 274 درجة');
+    expect(describeOrientationForAccessibility(state)).toBe("Rolhoek van 4 graden naar rechts, Neus omhoog 2 graden, Koers 274 graden");
   });
 });
 

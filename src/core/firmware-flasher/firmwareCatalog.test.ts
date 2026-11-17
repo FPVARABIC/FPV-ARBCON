@@ -70,7 +70,7 @@ describe('firmware catalog normalization', () => {
     expect(() => createBuildRequest(detail, {
       coreBuild: false,
       customDefines: ['bad define;rm'],
-    })).toThrow(/غير صالح/);
+    })).toThrow(/niet geldig/);
   });
 
   it('keeps the official unified configuration as validated lines', () => {
@@ -81,7 +81,7 @@ describe('firmware catalog normalization', () => {
       cloudBuild: false,
       configuration: ['# target defaults', 'set foo = 1'],
     }, 'S405', '4.6.0').configuration).toEqual(['# target defaults', 'set foo = 1']);
-    expect(() => parseBuildStatus({status: 'success', configuration: {unsafe: true}})).toThrow(/إعدادات Target/);
+    expect(() => parseBuildStatus({status: 'success', configuration: {unsafe: true}})).toThrow(new RegExp("De Target-instellingenlijst van de server is niet geldig\\."));
   });
 
   it('maps timeout-bearing queued statuses to processing and bounds timeout', () => {

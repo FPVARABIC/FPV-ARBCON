@@ -119,9 +119,9 @@ describe('WebAlertHost button handling', () => {
     const tree = render();
 
     act(() => {
-      Alert.alert('تغييرات غير محفوظة', 'لديك تغييرات لم تُحفظ.', [
-        {text: 'العودة للحفظ', style: 'cancel', onPress: cancel},
-        {text: 'الانتقال دون حفظ', onPress: proceed},
+      Alert.alert("Niet-opgeslagen wijzigingen", 'لديك تغييرات لم تُحفظ.', [
+        {text: "Terug naar het behoud.", style: 'cancel', onPress: cancel},
+        {text: "Verhuizen zonder te bewaren.", onPress: proceed},
       ]);
     });
     press(tree, 'web-alert-button-1');
@@ -136,8 +136,8 @@ describe('WebAlertHost button handling', () => {
     const tree = render();
 
     act(() => {
-      Alert.alert('تعذر الانتقال بأمان', 'لم يكتمل مسار إيقاف المحركات.', [
-        {text: 'حسناً'},
+      Alert.alert("Het is onmogelijk om veilig over te stappen.", 'لم يكتمل مسار إيقاف المحركات.', [
+        {text: "OK"},
       ]);
     });
 
@@ -154,11 +154,11 @@ describe('WebAlertHost button handling', () => {
     const tree = render();
 
     act(() => {
-      Alert.alert('تأكيد الحفظ', undefined, [
+      Alert.alert("Opslaan bevestigen", undefined, [
         {
-          text: 'حفظ',
+          text: "Opslaan",
           onPress: () => {
-            Alert.alert('تم الحفظ');
+            Alert.alert("Opgeslagen");
           },
         },
       ]);
@@ -166,7 +166,7 @@ describe('WebAlertHost button handling', () => {
     press(tree, 'web-alert-button-0');
 
     expect(findByTestId(tree, 'web-alert-host')).toHaveLength(1);
-    expect(findByTestId(tree, 'web-alert-title')[0].props.children).toBe('تم الحفظ');
+    expect(findByTestId(tree, 'web-alert-title')[0].props.children).toBe("Opgeslagen");
     unmount(tree);
   });
 
@@ -196,9 +196,9 @@ describe('WebAlertHost dismissal semantics', () => {
     const tree = render();
 
     act(() => {
-      Alert.alert('تأكيد', 'سيتم الحفظ في الذاكرة الدائمة.', [
-        {text: 'إلغاء', style: 'cancel', onPress: cancel},
-        {text: 'حفظ', style: 'destructive', onPress: proceed},
+      Alert.alert("Bevestigen", 'سيتم الحفظ في الذاكرة الدائمة.', [
+        {text: "Annuleren", style: 'cancel', onPress: cancel},
+        {text: "Opslaan", style: 'destructive', onPress: proceed},
       ]);
     });
     act(() => {

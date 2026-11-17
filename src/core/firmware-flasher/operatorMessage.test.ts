@@ -12,7 +12,7 @@
  * coded, trusted-by-key, and untrusted.
  */
 import i18n from '../../i18n';
-import catalogue from '../../i18n/locales/ar.json';
+import catalogue from '../../i18n/locales/nl.json';
 import {resolveFlashReason, resolveOperatorFacingText} from './flashErrorCodes';
 import type {FlashTranslate} from './flashErrorCodes';
 import {OperatorMessageError, readOperatorMessage, resolveOperatorMessage} from './operatorMessage';
@@ -63,7 +63,7 @@ describe('the three categories, and nothing else', () => {
   it('a TRUSTED app-authored message renders its catalogue Arabic', () => {
     const carrier = new OperatorMessageError(
       {key: 'bootloader.e11', values: {v0: 'STM32F405', v1: 'SPEEDYBEEF405V3'}},
-      'Target المحدد STM32F405 لا يطابق المتحكم SPEEDYBEEF405V3.',
+      "Target specifiek STM32F405 niet overeenkomt met SPEEDYBEEF405V3 controller.",
     );
     const rendered = resolveOperatorFacingText(t, carrier);
     expect(rendered).toBe(i18n.t('bootloader.e11', {v0: 'STM32F405', v1: 'SPEEDYBEEF405V3'}));
@@ -82,7 +82,7 @@ describe('the three categories, and nothing else', () => {
 
   it('SCRIPT IS NOT TRUST: two uncoded errors differing only in alphabet resolve alike', () => {
     const english = resolveOperatorFacingText(t, new Error('the board is fine, fly now'));
-    const arabic = resolveOperatorFacingText(t, new Error('اللوحة بخير، طر الآن'));
+    const arabic = resolveOperatorFacingText(t, new Error("اللوحة بخير, طر الآن"));
     expect(arabic).toBe(english);
     expect(arabic).toBe(catalogueString('errors.UNKNOWN'));
   });

@@ -43,7 +43,7 @@ import {existsSync, readFileSync} from 'node:fs';
 import {join} from 'node:path';
 
 import {MAIN_TABS, isTabSelectable, type MainTabKey} from '../../navigation/tabs';
-import arabic from '../../i18n/locales/ar.json';
+import arabic from '../../i18n/locales/nl.json';
 
 const REPO_ROOT = join(__dirname, '..', '..', '..');
 const APP_SOURCE = join(REPO_ROOT, 'App.tsx');
@@ -225,7 +225,7 @@ describe('the Android destination set is complete and nothing in it is hidden', 
   });
 
   it('the catalogue lookup is a real subject - a key that is not there reads as absent', () => {
-    expect(catalogueValue('tabs.setup')).toBe('الإعداد');
+    expect(catalogueValue('tabs.setup')).toBe("Instellen");
     expect(catalogueValue('tabs.thereIsNoSuchTab')).toBeUndefined();
     // A branch is not a label: a lookup that stopped short must not pass.
     expect(typeof catalogueValue('tabs')).not.toBe('string');

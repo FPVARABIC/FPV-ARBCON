@@ -57,7 +57,7 @@ import GpsScreen from './GpsScreen';
 /* The screen renders through i18n; without this every `t()` returns its
    key and a test asserting on Arabic copy passes for the wrong reason. */
 import '../../i18n';
-import ar from '../../i18n/locales/ar.json';
+import ar from '../../i18n/locales/nl.json';
 import {GpsConfigurationController} from '../../platforms/react-native/protocol/GpsConfigurationController';
 import {
   DRONE_SPECS,

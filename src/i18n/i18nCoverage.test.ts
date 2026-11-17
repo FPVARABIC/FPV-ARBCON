@@ -31,7 +31,7 @@
 import { readFileSync, readdirSync, statSync } from 'fs';
 import { join } from 'path';
 
-import ar from './locales/ar.json';
+import ar from './locales/nl.json';
 import type { MotorTestActivationBlockReason } from '../core/state/motorTestController';
 import type {
   MotorPhysicalPosition,
@@ -876,7 +876,7 @@ describe('Arabic catalogue coverage', () => {
     // __DEV__, no conditional require, no second resource file merged in.
     expect(code).not.toContain('__DEV__');
     expect(code).not.toContain('require(');
-    expect(code).toContain("import ar from './locales/ar.json'");
+    expect(code).toContain("import nl from './locales/nl.json'");
     // And the strings must genuinely live in that one file.
     expect(typeof resolve('motorsScreen.title')).toBe('string');
     expect(typeof resolve('motorVerification.title')).toBe('string');
@@ -893,10 +893,10 @@ describe('Arabic catalogue coverage', () => {
     // The three facts the operator must not have to infer. Battery copy is
     // intentionally honest: the motor-test controller does not read cell
     // count, so the catalogue may not resurrect the removed 4S/6S claim.
-    expect(propellers as string).toContain('أزل');
-    expect(battery as string).toContain('لا يقرأ');
-    expect(battery as string).toContain('مطابقة');
-    expect(battery as string).not.toContain('4S فقط');
+    expect(propellers as string).toContain('Verwijder de propellers');
+    expect(battery as string).toContain('niet automatisch');
+    expect(battery as string).toContain('bij het toestel en de ESC past');
+    expect(battery as string).not.toContain('alleen 4S');
     expect(emergency as string).toContain('LiPo');
   });
 });

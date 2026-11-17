@@ -82,7 +82,7 @@ describe('PidTuningScreen', () => {
     // and `accessibilityState.selected` already says which one is. The FACT
     // under test - exactly one choice marked, at the board's own index - is
     // unchanged.
-    expect(selected('pid-active-profile')).toContain('ملف PID 2');
+    expect(selected('pid-active-profile')).toContain('PID-profiel 2');
     expect(renderer.root.findAllByProps({testID: 'pid-active-profile-3'}).length).toBeGreaterThan(0);
     act(() => renderer.unmount());
   });
@@ -171,7 +171,7 @@ describe('PidTuningScreen', () => {
           return Array.isArray(value) ? value.join('') : String(value ?? '');
         })
         .join('\n');
-    const SWITCH_LINE = 'تم تفعيل الملف المطلوب، وأعيدت قراءة قيمه من متحكم الطيران.';
+    const SWITCH_LINE = "Het verlangde bestand is geactiveerd en de waarde van het vluchtcontroller is herlezen.";
     const edit = (value: string) => {
       const input = renderer.root
         .findAllByProps({testID: 'pid-roll-p'})
@@ -256,7 +256,7 @@ describe('PidTuningScreen · simplified tuning is the main workspace', () => {
     expect(renderer.root.findAllByProps({testID: 'pid-simplified-off-consequence'})).toHaveLength(0);
     press(renderer, 'pid-simplified-mode-OFF');
     expect(renderer.root.findAllByProps({testID: 'pid-simplified-off-consequence'}).length).toBeGreaterThan(0);
-    expect(screenText(renderer)).toContain('لا تعود القيم التي كانت قبل تفعيله');
+    expect(screenText(renderer)).toContain('De waarden van vóór het inschakelen worden niet hersteld');
     act(() => renderer.unmount());
   });
 
@@ -284,15 +284,15 @@ describe('PidTuningScreen · simplified tuning is the main workspace', () => {
 
   it('blames the firmware only when the FIRMWARE is what lacks the feature', async () => {
     const board = await render(fullPort({loadSimplified: jest.fn(async () => ({kind: 'UNSUPPORTED' as const}))}));
-    expect(screenText(board)).toContain('بناء البرنامج الثابت');
+    expect(screenText(board)).toContain('firmwarebuild');
     act(() => board.unmount());
 
     // No implementation on our side is OUR gap, and saying "the firmware
     // does not support it" would be inventing evidence about the board.
     const host = await render({load: jest.fn(async () => ({kind: 'LOADED' as const, snapshot: snapshot()})), save: jest.fn()});
     const text = screenText(host);
-    expect(text).toContain('هذه حدود التطبيق، لا حدود المتحكم');
-    expect(text).not.toContain('بناء البرنامج الثابت في هذه اللوحة لا يتضمّن');
+    expect(text).toContain("Dit is een beperking van de app, niet van de vluchtcontroller");
+    expect(text).not.toContain("Deze firmwarebuild bevat geen");
     act(() => host.unmount());
   });
 
@@ -303,7 +303,7 @@ describe('PidTuningScreen · simplified tuning is the main workspace', () => {
     // manual edit would be undone by the next save.
     expect(editable(renderer, 'pid-roll-p')).toBe(false);
     expect(editable(renderer, 'pid-yaw-p')).toBe(false);
-    expect(screenText(renderer)).toContain('تتحكم به إعدادات الضبط المبسّط حاليًا');
+    expect(screenText(renderer)).toContain('door de eenvoudige afstelling beheerd');
     act(() => renderer.unmount());
   });
 
@@ -351,7 +351,7 @@ describe('PidTuningScreen · rates', () => {
   it('says plainly that the stored numbers are not converted', async () => {
     const renderer = await render(fullPort());
     press(renderer, 'pid-rates-type-3');
-    expect(screenText(renderer)).toContain('الأرقام المخزّنة لا تُحوَّل');
+    expect(screenText(renderer)).toContain('De opgeslagen getallen worden niet omgerekend');
     act(() => renderer.unmount());
   });
 
@@ -470,11 +470,11 @@ describe('PidTuningScreen · the save chain', () => {
     const renderer = await render(fullPort());
     const summary = () => joinedText(renderer, 'pid-save-bar-summary');
     press(renderer, 'pid-simplified-masterMultiplier-value-plus');
-    expect(summary()).toContain('الضبط المبسّط');
-    expect(summary()).not.toContain('خوارزمية Rates');
+    expect(summary()).toContain("Eenvoudige aanpassing.");
+    expect(summary()).not.toContain("Rates-algoritme");
     press(renderer, 'pid-rates-type-3');
-    expect(summary()).toContain('خوارزمية Rates');
-    expect(summary()).toContain('الضبط المبسّط');
+    expect(summary()).toContain("Rates-algoritme");
+    expect(summary()).toContain("Eenvoudige aanpassing.");
     act(() => renderer.unmount());
   });
 
@@ -515,7 +515,7 @@ describe('PidTuningScreen · the save chain', () => {
     const renderer = await render(fullPort());
     press(renderer, 'pid-simplified-masterMultiplier-value-plus');
     await act(async () => { await renderer.root.findByProps({testID: 'pid-save-bar-save'}).props.onPress(); });
-    expect(screenText(renderer)).toContain('أعاد المتحكم حساب القيم من الشرائح');
+    expect(screenText(renderer)).toContain('De vluchtcontroller heeft de waarden opnieuw berekend uit de schuifregelaars');
     act(() => renderer.unmount());
   });
 });

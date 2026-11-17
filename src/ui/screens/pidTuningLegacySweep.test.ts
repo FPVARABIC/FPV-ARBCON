@@ -115,6 +115,6 @@ describe('commands that must not be reachable from this page', () => {
     expect(screen).toContain('RESET_APPLIED_PARTIALLY_VERIFIED');
     expect(screen).toContain('verifiedScope');
     // No sentence anywhere on this page may call a reset "saved".
-    expect(screen).not.toMatch(/حُفظت[^\n]*المصنع/);
+    expect(screen).not.toMatch(/opgeslagen[^\n]*fabriek/i);
   });
 });

@@ -101,7 +101,7 @@ export class FirmwarePresetRepository {
     try {
       parsed = JSON.parse(text);
     } catch {
-      throw new Error('تعذر قراءة فهرس Presets الرسمي.');
+      throw new Error("De officiële Presets-index is niet te lezen.");
     }
     return parseFirmwarePresetIndex(parsed);
   }
@@ -112,7 +112,7 @@ export class FirmwarePresetRepository {
     const mainText = await this.loadText(summary.fullPath, MAX_FILE_CHARACTERS);
     if (sha256Hex(mainText) !== summary.hash) {
       throw new Error(
-        'بصمة ملف Preset لا تطابق الفهرس الرسمي؛ لن تُعرض أوامر غير موثقة.',
+        "Preset-filtring niet overeenkomt met de officiële index; Er worden geen ongedocumenteerde orders gegeven.",
       );
     }
     const document = parseFirmwarePresetDocument(mainText);
@@ -152,7 +152,7 @@ export class FirmwarePresetRepository {
       sessionKey.sessionId,
     );
     if (!client || !scheduler)
-      throw new Error('جلسة MSP غير جاهزة لقراءة إصدار Firmware.');
+      throw new Error("De MSP sessie is niet klaar om de Firmware. versie te lezen.");
     const operations = createMspOperationCoordinator(
       client,
       scheduler,
@@ -177,7 +177,7 @@ export class FirmwarePresetRepository {
           ? { allowed: true }
           : {
               allowed: false,
-              error: new Error('MSP ليس جاهزًا لقراءة الإصدار.'),
+              error: new Error("MSP is niet klaar om de versie te lezen."),
             },
       execute: async requester => {
         const frame = await requester.request(
@@ -190,7 +190,7 @@ export class FirmwarePresetRepository {
     };
     const result = await operations.execute(operation);
     if (result.status !== 'SUCCEEDED')
-      throw new Error('تعذر تثبيت إصدار Firmware قبل تصفية Presets.');
+      throw new Error("De Firmware versie kan niet worden geïnstalleerd voordat de Presets. wordt gefiltreerd.");
     return result.result;
   }
 
@@ -215,12 +215,12 @@ export class FirmwarePresetRepository {
     );
     if (outcome.status === 'TIMED_OUT') {
       aborter.abort();
-      throw new Error(`لم يستجب مصدر Presets عند تنزيل ${path}.`);
+      throw new Error(`Presets-bron reageerde niet op ${path}-download.`);
     }
     if (outcome.status === 'REJECTED') throw outcome.reason;
     const response = outcome.value;
     if (!response.ok)
-      throw new Error(`فشل تنزيل ${path} (HTTP ${response.status}).`);
+      throw new Error(`Een mislukte download. ${path}  ( HTTP ${response.status} ).`);
     /*
      * THE BODY, BOUNDED TOO.
      *
@@ -238,9 +238,9 @@ export class FirmwarePresetRepository {
       abort: () => aborter.abort(),
     });
     if (body.status === 'TOO_LARGE')
-      throw new Error(`الملف ${path} أكبر من الحد الآمن.`);
+      throw new Error(`Het ${path}-bestand is groter dan de veiligheidsgrens.`);
     if (body.status === 'STALLED')
-      throw new Error(`توقّف تنزيل ${path} من مصدر Presets قبل اكتماله.`);
+      throw new Error(`Stop met het downloaden van ${path} van de Presets-bron voordat het is voltooid.`);
     if (body.status === 'FAILED') throw body.reason;
     return body.value;
   }

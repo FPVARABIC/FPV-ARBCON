@@ -122,9 +122,9 @@ export type ConnectionSnapshot = Readonly<Record<string, string | number | boole
  */
 export function buildConnectionReport(snapshot?: ConnectionSnapshot): string {
   const lines: string[] = [];
-  lines.push('FPV-ARBCON — تقرير اتصال تقني');
-  lines.push(`البنية: ${buildIdentity()}`);
-  lines.push(`الوقت منذ فتح الصفحة: ${now()}ms`);
+  lines.push("FPV-ARBCON  —  Technisch contactverslag");
+  lines.push(`Structuur: ${buildIdentity()}`);
+  lines.push(`Tijd sinds de pagina is geopend: ${now()}ms`);
   if (typeof navigator !== 'undefined') {
     lines.push(`secureContext: ${typeof window !== 'undefined' && window.isSecureContext === true}`);
     lines.push(`webSerial: ${Boolean((navigator as Navigator).serial)}`);
@@ -134,14 +134,14 @@ export function buildConnectionReport(snapshot?: ConnectionSnapshot): string {
     `bytes: sent=${bytesWritten} (${writeCount} writes) received=${bytesReceived} (${receiveChunks} chunks)`,
   );
   if (snapshot) {
-    lines.push('--- حالة الشاشة ---');
+    lines.push("Het scherm staat...");
     for (const [key, value] of Object.entries(snapshot)) {
       lines.push(`${key}: ${String(value)}`);
     }
   }
-  lines.push('--- المراحل ---');
+  lines.push("- De stappen...");
   if (entries.length === 0) {
-    lines.push('(لا أحداث مسجلة بعد)');
+    lines.push("Nog geen geregistreerde gebeurtenissen.");
   }
   for (const entry of entries) {
     const detail = entry.detail

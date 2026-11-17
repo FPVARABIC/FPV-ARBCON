@@ -264,7 +264,7 @@ export function OsdPreview({
       <View
         testID="osd-canvas"
         onLayout={onLayout}
-        accessibilityLabel="معاينة OSD"
+        accessibilityLabel={"Voorbeeld OSD"}
         style={[
           styles.canvas,
           {aspectRatio: osdPreviewAspectRatio(canvas)},

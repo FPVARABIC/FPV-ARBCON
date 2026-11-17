@@ -36,12 +36,12 @@ export function isPlausibleCliBackup(text: string): boolean {
 }
 
 export function restoreCommands(text: string): string[] {
-  if (!isPlausibleCliBackup(text)) throw new OperatorMessageError({key: 'cliBackup.e01'}, 'ملف النسخة الاحتياطية CLI غير صالح.');
+  if (!isPlausibleCliBackup(text)) throw new OperatorMessageError({key: 'cliBackup.e01'}, "Het back-up CLI is ongeldig.");
   const commands = text
     .split(/\r?\n/)
     .map(line => line.trim())
     .filter(line => line.length > 0 && !line.startsWith('#') && line.toLowerCase() !== 'save');
-  if (commands.length > MAX_RESTORE_COMMANDS) throw new OperatorMessageError({key: 'cliBackup.e02'}, 'النسخة الاحتياطية تحتوي أوامر أكثر من الحد الآمن.');
+  if (commands.length > MAX_RESTORE_COMMANDS) throw new OperatorMessageError({key: 'cliBackup.e02'}, "De back-up bevat meer bevelen dan de beveiliging.");
   return commands;
 }
 
@@ -67,7 +67,7 @@ export class CliBackupService {
       // the batch terminator has been seen - see cliReplyReader.
       const output = await this.readReply(port, CLI_DIFF_REPLY, 30_000);
       const backup = stripCliEnvelope(output, 'diff all');
-      if (!isPlausibleCliBackup(backup)) throw new OperatorMessageError({key: 'cliBackup.e03'}, 'لم يُرجع Flight Controller نسخة CLI صالحة.');
+      if (!isPlausibleCliBackup(backup)) throw new OperatorMessageError({key: 'cliBackup.e03'}, "Flight Controller heeft geen geldige versie van CLI teruggegeven.");
       return backup;
     } finally {
       await port.writeRaw(asciiBytes('exit\r')).catch(() => undefined);
@@ -76,7 +76,7 @@ export class CliBackupService {
   }
 
   async saveBackup(filename: string, text: string): Promise<boolean> {
-    if (!isPlausibleCliBackup(text)) throw new OperatorMessageError({key: 'cliBackup.e04'}, 'لن تُحفظ نسخة CLI غير صالحة.');
+    if (!isPlausibleCliBackup(text)) throw new OperatorMessageError({key: 'cliBackup.e04'}, "CLI wordt niet opgeslagen.");
     return this.client.saveFirmwareFile(
       filename,
       'text/plain',
@@ -99,7 +99,7 @@ export class CliBackupService {
       await port.writeRaw(Uint8Array.of(0x23, 0x0d));
       await this.readReply(port, CLI_PLAIN_REPLY, 5000);
       for (let index = 0; index < commands.length; index += 1) {
-        if (signal?.aborted) throw new OperatorMessageError({key: 'cliBackup.e05'}, 'أُلغيَت استعادة إعدادات CLI.');
+        if (signal?.aborted) throw new OperatorMessageError({key: 'cliBackup.e05'}, "De CLI.-instellingen zijn hersteld.");
         port.flushInput();
         await port.writeRaw(asciiBytes(`${commands[index]}\r`));
         // A replayed line is a `set`, a `batch`, or a profile switch -
@@ -151,13 +151,13 @@ export class CliBackupService {
       const state = reply.push(byte);
       if (state.kind === 'COMPLETE') return reply.text;
       if (state.kind === 'BINARY') {
-        throw new OperatorMessageError({key: 'cliBackup.e06'}, 'استجابة CLI تحتوي بيانات ثنائية غير متوقعة.');
+        throw new OperatorMessageError({key: 'cliBackup.e06'}, "De CLI reactie bevat onverwachte binaire gegevens.");
       }
       if (state.kind === 'OVERFLOW') {
-        throw new OperatorMessageError({key: 'cliBackup.e07'}, 'استجابة CLI تجاوزت الحد الآمن.');
+        throw new OperatorMessageError({key: 'cliBackup.e07'}, "De reactie van CLI is voorbij de veiligheidsgrens.");
       }
     }
     if (reply.settleAtDeadline().kind === 'COMPLETE') return reply.text;
-    throw new OperatorMessageError({key: 'cliBackup.e08'}, 'انتهت مهلة انتظار CLI prompt.');
+    throw new OperatorMessageError({key: 'cliBackup.e08'}, "CLI prompt. is uit.");
   }
 }

@@ -140,7 +140,7 @@ describe('ReceiverScreen under real react-native-web', () => {
     // device; mounting at all is the assertion.
     await mount();
     expect(q('receiver-screen')).not.toBeNull();
-    expect(text('receiver-title')).toBe('الريسيفر');
+    expect(text('receiver-title')).toBe("Ontvanger");
     expect(q('receiver-live-monitor')).not.toBeNull();
     expect(q('receiver-status-strip')).not.toBeNull();
   });
@@ -159,10 +159,10 @@ describe('ReceiverScreen under real react-native-web', () => {
     for (let channel = 1; channel <= CHANNELS.length; channel += 1) {
       expect(q(`receiver-channel-${channel}`)).not.toBeNull();
     }
-    expect(text('receiver-channel-1')).toContain('الدوران');
-    expect(text('receiver-channel-2')).toContain('الميل');
-    expect(text('receiver-channel-3')).toContain('الانحراف');
-    expect(text('receiver-channel-4')).toContain('الخانق');
+    expect(text('receiver-channel-1')).toContain("Roll");
+    expect(text('receiver-channel-2')).toContain("Pitch");
+    expect(text('receiver-channel-3')).toContain("Yaw");
+    expect(text('receiver-channel-4')).toContain("Gas");
     expect(text('receiver-channel-5')).toContain('AUX 1');
     expect(text('receiver-channel-16')).toContain('AUX 12');
     // The delivered integers are printed, unrounded and unsmoothed.
@@ -202,7 +202,7 @@ describe('ReceiverScreen under real react-native-web', () => {
     expect(dot.style.transform).toContain('translateX(63.8');
     expect(dot.style.right).toBe('');
     // While the Arabic labels around it stay in the page's RTL flow.
-    expect(text('receiver-sticks-card')).toContain('حركة العصي');
+    expect(text('receiver-sticks-card')).toContain("Stickbeweging");
   });
 
   it('renders no style react-native-web silently discards', async () => {
@@ -241,7 +241,7 @@ describe('ReceiverScreen under real react-native-web', () => {
     mockObservedHz = 24;
     mockChannelsState = {status: 'STALE', value: {channels: CHANNELS}, updatedAtMs: 1, ageMs: 4200, sampleSeq: 1};
     await mount();
-    expect(text('receiver-live-label')).toBe('بيانات متأخرة');
+    expect(text('receiver-live-label')).toBe("Gegevens verouderd");
     expect(text('receiver-observed-rate')).toBe('—');
   });
 
@@ -249,7 +249,7 @@ describe('ReceiverScreen under real react-native-web', () => {
     mockArmingDisableFlags = 2 ** 2; // RX_FAILSAFE, runtime_config.h @ 1.47
     await mount();
     expect(q('receiver-signal-alert')).not.toBeNull();
-    expect(text('receiver-signal-alert')).toContain('فقدت إشارة الريسيفر');
+    expect(text('receiver-signal-alert')).toContain("Ontvangersignaal verloren");
     // The channels are NOT hidden behind the alert - a pilot needs to
     // see what the receiver is currently outputting.
     expect(q('receiver-channel-1')).not.toBeNull();
@@ -262,7 +262,7 @@ describe('ReceiverScreen under real react-native-web', () => {
     await mount();
     const row = q('receiver-mode-row') as HTMLElement;
     expect(row).not.toBeNull();
-    expect(row.textContent).toContain('تسلسلي (Serial RX)');
+    expect(row.textContent).toContain("Serieel (Serial RX)");
     expect(row.querySelector('[role="button"]')).not.toBeNull();
   });
 
@@ -287,7 +287,7 @@ describe('ReceiverScreen under real react-native-web', () => {
     expect(q('receiver-mode-select')).toBeNull();
     expect(q('receiver-provider-select')).toBeNull();
     // Honest wording, not "unsupported".
-    expect(text('receiver-provider-not-proven')).toContain('لا يمكن التحقق');
+    expect(text('receiver-provider-not-proven')).toContain("Het opgeslagen protocol is bekend. Andere protocollen voor deze firmware kunnen niet worden bevestigd.");
   });
 
   it('reaches the whole configuration surface through the DOM', async () => {
@@ -321,7 +321,7 @@ describe('ReceiverScreen under real react-native-web', () => {
       (q('receiver-save-bar-save') as HTMLElement).dispatchEvent(new MouseEvent('click', {bubbles: true}));
     });
     expect(q('receiver-reboot-required')).not.toBeNull();
-    expect(text('receiver-reboot-required')).toContain('يلزم إعادة تشغيل');
+    expect(text('receiver-reboot-required')).toContain("Opgeslagen — herstart vereist om de wijzigingen toe te passen.");
 
     await act(async () => {
       (q('receiver-reboot-action') as HTMLElement).dispatchEvent(new MouseEvent('click', {bubbles: true}));
@@ -340,8 +340,8 @@ describe('ReceiverScreen under real react-native-web', () => {
     expect(provider).not.toBeNull();
     // Real, operable DOM controls with accessible names and values.
     expect(mode!.getAttribute('role')).toBe('button');
-    expect(mode!.getAttribute('aria-label')).toBe('وضع الريسيفر');
-    expect(provider!.getAttribute('aria-label')).toBe('البروتوكول التسلسلي');
+    expect(mode!.getAttribute('aria-label')).toBe("Ontvangermodus");
+    expect(provider!.getAttribute('aria-label')).toBe("Serieel protocol");
   });
 
   it('opens the mode list in the DOM and offers only fully-configurable modes', async () => {
@@ -350,9 +350,9 @@ describe('ReceiverScreen under real react-native-web', () => {
       (q('receiver-mode-select') as HTMLElement).dispatchEvent(new MouseEvent('click', {bubbles: true}));
     });
     const body = document.body.textContent ?? '';
-    expect(body).toContain('تسلسلي (Serial RX)');
+    expect(body).toContain("Serieel (Serial RX)");
     expect(body).toContain('PPM');
-    expect(body).not.toContain('بدون ريسيفر');
+    expect(body).not.toContain("Zonder ontvanger");
   });
 
   it('renders the dependency block and disables Save when a SERIAL target has no UART', async () => {
@@ -366,7 +366,7 @@ describe('ReceiverScreen under real react-native-web', () => {
     expect(serial).not.toBeNull();
     await act(async () => { serial.dispatchEvent(new MouseEvent('click', {bubbles: true})); });
     expect(q('receiver-dependency-block')).not.toBeNull();
-    expect(text('receiver-dependency-block')).toContain('افتح المنافذ');
+    expect(text('receiver-dependency-block')).toContain("Geen UART-poort toegewezen aan Serial RX. Wijs eerst een poort toe bij Poorten.");
     // And pressing Save does nothing: the transition is refused in the UI
     // before it can reach the controller.
     saveCalls = 0;

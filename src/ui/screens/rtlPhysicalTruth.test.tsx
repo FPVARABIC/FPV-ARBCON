@@ -250,8 +250,8 @@ describe('a physical claim reads the same in both layouts', () => {
 
   it('the detector sees a claim that flipped', () => {
     /* NEGATIVE CONTROL. */
-    const a: Claim[] = [{id: 'motors-airframe-slot-1', name: 'M1، خلفي يمين'}];
-    const b: Claim[] = [{id: 'motors-airframe-slot-1', name: 'M1، خلفي يسار'}];
+    const a: Claim[] = [{id: 'motors-airframe-slot-1', name: "M1, Rechtsachter"}];
+    const b: Claim[] = [{id: 'motors-airframe-slot-1', name: "M1, Linksachter"}];
     expect(a[0].name === b[0].name).toBe(false);
     const reordered: Claim[] = [
       {id: 'led-cell-1-0', name: ''},

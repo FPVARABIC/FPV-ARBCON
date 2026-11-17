@@ -1299,11 +1299,11 @@ const styles = StyleSheet.create({
     gap: spacing.md,
   },
   header: {gap: spacing.xs},
-  title: {...typography.title, color: colors.textPrimary, textAlign: 'right'},
+  title: {...typography.title, color: colors.textPrimary, textAlign: 'left'},
   subtitle: {
     ...typography.body,
     color: colors.textSecondary,
-    textAlign: 'right',
+    textAlign: 'left',
     maxWidth: PROSE_MEASURE,
   },
   chips: {flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginTop: spacing.xs},
@@ -1330,11 +1330,11 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   cardHead: {flexDirection: 'row', alignItems: 'center', gap: spacing.sm},
-  sectionTitle: {...typography.sectionTitle, color: colors.textPrimary, textAlign: 'right'},
+  sectionTitle: {...typography.sectionTitle, color: colors.textPrimary, textAlign: 'left'},
   sectionHint: {
     ...typography.caption,
     color: colors.textMuted,
-    textAlign: 'right',
+    textAlign: 'left',
     maxWidth: PROSE_MEASURE,
   },
   /* Two storage cards side by side only where there is genuinely room;
@@ -1359,19 +1359,19 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     minHeight: 26,
   },
-  factLabel: {...typography.label, color: colors.textSecondary, textAlign: 'right'},
+  factLabel: {...typography.label, color: colors.textSecondary, textAlign: 'left'},
   factValue: {...typography.bodyStrong, color: colors.textPrimary, textAlign: 'left'},
-  stateHeadline: {...typography.bodyStrong, color: colors.textPrimary, textAlign: 'right'},
+  stateHeadline: {...typography.bodyStrong, color: colors.textPrimary, textAlign: 'left'},
   measurement: {
     ...typography.value,
     color: colors.textPrimary,
-    textAlign: 'right',
+    textAlign: 'left',
     fontVariant: ['tabular-nums'],
   },
   hintText: {
     ...typography.caption,
     color: colors.textMuted,
-    textAlign: 'right',
+    textAlign: 'left',
     maxWidth: PROSE_MEASURE,
   },
   diagnostic: {
@@ -1404,7 +1404,7 @@ const styles = StyleSheet.create({
     ...typography.body,
     color: colors.warning,
     flexShrink: 1,
-    textAlign: 'right',
+    textAlign: 'left',
   },
   draftNotice: {
     flexDirection: 'row',
@@ -1422,7 +1422,7 @@ const styles = StyleSheet.create({
     ...typography.body,
     color: colors.accentText,
     flexShrink: 1,
-    textAlign: 'right',
+    textAlign: 'left',
   },
 
   eraseLive: {flexDirection: 'row', alignItems: 'center', gap: spacing.sm},
@@ -1463,7 +1463,7 @@ const styles = StyleSheet.create({
   warningText: {
     ...typography.body,
     color: colors.warning,
-    textAlign: 'right',
+    textAlign: 'left',
     maxWidth: PROSE_MEASURE,
   },
   success: {
@@ -1478,10 +1478,10 @@ const styles = StyleSheet.create({
   successText: {
     ...typography.body,
     color: colors.success,
-    textAlign: 'right',
+    textAlign: 'left',
     maxWidth: PROSE_MEASURE,
   },
-  noticeBody: {...typography.body, color: colors.textPrimary, textAlign: 'right'},
+  noticeBody: {...typography.body, color: colors.textPrimary, textAlign: 'left'},
   inlineAction: {alignSelf: 'flex-start'},
   loading: {
     ...typography.body,
@@ -1508,9 +1508,9 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
     gap: spacing.sm,
   },
-  dialogTitle: {...typography.heading, color: colors.error, textAlign: 'right'},
-  dialogBody: {...typography.body, color: colors.textPrimary, textAlign: 'right'},
-  dialogHint: {...typography.caption, color: colors.textMuted, textAlign: 'right'},
+  dialogTitle: {...typography.heading, color: colors.error, textAlign: 'left'},
+  dialogBody: {...typography.body, color: colors.textPrimary, textAlign: 'left'},
+  dialogHint: {...typography.caption, color: colors.textMuted, textAlign: 'left'},
   dialogActions: {
     flexDirection: 'row',
     justifyContent: 'flex-end',

@@ -319,12 +319,12 @@ function MotorSlider({
               [أمامي, محايد, عكسي] under RTL against [عكسي, محايد, أمامي]
               under LTR, while the thumb offsets were identical in both.
               `dir` is a forwarded DOM prop and is ignored off the web. */}
-          <Text style={sliderStyles.legendText}>عكسي</Text>
+          <Text style={sliderStyles.legendText}>{"Ondersteboven"}</Text>
           <Text style={sliderStyles.legendText}>
-            {'محايد / إيقاف '}
+            {"Neutraal / stop "}
             {String(stopValue)}
           </Text>
-          <Text style={sliderStyles.legendText}>أمامي</Text>
+          <Text style={sliderStyles.legendText}>{"Voor"}</Text>
         </View>
       ) : null}
     </View>
@@ -499,9 +499,7 @@ export function MotorWorkspace({
           {t('motorsScreen.controlToggleTitle')}
         </Text>
         <Text style={styles.unsupportedText}>
-          اختبار المحركات غير متاح لإعداد 3D التناظري الحالي، لأن حدود الخرج
-          المطلوبة لا يمكن قراءتها من هذا الإصدار من البرنامج الثابت.
-        </Text>
+          {"Een motortest is niet beschikbaar voor deze analoge 3D-configuratie: de vereiste uitgangsgrenzen kunnen niet uit deze firmwareversie worden gelezen."}</Text>
       </View>
     );
   }
@@ -593,8 +591,7 @@ export function MotorWorkspace({
           warning - repeating it here would be the ritual P3 removes. */}
       {phase === 'RECOVERY_REQUIRED' ? (
         <Text style={styles.recoveryText} testID="motor-workspace-recovery">
-          تعذر تفعيل التحكم بالمحركات. أعد توصيل الطائرة ثم حاول مجددًا.
-        </Text>
+          {"motoren is niet geactiveerd. Verbind het vliegtuig weer en probeer het nog eens."}</Text>
       ) : null}
 
       {/* Motor sliders - rendered from the REAL motor count, labelled with
@@ -645,7 +642,7 @@ export function MotorWorkspace({
       {/* STOP - the strongest control on the page. */}
       <View style={styles.stopBlock}>
         <Button
-          label="إيقاف المحركات"
+          label={"Stop motoren."}
           onPress={handleStop}
           variant="danger"
           size="lg"
@@ -654,7 +651,7 @@ export function MotorWorkspace({
              that and read as a banner rather than a control. `lg` keeps
              it the largest button on the page. */
           disabled={port === undefined}
-          accessibilityLabel="إيقاف المحركات"
+          accessibilityLabel={"Stop motoren."}
           testID="motor-workspace-stop"
         />
       </View>
@@ -757,7 +754,7 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.warning,
     fontWeight: '600',
-    writingDirection: 'rtl',
+    writingDirection: 'ltr',
   },
   /* STATE IS TEXT IN A SHAPE, never colour alone: the label inside the
      chip is the truth, the border is only reinforcement. */
@@ -771,7 +768,7 @@ const styles = StyleSheet.create({
     ...typography.caption,
     fontWeight: '700',
     color: colors.textPrimary,
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   stateChipOn: {
     borderColor: colors.accentStrong,
     backgroundColor: colors.accentSoft,

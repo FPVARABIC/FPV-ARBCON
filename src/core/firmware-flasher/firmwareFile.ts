@@ -47,14 +47,14 @@ function extensionFor(filename: string): FirmwareKind {
     case 'hex': return 'HEX';
     case 'uf2': return 'UF2';
     case 'bin': return 'BIN';
-    default: throw new FirmwareFileError('الصيغ المقبولة هي .hex و .uf2 و .bin فقط.');
+    default: throw new FirmwareFileError("De aanvaarde formules zijn alleen.hex,.uf2 en.bin.");
   }
 }
 
 function decodeAscii(bytes: Uint8Array): string {
   for (const byte of bytes) {
     if (!(byte === 9 || byte === 10 || byte === 13 || (byte >= 32 && byte <= 126))) {
-      throw new FirmwareFileError('ملف HEX يجب أن يكون نص Intel HEX صالحاً.');
+      throw new FirmwareFileError("Het HEX-bestand moet geldig Intel HEX zijn.");
     }
   }
   let text = '';
@@ -66,7 +66,7 @@ function decodeAscii(bytes: Uint8Array): string {
 
 export function parseUf2(bytes: Uint8Array): Uf2Image {
   if (bytes.length === 0 || bytes.length % 512 !== 0) {
-    throw new FirmwareFileError('حجم UF2 يجب أن يكون مضاعفاً صحيحاً لـ 512 بايت.');
+    throw new FirmwareFileError("De grootte van UF2 moet het juiste dubbele van de 512-byte zijn.");
   }
   const expectedBlocks = bytes.length / 512;
   const blocks = new Map<number, Uf2Block>();
@@ -79,39 +79,39 @@ export function parseUf2(bytes: Uint8Array): Uf2Image {
       readU32LE(bytes, offset + 4) !== 0x9e5d5157 ||
       readU32LE(bytes, offset + 508) !== 0x0ab16f30
     ) {
-      throw new FirmwareFileError(`توقيع UF2 غير صالح في الكتلة ${offset / 512}.`);
+      throw new FirmwareFileError(`UF2-ondertekening is niet geldig voor de ${offset / 512}-massa.`);
     }
     const flags = readU32LE(bytes, offset + 8);
     if ((flags & 0x00000001) !== 0 || (flags & 0x00001000) !== 0) {
-      throw new FirmwareFileError('ملف UF2 ليس صورة Firmware لذاكرة المتحكم الرئيسية.');
+      throw new FirmwareFileError("Het UF2-bestand is geen Firmware-afbeelding van het hoofdbeheersgeheugen.");
     }
     const targetAddress = readU32LE(bytes, offset + 12);
     const payloadSize = readU32LE(bytes, offset + 16);
     const blockNumber = readU32LE(bytes, offset + 20);
     const numberOfBlocks = readU32LE(bytes, offset + 24);
     if (payloadSize === 0 || payloadSize > 476) {
-      throw new FirmwareFileError(`حجم حمولة UF2 غير صالح في الكتلة ${blockNumber}.`);
+      throw new FirmwareFileError(`De UF2-belastinggrootte is niet geldig voor de ${blockNumber}-massa.`);
     }
     if (numberOfBlocks === 0 || numberOfBlocks !== expectedBlocks || blockNumber >= numberOfBlocks) {
-      throw new FirmwareFileError('ترقيم كتل UF2 أو عددها غير متسق مع حجم الملف.');
+      throw new FirmwareFileError("UF2 blokken zijn geteld of zijn niet in overeenstemming met de filegrootte.");
     }
     if (declaredBlocks !== undefined && declaredBlocks !== numberOfBlocks) {
-      throw new FirmwareFileError('كتل UF2 تعلن أعداداً مختلفة للكتل.');
+      throw new FirmwareFileError("UF2 blokken geven verschillende blokken aan.");
     }
     declaredBlocks = numberOfBlocks;
     if (blocks.has(blockNumber)) {
-      throw new FirmwareFileError(`رقم كتلة UF2 مكرر: ${blockNumber}.`);
+      throw new FirmwareFileError(`UF2 massa-nummer: ${blockNumber}.`);
     }
     const blockFamilyId = readU32LE(bytes, offset + 28);
     if ((flags & 0x00002000) !== 0) {
       if (familyId !== undefined && familyId !== blockFamilyId) {
-        throw new FirmwareFileError('معرّف عائلة المتحكم غير متسق بين كتل UF2.');
+        throw new FirmwareFileError("Het is oncoherent met de UF2.-blokken.");
       }
       familyId = blockFamilyId;
     }
     const endAddress = targetAddress + payloadSize;
     if (!Number.isSafeInteger(endAddress) || endAddress > 0x100000000) {
-      throw new FirmwareFileError('عنوان UF2 يتجاوز مجال العنوان 32-bit.');
+      throw new FirmwareFileError("Het adres UF2 gaat verder dan het adresgebied 32-bit.");
     }
     blocks.set(blockNumber, {
       targetAddress,
@@ -124,7 +124,7 @@ export function parseUf2(bytes: Uint8Array): Uf2Image {
   for (let index = 1; index < ordered.length; index += 1) {
     const previous = ordered[index - 1];
     if (ordered[index].targetAddress < previous.targetAddress + previous.payload.length) {
-      throw new FirmwareFileError('ملف UF2 يحتوي مناطق ذاكرة متداخلة.');
+      throw new FirmwareFileError("Het UF2-bestand bevat overlappende geheugengebieden.");
     }
   }
   const first = ordered[0];
@@ -140,11 +140,11 @@ export function parseUf2(bytes: Uint8Array): Uf2Image {
 
 export function parseEspImage(bytes: Uint8Array): EspImageInfo {
   if (bytes.length < 32 || bytes[0] !== 0xe9) {
-    throw new FirmwareFileError('BIN لا يبدأ بترويسة صورة ESP المدمجة الصحيحة (0xE9).');
+    throw new FirmwareFileError("BIN begint niet met de juiste ESP-afbeelding (0xE9).");
   }
   const segmentCount = bytes[1];
   if (segmentCount < 1 || segmentCount > 16) {
-    throw new FirmwareFileError('عدد مقاطع صورة ESP خارج المجال الآمن.');
+    throw new FirmwareFileError("Het aantal ESP-foto's buiten het veilige domein.");
   }
   const entryPoint = readU32LE(bytes, 4);
   const chipId = bytes[12] | (bytes[13] << 8);
@@ -152,12 +152,12 @@ export function parseEspImage(bytes: Uint8Array): EspImageInfo {
   let checksum = 0xef;
   for (let segment = 0; segment < segmentCount; segment += 1) {
     if (cursor + 8 > bytes.length) {
-      throw new FirmwareFileError('ترويسة أحد مقاطع BIN مقطوعة.');
+      throw new FirmwareFileError("Een van de BIN-snippels is kapot.");
     }
     const length = readU32LE(bytes, cursor + 4);
     cursor += 8;
     if (length === 0 || length > MAX_FIRMWARE_FILE_BYTES || cursor + length > bytes.length) {
-      throw new FirmwareFileError('طول أحد مقاطع BIN غير صالح أو يتجاوز الملف.');
+      throw new FirmwareFileError("De lengte van een BIN-snit is niet geldig of hoger dan het bestand.");
     }
     for (let index = cursor; index < cursor + length; index += 1) {
       checksum ^= bytes[index];
@@ -166,17 +166,17 @@ export function parseEspImage(bytes: Uint8Array): EspImageInfo {
   }
   const checksumOffset = (Math.floor(cursor / 16) + 1) * 16 - 1;
   if (checksumOffset >= bytes.length || bytes[checksumOffset] !== checksum) {
-    throw new FirmwareFileError('Checksum لصورة ESP غير صحيح.');
+    throw new FirmwareFileError("Checksum voor ESP is onjuist.");
   }
   return {chipId, segmentCount, entryPoint, checksumOffset, imageBytes: bytes.length};
 }
 
 export function parseFirmwareFile(filename: string, input: Uint8Array): FirmwareImage {
   if (!(input instanceof Uint8Array) || input.length === 0) {
-    throw new FirmwareFileError('ملف Firmware فارغ.');
+    throw new FirmwareFileError("Firmware is leeg.");
   }
   if (input.length > MAX_FIRMWARE_FILE_BYTES) {
-    throw new FirmwareFileError(`حجم Firmware يتجاوز الحد الآمن ${MAX_FIRMWARE_FILE_BYTES} بايت.`);
+    throw new FirmwareFileError(`De omvang van Firmware overschrijdt de beveiligde ${MAX_FIRMWARE_FILE_BYTES}-byte.`);
   }
   const bytes = input.slice();
   switch (extensionFor(filename)) {

@@ -80,10 +80,10 @@ export function modeIsActive(definition: MspModeDefinition, low32: number, extra
 }
 
 const ARABIC_MODE_NAMES: Readonly<Record<string, string>> = Object.freeze({
-  ARM: 'التسليح', ANGLE: 'تثبيت الزاوية', HORIZON: 'الأفق', 'AIR MODE': 'وضع Air Mode', BEEPER: 'الجرس',
-  'FLIP OVER AFTER CRASH': 'قلب الطائرة بعد السقوط', 'GPS RESCUE': 'إنقاذ GPS', FAILSAFE: 'Failsafe',
-  'BLACKBOX ERASE': 'مسح Blackbox', 'CAMERA CONTROL 1': 'تحكم الكاميرا 1', 'CAMERA CONTROL 2': 'تحكم الكاميرا 2',
-  'CAMERA CONTROL 3': 'تحكم الكاميرا 3', PREARM: 'ما قبل التسليح', PARALYZE: 'تعطيل كامل',
+  ARM: "Armstatus", ANGLE: "Angle-stabilisatie", HORIZON: "Horizon", 'AIR MODE': "Air Mode", BEEPER: "Zoemer",
+  'FLIP OVER AFTER CRASH': "Omklappen na een crash", 'GPS RESCUE': "GPS Rescue", FAILSAFE: 'Failsafe',
+  'BLACKBOX ERASE': "Blackbox wissen", 'CAMERA CONTROL 1': "Camerabediening 1", 'CAMERA CONTROL 2': "Camerabediening 2",
+  'CAMERA CONTROL 3': "Camerabediening 3", PREARM: "Prearm", PARALYZE: "Volledig uitschakelen",
 });
 
 export function modeArabicName(name: string): string {

@@ -117,15 +117,15 @@ import GpsScreen from './GpsScreen';
  * ------------------------------------------------------------------ */
 
 /** The save reached permanent storage. */
-const PERSISTED = 'الذاكرة الدائمة';
+const PERSISTED = /permanent/i;
 /** The restart command came back acknowledged. */
-const REBOOT_ACKNOWLEDGED = 'أقرّ المتحكم أمر إعادة التشغيل';
+const REBOOT_ACKNOWLEDGED = /herstartopdracht (?:is |zijn )?bevestigd/i;
 /** The restart command did not come back. */
-const REBOOT_UNCONFIRMED = 'لم يصل تأكيد لأمر إعادة التشغيل';
+const REBOOT_UNCONFIRMED = /herstartopdracht is niet bevestigd/i;
 /** The stored values could not be re-read and compared. */
-const READBACK_UNVERIFIED = 'تعذّرت القراءة الراجعة';
+const READBACK_UNVERIFIED = /Teruglezen(?: ter verificatie)? is mislukt/i;
 /** The sentence this whole phase exists to remove. */
-const REBOOT_CLAIMED = 'إعادة تشغيل المتحكم متوقعة';
+const REBOOT_CLAIMED = /De vluchtcontroller is opnieuw opgestart/i;
 
 const spec = (key: string) => {
   const found = DRONE_SPECS.find(candidate => candidate.key === key);
@@ -451,9 +451,9 @@ describe('Ports: persistence, readback and reboot acknowledgement are three fact
     if (outcome.kind !== 'SAVED_VERIFIED') throw new Error('unreachable');
     expect(outcome.rebootAcknowledged).toBe(true);
 
-    expect(text).toContain(PERSISTED);
-    expect(text).toContain(REBOOT_ACKNOWLEDGED);
-    expect(text).not.toContain(REBOOT_UNCONFIRMED);
+    expect(text).toMatch(PERSISTED);
+    expect(text).toMatch(REBOOT_ACKNOWLEDGED);
+    expect(text).not.toMatch(REBOOT_UNCONFIRMED);
   });
 
   it('B. verified save, reboot NOT acknowledged: still persisted, restart not claimed', async () => {
@@ -466,16 +466,16 @@ describe('Ports: persistence, readback and reboot acknowledgement are three fact
     expect(outcome.rebootAcknowledged).toBe(false);
 
     /* The defect: this used to render the same sentence as A. */
-    expect(text).not.toContain(REBOOT_CLAIMED);
-    expect(text).toContain(REBOOT_UNCONFIRMED);
-    expect(text).not.toContain(REBOOT_ACKNOWLEDGED);
+    expect(text).not.toMatch(REBOOT_CLAIMED);
+    expect(text).toMatch(REBOOT_UNCONFIRMED);
+    expect(text).not.toMatch(REBOOT_ACKNOWLEDGED);
 
     /* A missing reboot ACK never retracts a persisted save. */
-    expect(text).toContain(PERSISTED);
-    expect(text).not.toContain('فشل');
+    expect(text).toMatch(PERSISTED);
+    expect(text).not.toContain("mislukt");
     /* Nor does it assert the reboot failed, or a specific link event
        the app never observed. */
-    expect(text).not.toContain('انقطع');
+    expect(text).not.toContain("verbroken");
 
     expect(hasRecovery).toBe(true);
   });
@@ -490,11 +490,11 @@ describe('Ports: persistence, readback and reboot acknowledgement are three fact
     if (outcome.kind !== 'SAVED_UNVERIFIED') throw new Error('unreachable');
     expect(outcome.rebootAcknowledged).toBe(true);
 
-    expect(text).toContain(PERSISTED);
-    expect(text).toContain(READBACK_UNVERIFIED);
-    expect(text).toContain(REBOOT_ACKNOWLEDGED);
+    expect(text).toMatch(PERSISTED);
+    expect(text).toMatch(READBACK_UNVERIFIED);
+    expect(text).toMatch(REBOOT_ACKNOWLEDGED);
     /* Readback uncertainty must not be reported as reboot uncertainty. */
-    expect(text).not.toContain(REBOOT_UNCONFIRMED);
+    expect(text).not.toMatch(REBOOT_UNCONFIRMED);
   });
 
   it('D. readback unverified AND reboot NOT acknowledged: both are named', async () => {
@@ -509,10 +509,10 @@ describe('Ports: persistence, readback and reboot acknowledgement are three fact
 
     /* THE SHARPEST CASE AGAINST A ONE-DIMENSIONAL MAPPING: one
        uncertainty must not hide the other. */
-    expect(text).toContain(READBACK_UNVERIFIED);
-    expect(text).toContain(REBOOT_UNCONFIRMED);
-    expect(text).toContain(PERSISTED);
-    expect(text).not.toContain(REBOOT_CLAIMED);
+    expect(text).toMatch(READBACK_UNVERIFIED);
+    expect(text).toMatch(REBOOT_UNCONFIRMED);
+    expect(text).toMatch(PERSISTED);
+    expect(text).not.toMatch(REBOOT_CLAIMED);
   });
 
   /* Sequentially, not in parallel: react-test-renderer's `act` is
@@ -534,9 +534,9 @@ describe('GPS: persistence, readback and reboot acknowledgement are three facts'
     expect(outcome.kind).toBe('SAVED_VERIFIED');
     if (outcome.kind !== 'SAVED_VERIFIED') throw new Error('unreachable');
     expect(outcome.rebootAcknowledged).toBe(true);
-    expect(text).toContain(PERSISTED);
-    expect(text).toContain(REBOOT_ACKNOWLEDGED);
-    expect(text).not.toContain(REBOOT_UNCONFIRMED);
+    expect(text).toMatch(PERSISTED);
+    expect(text).toMatch(REBOOT_ACKNOWLEDGED);
+    expect(text).not.toMatch(REBOOT_UNCONFIRMED);
   });
 
   it('B. verified save, reboot NOT acknowledged: still persisted, restart not claimed', async () => {
@@ -548,10 +548,10 @@ describe('GPS: persistence, readback and reboot acknowledgement are three facts'
     if (outcome.kind !== 'SAVED_VERIFIED') throw new Error('unreachable');
     expect(outcome.rebootAcknowledged).toBe(false);
 
-    expect(text).not.toContain(REBOOT_CLAIMED);
-    expect(text).toContain(REBOOT_UNCONFIRMED);
-    expect(text).toContain(PERSISTED);
-    expect(text).not.toContain('فشل');
+    expect(text).not.toMatch(REBOOT_CLAIMED);
+    expect(text).toMatch(REBOOT_UNCONFIRMED);
+    expect(text).toMatch(PERSISTED);
+    expect(text).not.toContain("mislukt");
     expect(hasRecovery).toBe(true);
   });
 
@@ -564,10 +564,10 @@ describe('GPS: persistence, readback and reboot acknowledgement are three facts'
     expect(outcome.kind).toBe('SAVED_UNVERIFIED');
     if (outcome.kind !== 'SAVED_UNVERIFIED') throw new Error('unreachable');
     expect(outcome.rebootAcknowledged).toBe(true);
-    expect(text).toContain(PERSISTED);
-    expect(text).toContain(READBACK_UNVERIFIED);
-    expect(text).toContain(REBOOT_ACKNOWLEDGED);
-    expect(text).not.toContain(REBOOT_UNCONFIRMED);
+    expect(text).toMatch(PERSISTED);
+    expect(text).toMatch(READBACK_UNVERIFIED);
+    expect(text).toMatch(REBOOT_ACKNOWLEDGED);
+    expect(text).not.toMatch(REBOOT_UNCONFIRMED);
   });
 
   it('D. readback unverified AND reboot NOT acknowledged: both are named', async () => {
@@ -579,10 +579,10 @@ describe('GPS: persistence, readback and reboot acknowledgement are three facts'
     expect(outcome.kind).toBe('SAVED_UNVERIFIED');
     if (outcome.kind !== 'SAVED_UNVERIFIED') throw new Error('unreachable');
     expect(outcome.rebootAcknowledged).toBe(false);
-    expect(text).toContain(READBACK_UNVERIFIED);
-    expect(text).toContain(REBOOT_UNCONFIRMED);
-    expect(text).toContain(PERSISTED);
-    expect(text).not.toContain(REBOOT_CLAIMED);
+    expect(text).toMatch(READBACK_UNVERIFIED);
+    expect(text).toMatch(REBOOT_UNCONFIRMED);
+    expect(text).toMatch(PERSISTED);
+    expect(text).not.toMatch(REBOOT_CLAIMED);
   });
 
   it('the four states are four different sentences', async () => {

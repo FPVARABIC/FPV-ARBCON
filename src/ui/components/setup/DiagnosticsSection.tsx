@@ -315,7 +315,7 @@ function Block({
     <View
       style={[styles.block, dim ? styles.dimmed : undefined]}
       accessible
-      accessibilityLabel={`${heading}، ${lines.join('، ')}`}
+      accessibilityLabel={`${heading}, ${lines.join(", ")}.`}
       testID={testID}
     >
       <Text style={styles.blockHeading}>{heading}</Text>
@@ -366,11 +366,11 @@ const styles = StyleSheet.create({
   sectionTitle: {
     ...typography.sectionTitle,
     color: colors.textPrimary,
-    writingDirection: 'rtl'},
+    writingDirection: 'ltr'},
   sectionSummary: {
     ...typography.caption,
     color: colors.textSecondary,
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   togglePill: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -383,7 +383,7 @@ const styles = StyleSheet.create({
   toggleText: {
     ...typography.label,
     color: colors.accentStrong,
-    writingDirection: 'rtl'},
+    writingDirection: 'ltr'},
   detailsCollapsed: {
     display: 'none',
   },

@@ -92,7 +92,7 @@ describe('the advanced tier refusals', () => {
       .find(node => typeof node.props.editable === 'boolean');
     expect(locked?.props.editable).toBe(false);
     expect(renderer.root.findAllByProps({testID: 'pid-advanced-dMaxRoll-owned'}).length).toBeGreaterThan(0);
-    expect(text(renderer)).toContain('سيُلغى عند الحفظ');
+    expect(text(renderer)).toContain("Simplificatie is actief en genereert deze waarde. De wijzigingen hier worden ingetrokken bij behoud.");
     act(() => renderer.unmount());
   });
 

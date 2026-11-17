@@ -39,7 +39,7 @@ export const BRAND_LOGO_ASPECT =
   BRAND_LOGO_CONTENT_WIDTH / BRAND_LOGO_CONTENT_HEIGHT;
 
 /** The product's Arabic brand name, as written inside the logo itself. */
-export const BRAND_LOGO_LABEL = 'FPV بالعربي';
+export const BRAND_LOGO_LABEL = 'FPV Configurator NL';
 
 /**
  * The product name that sits beside the emblem, and the ONLY spelling of
@@ -55,10 +55,10 @@ export const BRAND_LOGO_LABEL = 'FPV بالعربي';
  * NOT translated. It is a proper noun, and the Arabic name is already
  * inside the emblem next to it (BRAND_LOGO_LABEL).
  */
-export const BRAND_PRODUCT_NAME = 'FPV Arabic Configurator';
+export const BRAND_PRODUCT_NAME = 'FPV Configurator NL';
 
 /** The Arabic line under the product name. */
-export const BRAND_PRODUCT_TAGLINE = 'مركز تحكم الطيران العربي';
+export const BRAND_PRODUCT_TAGLINE = 'Configuratie van FPV-vluchtcontrollers';
 
 export interface BrandLogoProps {
   /** Height of the VISIBLE emblem in dp; width follows its true aspect. */

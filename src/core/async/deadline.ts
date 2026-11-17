@@ -92,7 +92,7 @@ export function abortable<T>(work: Promise<T>, signal: AbortSignal): Promise<T> 
 }
 
 function abortError(): Error {
-  const error = new Error('أُلغيت العملية.');
+  const error = new Error("De bewerking is geannuleerd.");
   error.name = 'AbortError';
   return error;
 }

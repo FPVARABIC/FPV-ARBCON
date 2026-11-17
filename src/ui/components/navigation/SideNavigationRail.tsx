@@ -68,7 +68,7 @@ export default function SideNavigationRail({
       <View style={styles.brand} testID="main-side-rail-brand">
         <View style={styles.brandCopy}>
           <Text style={styles.brandName}>FPV-ARBCON</Text>
-          <Text style={styles.brandTagline}>مركز الضبط العربي</Text>
+          <Text style={styles.brandTagline}>{"FPV-configuratiecentrum"}</Text>
         </View>
       </View>
       {header !== undefined ? (
@@ -155,7 +155,7 @@ const styles = StyleSheet.create({
   brandTagline: {
     ...typography.caption,
     color: colors.accentText,
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   header: {
     paddingHorizontal: spacing.xs,
     paddingBottom: spacing.sm,
@@ -199,6 +199,6 @@ const styles = StyleSheet.create({
     flex: 1,
     fontWeight: '700',
     color: colors.textSecondary,
-    writingDirection: 'rtl'},
+    writingDirection: 'ltr'},
   labelActive: { color: colors.accentStrong },
 });

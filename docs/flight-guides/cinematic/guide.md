@@ -169,16 +169,17 @@ HD · 7" للقطات الواسعة.
 
 ---
 
-## تحذيرات
+## Waarschuwingen
+**High-favoren betekent een echte vertraging in de reactie van stick.** De officiële instellingen zelf dragen deze waarschuwing letterlijk (S1.6, S1.7). Als je tussen kleine obstakels gaat vliegen, begin dan met 90, niet met 180.
 
-> **التنعيم العالي يعني تأخيرًا حقيقيًا في استجابة العصا.** الإعدادات
-> الرسمية نفسها تحمل هذا التحذير حرفيًا (S1.6, S1.7). إن كنت ستطير
-> بين عوائق ضيقة، ابدأ من 90 لا من 180.
 
-> **لا تختبر إعدادًا جديدًا وأنت تصوّر لقطة قريبة من ناس أو أشياء.**
-> جرّبه في مساحة مفتوحة أولًا.
 
-> **Failsafe يُضبط قبل أول رحلة، لا بعدها.**
+Probeer geen nieuwe opstelling terwijl je in de buurt van mensen of dingen foto's neemt. Probeer het eerst in een open ruimte.
+
+
+
+Failsafe wordt ingesteld voor de eerste vlucht, niet daarna.
+
 
 ---
 

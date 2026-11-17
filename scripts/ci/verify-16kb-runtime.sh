@@ -27,8 +27,8 @@
 
 set -uo pipefail
 
-PKG="com.fpvarbcon"
-ACTIVITY="${PKG}/.MainActivity"
+PKG="${FPV_APP_ID:-com.fpvarbcon.nl}"
+ACTIVITY="${PKG}/com.fpvarbcon.MainActivity"
 DIAG="${1:?usage: verify-16kb-runtime.sh <diagnostics-dir>}"
 mkdir -p "$DIAG"
 

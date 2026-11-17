@@ -58,11 +58,11 @@ describe('isRtlLayout in the browser', () => {
     expect([first, second, isRtlLayout()]).toEqual([true, false, true]);
   });
 
-  it('defaults to the product\'s Arabic layout rather than claiming LTR', () => {
+  it('defaults to the product\'s Dutch LTR layout', () => {
     // With nothing to read, the honest answer is the app's own default -
     // the failure this whole file exists to prevent is silently
     // reporting "left to right" for an Arabic-first product.
     setDocumentDir(null);
-    expect(isRtlLayout()).toBe(true);
+    expect(isRtlLayout()).toBe(false);
   });
 });

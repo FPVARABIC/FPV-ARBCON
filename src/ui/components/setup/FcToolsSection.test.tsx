@@ -31,30 +31,24 @@ import type {
  * succeeded, produced values, or was persisted - it only states that a
  * valid response arrived and explicitly denies the rest. */
 const TRUTHFUL_ACK =
-  'استلم التطبيق ردًا صالحًا من متحكم الطيران على أمر المعايرة، لكن هذا لا يؤكد أن المعايرة بدأت أو اكتملت أو حُفظت.';
+  "De app ontving een positief antwoord op de kalibratieopdracht. Dit bevestigt niet dat de kalibratie is gestart, voltooid of opgeslagen.";
 
 /** The exact sentence this replaced - it affirmatively claimed that
  * execution had begun, which the firmware contract does not support. */
 const FORMER_AFFIRMATIVE_ACK =
-  'قبل متحكم الطيران الأمر وبدأ التنفيذ. لا يستطيع التطبيق تأكيد اكتماله.';
+  'De vluchtcontroller heeft de opdracht geaccepteerd en de uitvoering is gestart. De app kan de voltooiing niet bevestigen.';
 
 /** Affirmative PHRASES that must never appear anywhere in the rendered
  * tree. Deliberately phrases, not bare words: the truthful sentence
- * legitimately contains بدأت / اكتملت / حُفظت inside an explicit
+ * legitimately contains gestart / voltooid / opgeslagen inside an explicit
  * negation ("...does not confirm that calibration started or completed
  * or was saved"), so a bare-word absence check would be both wrong and
  * meaningless. */
 const FORBIDDEN_AFFIRMATIVE_PHRASES = [
-  'وبدأ التنفيذ',
-  'بدأت المعايرة',
-  'اكتملت المعايرة',
-  'تمت المعايرة',
-  'نجحت المعايرة',
-  'المعايرة ناجحة',
-  'تم حفظ',
-  'حُفظت القيم',
-  'تمت بنجاح',
-  'أُعيد التشغيل بنجاح',
+  'en de uitvoering is gestart', 'De kalibratie is gestart.',
+  'De kalibratie is voltooid.', 'De kalibratie is geslaagd.',
+  'Kalibratie geslaagd', 'De waarden zijn opgeslagen.',
+  'Opnieuw opstarten geslaagd',
 ];
 
 const WITH_MAG: readonly SensorPresenceBit[] = [
@@ -250,13 +244,13 @@ describe('FcToolsSection - what is offered', () => {
   it('renders the exact Arabic title and exactly the three proven tools - no placeholder', () => {
     const renderer = render(makeFakeController());
     expect(texts(renderer)).toEqual(
-      expect.arrayContaining(['أدوات وحدة التحكم']),
+      expect.arrayContaining(["Vluchtcontrollertools"]),
     );
     expect(texts(renderer)).toEqual(
       expect.arrayContaining([
-        'معايرة مقياس التسارع',
-        'معايرة البوصلة المغناطيسية',
-        'إعادة تشغيل متحكم الطيران',
+        "Versnellingsmeter kalibreren",
+        "Magnetisch kompas kalibreren",
+        "Vluchtcontroller opnieuw opstarten",
       ]),
     );
     // Nothing forbidden is offered.
@@ -306,24 +300,24 @@ describe('FcToolsSection - what is offered', () => {
 
 describe('FcToolsSection - disabled states name their reason in text', () => {
   const cases: Array<[Partial<FcToolGateInput>, string]> = [
-    [{ connected: false }, 'غير متاح: لا يوجد اتصال نشط'],
-    [{ appActive: false }, 'غير متاح: التطبيق ليس في المقدمة'],
-    [{ recovering: true }, 'غير متاح: جارٍ استعادة الاتصال'],
+    [{ connected: false }, "Niet beschikbaar: geen actieve verbinding"],
+    [{ appActive: false }, "Niet beschikbaar: app staat op de achtergrond"],
+    [{ recovering: true }, "Niet beschikbaar: verbinding wordt hersteld"],
     [
       { compatibility: 'IDENTIFYING' },
-      'غير متاح: لم يكتمل التعرّف على متحكم الطيران',
+      "Vluchtcontroller nog niet volledig geïdentificeerd",
     ],
     [
       { compatibility: 'OTHER_FIRMWARE_OR_API' },
-      'غير متاح مع إصدار البرنامج الثابت في هذه اللوحة.',
+      "Niet beschikbaar voor de firmwareversie op deze printplaat",
     ],
     [
       { dataState: 'WAITING' },
-      'غير متاح: لا توجد قراءة حالية من متحكم الطيران',
+      "Niet beschikbaar: geen actuele meting uit de vluchtcontroller",
     ],
-    [{ dataState: 'STALE' }, 'غير متاح: القراءة غير محدثة'],
-    [{ armedState: 'ARMED' }, 'غير متاح: الطائرة مسلّحة'],
-    [{ armedState: 'UNKNOWN' }, 'غير متاح: تعذّر تأكيد أن الطائرة غير مسلّحة'],
+    [{ dataState: 'STALE' }, "Niet beschikbaar: meting verouderd"],
+    [{ armedState: 'ARMED' }, "Niet beschikbaar: toestel is gearmd"],
+    [{ armedState: 'UNKNOWN' }, "Niet beschikbaar: DISARMED kon niet worden bevestigd"],
   ];
 
   it.each(cases)(
@@ -355,7 +349,7 @@ describe('FcToolsSection - disabled states name their reason in text', () => {
       gate({ sensors: [{ kind: 'KNOWN', bit: 5, token: 'GYRO' }] }),
     );
     expect(texts(renderer)).toContain(
-      'غير متاح: لم يُبلِّغ متحكم الطيران عن اكتشاف بوصلة',
+      "Niet beschikbaar: de vluchtcontroller heeft geen kompas gedetecteerd",
     );
     expect(
       button(renderer, 'fc-tool-MAG_CALIBRATION-button').props.disabled,
@@ -380,7 +374,7 @@ describe('FcToolsSection - confirmation', () => {
       renderer.root.findAll(n => n.props.testID === 'fc-tools-confirmation')
         .length,
     ).toBeGreaterThan(0);
-    expect(texts(renderer)).toContain('نعم، المراوح مفكوكة — تابع');
+    expect(texts(renderer)).toContain("Ja, de propellers zijn verwijderd");
     expect(controller.calls).toEqual(['request:ACC_CALIBRATION']);
     unmount(renderer);
   });
@@ -389,23 +383,23 @@ describe('FcToolsSection - confirmation', () => {
     const controller = makeFakeController();
     const acc = render(controller);
     press(acc, 'fc-tool-ACC_CALIBRATION-button');
-    expect(texts(acc).join(' ')).toContain('سطح مستوٍ');
-    expect(texts(acc).join(' ')).toContain('فُكّ المراوح');
+    expect(texts(acc).join(' ')).toContain('vlakke ondergrond');
+    expect(texts(acc).join(' ')).toContain('Verwijder eerst de propellers');
     unmount(acc);
 
     const controller2 = makeFakeController();
     const mag = render(controller2);
     press(mag, 'fc-tool-MAG_CALIBRATION-button');
     const magBody = texts(mag).join(' ');
-    expect(magBody).toContain('١٥ ثانية');
-    expect(magBody).toContain('٣٠ ثانية');
-    expect(magBody).toContain('لا يرسل متحكم الطيران أي نسبة تقدّم');
+    expect(magBody).toContain("15 seconden");
+    expect(magBody).toContain("30 seconden");
+    expect(magBody).toContain('De vluchtcontroller meldt geen voortgang');
     unmount(mag);
 
     const controller3 = makeFakeController();
     const reboot = render(controller3);
     press(reboot, 'fc-tool-REBOOT-button');
-    expect(texts(reboot).join(' ')).toContain('سينقطع الاتصال مؤقتًا');
+    expect(texts(reboot).join(' ')).toContain('De verbinding wordt tijdelijk verbroken');
     unmount(reboot);
   });
 
@@ -417,7 +411,7 @@ describe('FcToolsSection - confirmation', () => {
 
     expect(controller.calls).toEqual(['request:ACC_CALIBRATION', 'cancel']);
     expect(controller.calls).not.toContain('confirm');
-    expect(texts(renderer)).toContain('أُلغيت العملية. لم يُرسل أي أمر.');
+    expect(texts(renderer)).toContain("Bewerking geannuleerd. Geen opdracht verzonden.");
     unmount(renderer);
   });
 
@@ -441,7 +435,7 @@ describe('FcToolsSection - confirmation', () => {
         true,
       );
     }
-    expect(texts(renderer)).toContain('غير متاح: توجد عملية قيد التنفيذ');
+    expect(texts(renderer)).toContain("Niet beschikbaar: bewerking bezig");
     unmount(renderer);
   });
 
@@ -477,19 +471,19 @@ describe('FcToolsSection - truthful outcome copy', () => {
     [{ kind: 'ACCEPTED', tool: 'ACC_CALIBRATION' }, TRUTHFUL_ACK],
     [
       { kind: 'REBOOT_REQUESTED' },
-      'أُرسل أمر إعادة التشغيل. يُتوقَّع انقطاع الاتصال؛ لم تُؤكَّد إعادة الاتصال.',
+      "Herstartopdracht verzonden. De verbinding zal naar verwachting worden verbroken. De herstart is nog niet bevestigd.",
     ],
     [
       { kind: 'UNCONFIRMED', tool: 'REBOOT' },
-      'تعذّر تأكيد النتيجة. لم يُعَد الإرسال تلقائيًا.',
+      "Het resultaat kon niet worden bevestigd. De opdracht is niet automatisch opnieuw verzonden.",
     ],
     [
       { kind: 'FAILED', tool: 'ACC_CALIBRATION', error: new Error('x') },
-      'رفض متحكم الطيران الأمر أو لم يُرسَل.',
+      "De vluchtcontroller heeft de opdracht geweigerd of deze is niet verzonden.",
     ],
     [
       { kind: 'SESSION_ENDED', tool: 'REBOOT' },
-      'انتهت الجلسة قبل اكتمال العملية.',
+      "De sessie is beëindigd voordat de bewerking klaar was.",
     ],
   ];
 
@@ -517,10 +511,10 @@ describe('FcToolsSection - truthful outcome copy', () => {
       });
     });
     const outcomeText = texts(renderer).find(text =>
-      text.startsWith('لم يُرسل أي أمر'),
+      text.startsWith('Geen opdracht verzonden'),
     );
     expect(outcomeText).toBeDefined();
-    expect(outcomeText).toContain('غير متاح: الطائرة مسلّحة');
+    expect(outcomeText).toContain("Niet beschikbaar: toestel is gearmd");
     unmount(renderer);
   });
 
@@ -537,7 +531,7 @@ describe('FcToolsSection - truthful outcome copy', () => {
       expect(rendered).toContain(TRUTHFUL_ACK);
       const all = rendered.join(' | ');
       expect(all).not.toContain(FORMER_AFFIRMATIVE_ACK);
-      expect(all).not.toContain('وبدأ التنفيذ');
+      expect(all).not.toContain('en de uitvoering is gestart');
       unmount(renderer);
     },
   );
@@ -557,20 +551,20 @@ describe('FcToolsSection - truthful outcome copy', () => {
     }
   });
 
-  it('every بدأت/اكتملت/حُفظت in the acknowledgement sits INSIDE the explicit negation', () => {
+  it('every gestart/voltooid/opgeslagen in the acknowledgement sits INSIDE the explicit negation', () => {
     const controller = makeFakeController();
     const renderer = render(controller);
     act(() => {
       controller.setOutcome({ kind: 'ACCEPTED', tool: 'ACC_CALIBRATION' });
     });
 
-    const sentence = texts(renderer).find(text => text.includes('لا يؤكد'));
+    const sentence = texts(renderer).find(text => text.includes('Dit bevestigt niet'));
     expect(sentence).toBeDefined();
-    const negationAt = (sentence as string).indexOf('لا يؤكد');
+    const negationAt = (sentence as string).indexOf('Dit bevestigt niet');
     // Structural, not word-blind: each of these verbs may appear only
     // AFTER the negation marker, so none of them can ever be read as an
     // affirmative claim.
-    for (const verb of ['بدأت', 'اكتملت', 'حُفظت']) {
+    for (const verb of ['gestart', 'voltooid', 'opgeslagen']) {
       let from = 0;
       for (;;) {
         const at = (sentence as string).indexOf(verb, from);
@@ -591,7 +585,7 @@ describe('FcToolsSection - truthful outcome copy', () => {
       expect(all).not.toContain(phrase);
     }
     // The descriptions state what the app REQUESTS, conditionally.
-    expect(all).toContain('يطلب من متحكم الطيران بدء معايرة مقياس التسارع');
+    expect(all).toContain('Vraagt de vluchtcontroller om de versnellingsmeter te kalibreren');
     expect(all).not.toContain(
       'يبدأ متحكم الطيران معايرة مقياس التسارع ويحفظ النتيجة بنفسه.',
     );

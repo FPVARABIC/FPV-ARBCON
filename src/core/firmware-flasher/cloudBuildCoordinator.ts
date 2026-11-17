@@ -29,7 +29,7 @@ type BuildApiSurface = Pick<
 >;
 
 function cancelledError(): Error {
-  return new Error('أُلغيَ بناء Firmware.');
+  return new Error("Firmware. is opgeheven.");
 }
 
 function wait(ms: number, signal?: AbortSignal): Promise<void> {
@@ -62,7 +62,7 @@ export class CloudBuildCoordinator {
     signal?: AbortSignal,
   ): Promise<CloudBuildResult> {
     this.checkCancelled(signal);
-    onUpdate({phase: 'requesting', percent: 0, message: 'إرسال طلب البناء الآمن…'});
+    onUpdate({phase: 'requesting', percent: 0, message: "Het sturen van een veilig bouwverzoek..."});
     const response = parseBuildResponse(await this.api.requestBuild({...request}, signal));
     let configuration: readonly string[] | undefined;
 
@@ -75,14 +75,14 @@ export class CloudBuildCoordinator {
       phase: 'downloading',
       percent: 94,
       ...(response.key === undefined ? {} : {key: response.key}),
-      message: 'تنزيل Firmware من خادم البناء الرسمي…',
+      message: "Download Firmware van de officiële bouwserver...",
     });
     const firmware = await this.downloadWithOneRetry(response.url, signal);
     onUpdate({
       phase: 'complete',
       percent: 100,
       ...(response.key === undefined ? {} : {key: response.key}),
-      message: 'اكتمل البناء والتنزيل والتحقق الأولي.',
+      message: "De bouw, de download en de eerste verifiëring zijn voltooid.",
     });
     return {response, firmware, ...(configuration === undefined ? {} : {configuration})};
   }
@@ -104,10 +104,10 @@ export class CloudBuildCoordinator {
       }
       if (status.status === 'success') return status.configuration;
       if (status.status === 'failed') {
-        throw new Error(status.message ?? 'فشل خادم Firmware في إتمام البناء.');
+        throw new Error(status.message ?? "De Firmware-server is niet klaar.");
       }
       if (this.now() >= deadline) {
-        throw new Error('انتهت مهلة بناء Firmware دون نتيجة نهائية.');
+        throw new Error("Firmware is zonder eindresultaat uit.");
       }
       attempt += 1;
       const percent = status.status === 'processing'
@@ -117,7 +117,7 @@ export class CloudBuildCoordinator {
         phase: status.status,
         percent,
         key: response.key,
-        message: status.status === 'processing' ? 'يجري بناء Firmware…' : 'طلب البناء في قائمة الانتظار…',
+        message: status.status === 'processing' ? "Firmware wordt gebouwd..." : "De bouw is op de wachtlijst.",
       });
       await this.waitImpl(this.pollIntervalMs, signal);
     }

@@ -313,15 +313,15 @@ describe('the screen that produced the photograph', () => {
 
     // NOT ONE OF THE FIVE ZEROS FROM THE PHOTOGRAPH.
     expect(text).not.toContain('0 RPM');
-    expect(text).not.toContain('حرارة 0°C');
-    expect(text).not.toContain('جهد 0.00V');
-    expect(text).not.toContain('تيار 0.00A');
-    expect(text).not.toContain('استهلاك 0mAh');
+    expect(text).not.toContain("0°C");
+    expect(text).not.toContain("0.00V");
+    expect(text).not.toContain("0.00A stroom");
+    expect(text).not.toContain("0mAh verbruik");
     // AND NOT THE WORD - on the ESC channel, which is the one making the
     // claim. (The motor-output channel above is genuinely live and keeps
     // its own badge; that is a different fact about a different reading.)
-    expect(escChannelWord(tree)).not.toContain('مباشر');
-    expect(escChannelWord(tree)).toContain('بانتظار بيانات ESC');
+    expect(escChannelWord(tree)).not.toContain("Live");
+    expect(escChannelWord(tree)).toContain("De bron is beschikbaar. ESC");
     expect(
       tree.root.findAllByProps({testID: 'esc-telemetry-sensor-silent'}).length,
     ).toBeGreaterThan(0);
@@ -345,8 +345,8 @@ describe('the screen that produced the photograph', () => {
       ageMs: 4_000,
     };
     const tree = renderPanel({support: DSHOT});
-    expect(escChannelWord(tree)).toContain('قراءة قديمة');
-    expect(escChannelWord(tree)).not.toContain('مباشر');
+    expect(escChannelWord(tree)).toContain("Oude lezen.");
+    expect(escChannelWord(tree)).not.toContain("Live");
     act(() => tree.unmount());
   });
 
@@ -369,9 +369,9 @@ describe('the screen that produced the photograph', () => {
     };
     const tree = renderPanel({support: DSHOT});
     const text = JSON.stringify(tree.toJSON());
-    expect(escChannelWord(tree)).toContain('مباشر');
+    expect(escChannelWord(tree)).toContain("Live");
     expect(text).toContain('4230 RPM');
-    expect(escChannelWord(tree)).not.toContain('بانتظار');
+    expect(escChannelWord(tree)).not.toContain("Wachten");
     act(() => tree.unmount());
   });
 
@@ -380,12 +380,12 @@ describe('the screen that produced the photograph', () => {
     mockEscValue = {status: 'WAITING'};
     const tree = renderPanel({support: ESC_SENSOR});
     const text = JSON.stringify(tree.toJSON());
-    expect(escChannelWord(tree)).toContain('في انتظار أول قراءة');
-    expect(escChannelWord(tree)).not.toContain('مباشر');
+    expect(escChannelWord(tree)).toContain("Wachtend op de eerste lezing.");
+    expect(escChannelWord(tree)).not.toContain("Live");
     expect(text).not.toContain('0 RPM');
     // And it does not tell an operator to enable what is already enabled.
-    expect(text).not.toContain('فعّل تليمترية DShot');
-    expect(text).toContain('بانتظار بيانات ESC');
+    expect(text).not.toContain("Schakel DShot-telemetrie in");
+    expect(text).toContain("De bron is beschikbaar. ESC");
     act(() => tree.unmount());
   });
 });

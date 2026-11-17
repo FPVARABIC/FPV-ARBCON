@@ -66,34 +66,34 @@ export type WriteStageName =
  * question the pilot is actually asking when a save comes back unsure.
  */
 const STAGE_TEXT: Readonly<Record<WriteStageName, string>> = {
-  FAILSAFE_CONFIG: 'إعدادات فقد الإشارة',
-  RXFAIL_CONFIG: 'قيم القنوات عند فقد النبض',
-  GPS_RESCUE: 'معاملات GPS Rescue',
+  FAILSAFE_CONFIG: "Failsafe-instellingen",
+  RXFAIL_CONFIG: "Kanaalwaarden bij signaalverlies",
+  GPS_RESCUE: "GPS Rescue-instellingen",
 
-  BATTERY_CONFIG: 'حدود البطارية',
-  VOLTAGE_METER_CONFIG: 'معايرة مقياس الجهد',
-  CURRENT_METER_CONFIG: 'معايرة مقياس التيار',
+  BATTERY_CONFIG: "Accugrenzen",
+  VOLTAGE_METER_CONFIG: "Spanningsmeter kalibreren",
+  CURRENT_METER_CONFIG: "Stroommeter kalibreren",
 
-  GENERAL: 'إعدادات OSD العامة',
-  ELEMENT: 'موضع عنصر على شاشة OSD',
-  STATISTIC: 'إحصائيات ما بعد الرحلة',
-  TIMER: 'مؤقتات OSD',
+  GENERAL: "Algemene OSD-instellingen",
+  ELEMENT: "Positie van een OSD-element",
+  STATISTIC: "Statistieken na de vlucht",
+  TIMER: "OSD-timers",
 
-  CONFIG: 'إعدادات مرسل الفيديو',
-  BAND: 'جدول النطاقات',
-  POWER_LEVEL: 'مستويات الطاقة',
+  CONFIG: "Videozenderinstellingen",
+  BAND: "Frequentiebandtabel",
+  POWER_LEVEL: "Vermogensniveaus",
 
-  PID: 'قيم PID',
-  PID_ADVANCED: 'إعدادات PID المتقدمة',
-  RC_TUNING: 'معدلات الحركة ومنحنى الخانق',
-  FILTER_CONFIG: 'الفلاتر',
-  SIMPLIFIED: 'شرائح الضبط المبسط',
-  COPY_PROFILE: 'نسخ ملف الضبط',
-  SELECT_PROFILE: 'تبديل الملف النشط',
-  RESET_PID_PROFILE: 'إعادة ملف PID إلى قيم المصنع',
-  PROFILE_NAME: 'اسم الملف',
+  PID: "PID-waarden",
+  PID_ADVANCED: "Geavanceerde PID-instellingen",
+  RC_TUNING: "Rates en gascurve",
+  FILTER_CONFIG: "Filters",
+  SIMPLIFIED: "Schuifregelaars voor eenvoudige afstelling",
+  COPY_PROFILE: "Afstelprofiel kopiëren",
+  SELECT_PROFILE: "Actief profiel wisselen",
+  RESET_PID_PROFILE: "PID-profiel naar fabriekswaarden terugzetten",
+  PROFILE_NAME: "Profielnaam",
 
-  EEPROM: 'حفظ الإعدادات في ذاكرة المتحكم',
+  EEPROM: "Instellingen opslaan in de vluchtcontroller",
 };
 
 /**
@@ -125,17 +125,17 @@ const STAGE_TEXT: Readonly<Record<WriteStageName, string>> = {
  */
 export function partialApplyMessage(everythingApplied: boolean): string {
   return everythingApplied
-    ? 'وصلت كل التغييرات إلى الذاكرة العاملة للمتحكم، لكن الحفظ الدائم لم يتم؛ ستُفقد عند إعادة التشغيل. لا تكرر الحفظ؛ أعد الاتصال واقرأ الإعدادات أولًا.'
-    : 'تم تطبيق جزء من التغييرات في الذاكرة العاملة للمتحكم، ولم يتم حفظها بشكل دائم. المتحكم يعمل الآن بخليط من القديم والجديد حتى إعادة التشغيل. لا تكرر الحفظ؛ أعد الاتصال واقرأ الإعدادات أولًا.';
+    ? "Alle wijzigingen kwamen in het werkgeheugen van de controller, maar de permanente opslag was niet gedaan; Het zal verloren gaan bij herstart. Sla niet opnieuw op; Maak de verbinding weer en lees eerst de instellingen."
+    : "Een deel van de wijzigingen is toegepast in het werkgeheugen van de controller, maar is niet permanent opgeslagen. De controller werkt nu met een mix van oud en nieuw tot het opnieuw opstarten. Sla niet opnieuw op; Maak de verbinding weer en lees eerst de instellingen.";
 }
 
 export function unconfirmedWriteMessage(stage: WriteStageName, index?: number): string {
   const what = STAGE_TEXT[stage];
-  const row = typeof index === 'number' && Number.isInteger(index) && index >= 0 ? ` رقم ${index + 1}` : '';
+  const row = typeof index === 'number' && Number.isInteger(index) && index >= 0 ? ` nummer ${index + 1}` : '';
   if (stage === 'EEPROM') {
     // Not a settings group: the values may have arrived and simply not
     // been committed, which is a different thing to tell the operator.
-    return 'وصلت الإعدادات إلى المتحكم لكن لم يتأكد حفظها بشكل دائم. لا تكرر الحفظ؛ أعد الاتصال واقرأ أولًا.';
+    return "De instellingen kunnen de controller hebben bereikt, maar permanent opslaan is niet bevestigd. Sla niet opnieuw op; verbind opnieuw en lees eerst de instellingen uit.";
   }
-  return `لم تتأكد نتيجة كتابة ${what}${row}. لا تكرر الحفظ؛ أعد الاتصال واقرأ أولًا.`;
+  return `Schrijven van ${what}${row} is niet bevestigd. Sla niet opnieuw op; verbind opnieuw en lees eerst de instellingen uit.`;
 }

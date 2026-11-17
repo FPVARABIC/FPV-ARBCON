@@ -216,8 +216,8 @@ describe('the flash result contract', () => {
     expect(client.flashDfuFirmware).toHaveBeenCalledTimes(1);
     expect(renderer.root.findAllByProps({testID: 'flash-result'}).length).toBeGreaterThan(0);
     const text = screenText(renderer);
-    expect(text).toContain('تمت كتابة Firmware والتحقق منه بنجاح');
-    expect(text).toContain('أُعيد إرسال إعدادات CLI بعد التفليش، وأُرسل أمر save.');
+    expect(text).toContain("Firmware geschreven en geverifieerd");
+    expect(text).toContain("CLI-instellingen na het flashen hersteld; save verzonden.");
     expect(pipeline.restore).toHaveBeenCalledTimes(1);
     // Terminal: a new attempt is startable again.
     expect(
@@ -240,15 +240,15 @@ describe('the flash result contract', () => {
 
     const text = screenText(renderer);
     // The firmware truth stands...
-    expect(text).toContain('تمت كتابة Firmware والتحقق منه بنجاح');
+    expect(text).toContain("Firmware geschreven en geverifieerd");
     // ...the restore truth is stated separately...
-    expect(text).toContain('لكن فشلت استعادة الإعدادات');
+    expect(text).toContain("maar de instellingen zijn niet hersteld");
     // ...and the failure line of the flash itself is NOT shown.
     const title = renderer.root.findByProps({testID: 'flash-result-title'});
     const titleText = Array.isArray(title.props.children)
       ? title.props.children.join('')
       : String(title.props.children);
-    expect(titleText).not.toContain('فشل التفليش');
+    expect(titleText).not.toContain("Flashen mislukt");
     act(() => renderer.unmount());
   });
 
@@ -267,9 +267,9 @@ describe('the flash result contract', () => {
     await flush();
 
     const text = screenText(renderer);
-    expect(text).toContain('تعذر تأكيد اكتمال العملية');
-    expect(text).toContain('افصل USB وأعد توصيله');
-    expect(text).not.toContain('تمت كتابة Firmware والتحقق منه بنجاح');
+    expect(text).toContain("Voltooiing niet bevestigd");
+    expect(text).toContain("Koppel USB los en sluit opnieuw aan");
+    expect(text).not.toContain("Firmware geschreven en geverifieerd");
     // Terminal and restartable - not busy, not cancellable, not pending.
     expect(
       renderer.root.findByProps({testID: 'start-safe-flash'}).props.disabled,
@@ -291,9 +291,9 @@ describe('the flash result contract', () => {
     await flush();
 
     const text = screenText(renderer);
-    expect(text).toContain('فشل التفليش');
-    expect(text).toContain('فشل التحقق بالقراءة الراجعة');
-    expect(text).not.toContain('حدث خطأ غير متوقع في Firmware Flasher.');
+    expect(text).toContain("Flashen mislukt");
+    expect(text).toContain("Verificatie mislukt");
+    expect(text).not.toContain("Onverwachte fout in Firmware Flasher.");
     act(() => renderer.unmount());
   });
 
@@ -311,8 +311,8 @@ describe('the flash result contract', () => {
     expect(client.flashDfuFirmware).not.toHaveBeenCalled();
     expect(renderer.root.findAllByProps({testID: 'flash-result'})).toHaveLength(0);
     const text = screenText(renderer);
-    expect(text).not.toContain('تمت كتابة Firmware والتحقق منه بنجاح');
-    expect(text).not.toContain('اكتمل التفليش والتحقق');
+    expect(text).not.toContain("Firmware geschreven en geverifieerd");
+    expect(text).not.toContain("Firmware geschreven en geverifieerd");
     expect(
       renderer.root.findAllByProps({testID: 'flasher-awaiting-dfu-permission'}).length,
     ).toBeGreaterThan(0);
@@ -336,7 +336,7 @@ describe('the flash result contract', () => {
     // permission chain had no continuation at all.
     expect(client.flashDfuFirmware).toHaveBeenCalledTimes(1);
     const text = screenText(renderer);
-    expect(text).toContain('تمت كتابة Firmware والتحقق منه بنجاح');
+    expect(text).toContain("Firmware geschreven en geverifieerd");
     expect(
       renderer.root.findByProps({testID: 'start-safe-flash'}).props.disabled,
     ).toBe(false);
@@ -376,8 +376,8 @@ describe('the flash result contract', () => {
     });
 
     const text = screenText(renderer);
-    expect(text).toContain('تعذر تأكيد اكتمال العملية');
-    expect(text).not.toContain('تمت كتابة Firmware والتحقق منه بنجاح');
+    expect(text).toContain("Voltooiing niet bevestigd");
+    expect(text).not.toContain("Firmware geschreven en geverifieerd");
     expect(
       renderer.root.findByProps({testID: 'start-safe-flash'}).props.disabled,
     ).toBe(false);

@@ -206,7 +206,7 @@ describe('PresetsScreen', () => {
 
     expect(screen).toContain('STATUS_LABEL');
     expect(screen).not.toContain('{preset.status}');
-    for (const arabic of ['رسمية', 'من المجتمع', 'تجريبية'])
+    for (const arabic of ["Officiële.", "Van de gemeenschap.", "Experimental."])
       expect(screen).toContain(arabic);
   });
 
@@ -232,7 +232,7 @@ describe('PresetsScreen', () => {
       .findAllByType(Text)
       .flatMap(node => (typeof node.props.children === 'string' ? [node.props.children] : []));
     expect(texts.join(' ')).toContain('3');
-    expect(texts.some(text => text.includes('تجاهلنا'))).toBe(true);
+    expect(texts.some(text => text.includes("vermeldingen zijn overgeslagen"))).toBe(true);
     ReactTestRenderer.act(() => renderer.unmount());
   });
 });

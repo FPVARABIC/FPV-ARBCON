@@ -148,7 +148,7 @@ describe('the Motors surface carries no developer diagnostics', () => {
       );
       for (const text of arabicLiterals) {
         expect(text).not.toMatch(/MSP\s*API\s*1\.\d+/);
-        expect(text).not.toMatch(/رابط\s+MSP/);
+        expect(text).not.toMatch(/MSP-verbinding/i);
       }
     },
   );

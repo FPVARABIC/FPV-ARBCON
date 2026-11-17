@@ -31,8 +31,8 @@
 
 set -uo pipefail
 
-PKG="com.fpvarbcon"
-ACTIVITY="${PKG}/.MainActivity"
+PKG="${FPV_APP_ID:-com.fpvarbcon.nl}"
+ACTIVITY="${PKG}/com.fpvarbcon.MainActivity"
 SETTLE_SECONDS="${SETTLE_SECONDS:-25}"
 DIAG_DIR="${DIAG_DIR:-instrumentation-diagnostics}"
 
@@ -53,7 +53,7 @@ launch_and_settle() {
   local deadline=$((SECONDS + SETTLE_SECONDS))
   while [ "$SECONDS" -lt "$deadline" ]; do
     if adb shell dumpsys activity activities 2>/dev/null | tr -d '\r' \
-        | grep -q "${PKG}/.MainActivity"; then
+        | grep -q "${PKG}/com.fpvarbcon.MainActivity"; then
       break
     fi
     sleep 1

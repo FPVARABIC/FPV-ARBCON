@@ -157,7 +157,7 @@ describe('a single corner', () => {
 
   it('answers plainly when the style does not exist, rather than blankly', () => {
     const rendered = renderCorner('no-such-style');
-    expect(rendered).toContain('لا يوجد ركن بهذا الاسم');
+    expect(rendered).toContain('Er is geen hoek met die naam');
   });
 });
 

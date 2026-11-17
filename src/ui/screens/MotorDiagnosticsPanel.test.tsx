@@ -91,13 +91,13 @@ describe('MotorDiagnosticsPanel', () => {
        Latin word. They are invisible, so this asserts what a READER sees
        rather than the exact code points. */
     const text = JSON.stringify(tree.toJSON()).replace(/[\u2066-\u2069]/g, '');
-    expect(text).toContain('مراقبة المحركات وESC');
+    expect(text).toContain("motoren en ESC controleren");
     expect(text).toContain('12345 RPM');
-    expect(text).toContain('أخطاء 2.50٪');
-    expect(text).toContain('حرارة 44°C');
-    expect(text).toContain('جهد 16.80V');
-    expect(text).toContain('تيار 3.25A');
-    expect(text).toContain('استهلاك 91mAh');
+    expect(text).toContain("2.50% fouten");
+    expect(text).toContain("44°C");
+    expect(text).toContain("16.80V");
+    expect(text).toContain("3.25A stroom");
+    expect(text).toContain("91mAh verbruik");
     expect(
       tree.root.findByProps({ testID: 'esc-telemetry-quality-warning' }),
     ).toBeDefined();
@@ -123,11 +123,11 @@ describe('MotorDiagnosticsPanel', () => {
       );
     });
     const text = JSON.stringify(tree.toJSON());
-    expect(text).toContain('مصدر البيانات غير مثبت بعد');
+    expect(text).toContain("De gegevensbron is nog niet bevestigd; Je laat geen cijfers zien tot je de vluchtcontroller-instellingen hebt gelezen.");
     // AND IT MUST NOT DIAGNOSE THE AIRCRAFT IT HAS NOT READ.
-    expect(text).not.toContain('أثبت متحكم الطيران');
-    expect(text).not.toContain('لا يوجد مصدر تليمترية مفعّل');
-    expect(text).not.toContain('فعّل تليمترية DShot');
+    expect(text).not.toContain("De vluchtcontroller heeft bewezen");
+    expect(text).not.toContain("Er is geen actief telemetriebron.");
+    expect(text).not.toContain("DShot-telemetrie inschakelen");
     // The original property, unchanged: no rows, no numbers, no zeros.
     expect(
       tree.root.findAllByProps({ testID: 'esc-telemetry-1' }),
@@ -217,8 +217,8 @@ describe('MotorDiagnosticsPanel', () => {
       );
     });
     const text = JSON.stringify(tree.toJSON());
-    expect(text).toContain('قراءة قديمة');
-    expect(text).toContain('غير مدعوم من البرنامج الثابت');
+    expect(text).toContain("Oude lezen.");
+    expect(text).toContain("Niet ondersteund door firmware.");
     expect(text).not.toContain('1999');
     act(() => tree.unmount());
   });
@@ -255,7 +255,7 @@ describe('MotorDiagnosticsPanel', () => {
       );
     });
     const text = JSON.stringify(tree.toJSON());
-    expect(text).toContain('قراءة قديمة');
+    expect(text).toContain("Oude lezen.");
     expect(text).not.toContain('54321 RPM');
     expect(text).not.toContain('2000');
     // M-D §4. This used to assert `>= 4` em-dashes, which was a proxy for
@@ -309,8 +309,8 @@ describe('MotorDiagnosticsPanel', () => {
       );
     });
     const text = JSON.stringify(tree.toJSON());
-    expect(text).toContain('لا يوجد مصدر تليمترية مفعّل');
-    expect(text).toContain('أثبت متحكم الطيران');
+    expect(text).toContain("Er is geen actief telemetriebron.");
+    expect(text).toContain("vluchtcontroller heeft aangetoond dat Bidirectional DShot en de ESC-sensor niet actief zijn.");
     expect(tree.root.findAllByProps({testID: 'esc-telemetry-1'})).toHaveLength(
       0,
     );

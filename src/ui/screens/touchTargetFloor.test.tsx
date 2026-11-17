@@ -54,9 +54,9 @@ const KEY = { sessionId: 'touch-floor', generation: 1 } as const;
  * fixture stopped rendering one of them, and six of these are only
  * reachable in a state the global sweep never produced.
  */
-const REPAIRED_MODES = ['modes-add-range-0', 'modes-add-range-1', 'حذف'];
+const REPAIRED_MODES = ['modes-add-range-0', 'modes-add-range-1', "Verwijderen"];
 const REPAIRED_PRESETS = [
-  'الكل', 'Tune', 'Rates', 'Filters', 'RC Link', 'Modes',
+  "Alles", 'Tune', 'Rates', 'Filters', 'RC Link', 'Modes',
   'OSD', 'VTX', 'LEDs', 'BNF', 'Other',
 ];
 const REPAIRED_MOTORS = ['motors-airframe-retry'];
@@ -261,7 +261,7 @@ describe('Modes: every pressable meets the touch floor', () => {
     const measured = measureControls(renderer);
     /* Prove the fixture actually produced the control this case exists
        for; otherwise a green result would mean nothing. */
-    const removeLabels = measured.filter(m => m.id === 'حذف');
+    const removeLabels = measured.filter(m => m.id === "Verwijderen");
     expect(removeLabels.length).toBeGreaterThan(0);
     expect(offenders(measured)).toEqual([]);
     expect(inventoryOffenders(measured, REPAIRED_MODES)).toEqual([]);
@@ -332,7 +332,7 @@ describe('Presets: every pressable meets the touch floor', () => {
        should have been. A stub whose method names have drifted from the
        port now fails here instead of being measured. */
     expect(allText(renderer)).not.toMatch(/is not a function/);
-    expect(allText(renderer)).toContain('الحزم المتوافقة (1)');
+    expect(allText(renderer)).toContain('Compatibele presets (1)');
 
     const measured = measureControls(renderer);
     /* The chips are the reason this case exists: eleven controls whose
@@ -502,13 +502,13 @@ describe('the repaired controls still do their job, and mounting writes nothing'
       />,
     );
     /* No range yet, so no remove control. */
-    expect(measureControls(renderer).map(m => m.id)).not.toContain('حذف');
+    expect(measureControls(renderer).map(m => m.id)).not.toContain("Verwijderen");
     await ReactTestRenderer.act(async () => {
       pressableWithTestID(renderer, 'modes-add-range-1').props.onPress();
       await Promise.resolve();
     });
     /* One appeared: the enlarged add button is still wired. */
-    expect(measureControls(renderer).map(m => m.id)).toContain('حذف');
+    expect(measureControls(renderer).map(m => m.id)).toContain("Verwijderen");
     /* And drawing the screen wrote nothing to the board. */
     expect(controller.save).not.toHaveBeenCalled();
     expect(controller.load).toHaveBeenCalledTimes(1);
@@ -643,8 +643,8 @@ describe('Flasher: the shared choice chip meets the touch floor', () => {
         value="online"
         testIDPrefix="choice"
         choices={[
-          { value: 'online', label: 'Firmware الرسمي عبر الإنترنت' },
-          { value: 'local', label: 'ملف من الجهاز' },
+          { value: 'online', label: "Officiële firmware online" },
+          { value: 'local', label: "Lokaal bestand" },
         ]}
         onChange={() => undefined}
       />,
@@ -663,8 +663,8 @@ describe('Flasher: the shared choice chip meets the touch floor', () => {
         disabled
         testIDPrefix="choice"
         choices={[
-          { value: 'online', label: 'Firmware الرسمي عبر الإنترنت' },
-          { value: 'local', label: 'ملف من الجهاز' },
+          { value: 'online', label: "Officiële firmware online" },
+          { value: 'local', label: "Lokaal bestand" },
         ]}
         onChange={() => undefined}
       />,

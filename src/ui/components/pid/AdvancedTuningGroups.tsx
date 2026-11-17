@@ -80,12 +80,12 @@ const GENERATOR_NAME: Partial<Record<AdvancedFieldKey, string>> = Object.freeze(
 });
 
 const SCOPE_BADGE = Object.freeze({
-  PID_PROFILE: 'يخصّ ملف PID الحالي',
-  GLOBAL: 'مشترك بين كل الملفات',
+  PID_PROFILE: "Voor het huidige PID-profiel",
+  GLOBAL: "Gedeeld door alle profielen",
 });
 
 export const GENERATOR_OWNED_FIELD_NOTE =
-  'الضبط المبسّط نشط ويولّد هذه القيمة؛ تعديلها هنا سيُلغى عند الحفظ.';
+  "Simplificatie is actief en genereert deze waarde. De wijzigingen hier worden ingetrokken bij behoud.";
 
 export interface AdvancedTuningGroupsProps {
   readonly advanced: AdvancedPidDraft;
@@ -214,10 +214,10 @@ function GroupCard({
         onPress={() => setDetailOpen(value => !value)}
         accessibilityRole="button"
         accessibilityState={{expanded: detailOpen}}
-        accessibilityLabel="التفاصيل التقنية"
+        accessibilityLabel={"Technische details"}
         style={styles.detailToggle}
         testID={`${testID}-detail-toggle`}>
-        <Text style={styles.detailToggleText}>التفاصيل التقنية</Text>
+        <Text style={styles.detailToggleText}>{"Technische details"}</Text>
         <Icon name={detailOpen ? 'chevron-up' : 'chevron-down'} size={14} color={colors.textMuted} />
       </Pressable>
       {detailOpen ? <View style={styles.detail} testID={`${testID}-detail`}>
@@ -300,8 +300,8 @@ const styles = StyleSheet.create({
     minHeight: 48,
   },
   groupHeading: {flex: 1, gap: 2},
-  groupTitle: {...typography.sectionTitle, color: colors.textPrimary, textAlign: 'right'},
-  groupScope: {...typography.caption, color: colors.textMuted, textAlign: 'right'},
+  groupTitle: {...typography.sectionTitle, color: colors.textPrimary, textAlign: 'left'},
+  groupScope: {...typography.caption, color: colors.textMuted, textAlign: 'left'},
   groupBody: {
     paddingHorizontal: spacing.md,
     paddingBottom: spacing.md,
@@ -309,14 +309,14 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: colors.borderSoft,
   },
-  groupHint: {...typography.caption, color: colors.textMuted, textAlign: 'right'},
+  groupHint: {...typography.caption, color: colors.textMuted, textAlign: 'left'},
   fields: {gap: spacing.sm},
   fieldsWide: {flexDirection: 'row', flexWrap: 'wrap'},
   control: {gap: 4, flexGrow: 1, flexShrink: 1, flexBasis: 160},
-  label: {...typography.label, color: colors.textPrimary, textAlign: 'right'},
-  range: {...typography.caption, color: colors.textMuted, textAlign: 'right'},
-  hint: {...typography.caption, color: colors.textMuted, textAlign: 'right'},
-  owned: {...typography.caption, color: colors.warning, textAlign: 'right'},
+  label: {...typography.label, color: colors.textPrimary, textAlign: 'left'},
+  range: {...typography.caption, color: colors.textMuted, textAlign: 'left'},
+  hint: {...typography.caption, color: colors.textMuted, textAlign: 'left'},
+  owned: {...typography.caption, color: colors.warning, textAlign: 'left'},
   detailToggle: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -327,6 +327,6 @@ const styles = StyleSheet.create({
   detailToggleText: {...typography.caption, color: colors.textMuted},
   detail: {gap: spacing.sm},
   detailRow: {gap: 2},
-  detailName: {...typography.caption, color: colors.textPrimary, textAlign: 'right'},
-  detailText: {...typography.caption, color: colors.textMuted, textAlign: 'right'},
+  detailName: {...typography.caption, color: colors.textPrimary, textAlign: 'left'},
+  detailText: {...typography.caption, color: colors.textMuted, textAlign: 'left'},
 });

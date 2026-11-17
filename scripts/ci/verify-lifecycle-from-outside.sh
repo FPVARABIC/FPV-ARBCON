@@ -23,8 +23,8 @@
 
 set -uo pipefail
 
-PKG="com.fpvarbcon"
-ACTIVITY="${PKG}/.MainActivity"
+PKG="${FPV_APP_ID:-com.fpvarbcon.nl}"
+ACTIVITY="${PKG}/com.fpvarbcon.MainActivity"
 PREFS="/data/data/${PKG}/shared_prefs/com.facebook.react.modules.i18nmanager.I18nUtil.xml"
 DIAG="${1:?usage: verify-lifecycle-from-outside.sh <diagnostics-dir>}"
 mkdir -p "$DIAG"
@@ -62,9 +62,9 @@ launch() {
   adb shell am start -W -n "$ACTIVITY" 2>&1 | tr -d '\r'
 }
 
-is_rtl() {
+is_ltr() {
   adb shell cat "$PREFS" 2>/dev/null | tr -d '\r' \
-    | grep -q 'name="RCTI18nUtil_forceRTL" value="true"'
+    | grep -q 'name="RCTI18nUtil_forceRTL" value="false"'
 }
 
 app_pid() {
@@ -118,7 +118,7 @@ adb logcat -c >/dev/null 2>&1 || true
 launch | tee "$DIAG/lifecycle-cold.txt" | grep -q "Status: ok" \
   || fail "the first launch after an uninstall did not report ok"
 wait_for_pid || fail "no app process after the first launch following an uninstall"
-if is_rtl; then
+if is_ltr; then
   echo "  state after first launch: right-to-left, as the Arabic-first app requires"
 else
   adb shell cat "$PREFS" 2>/dev/null | tr -d '\r' | head -10
@@ -144,7 +144,7 @@ if [ -n "$PID_BEFORE" ] && [ "$PID_BEFORE" != "$PID_AFTER" ]; then
   echo "  NOTE: the process was replaced, so this was a cold launch rather than a warm one."
   echo "  That is the platform's decision, not a defect; the state assertions below still apply."
 fi
-is_rtl || fail "the warm launch came back left-to-right"
+is_ltr || fail "the warm launch came back right-to-left"
 assert_no_crash "warm launch"
 echo "::endgroup::"
 
@@ -181,7 +181,7 @@ fi
 echo "  new pid: ${NEW_PID:-none}"
 
 # PERSISTED state survives.
-is_rtl || fail "the operator's layout direction did not survive a process kill"
+is_ltr || fail "the operator's layout direction did not survive a process kill"
 
 # TRANSIENT state does not come back as a duplicate. A restored
 # react-native-screens fragment is the observable form of that, and
@@ -202,7 +202,7 @@ for round in 1 2 3; do
   adb logcat -c >/dev/null 2>&1 || true
   launch | grep -q "Status: ok" || fail "cold launch $round did not report ok"
   wait_for_pid || fail "cold launch $round produced no process"
-  is_rtl || fail "cold launch $round came back left-to-right"
+  is_ltr || fail "cold launch $round came back right-to-left"
   assert_no_crash "cold launch $round"
   echo "  launch $round: process up, right-to-left, no crash"
 done

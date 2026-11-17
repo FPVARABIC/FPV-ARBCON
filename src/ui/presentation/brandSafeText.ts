@@ -50,7 +50,7 @@ const EXTERNAL_FIRMWARE_BRAND = /betaflight|betafight/gi;
 const EXTERNAL_FIRMWARE_IDENTIFIER = /\bBTFL\b/g;
 
 /** Neutral, and still descriptive: it IS firmware. */
-const NEUTRAL_FIRMWARE_WORD = 'البرنامج الثابت';
+const NEUTRAL_FIRMWARE_WORD = "Firmware";
 
 /**
  * Strips the brand from text this application did not write - a server
@@ -83,7 +83,7 @@ export function usbProductLabel(
     .trim();
   if (!withoutBrand) return fallback;
   return /^STM32/i.test(withoutBrand)
-    ? `متحكم طيران ${withoutBrand}`
+    ? `Vluchtcontroller ${withoutBrand}`
     : withoutBrand;
 }
 
@@ -117,8 +117,8 @@ export function usbManufacturerLabel(
  */
 export function firmwareFamilyLabel(family: string): string {
   const upper = family.trim().toUpperCase();
-  if (upper.length === 0 || upper === 'UNKNOWN') return 'غير معروف';
-  return upper === 'BETAFLIGHT' ? 'MSP متوافق' : 'MSP غير متحقَّق منه';
+  if (upper.length === 0 || upper === 'UNKNOWN') return "Onbekend";
+  return upper === 'BETAFLIGHT' ? "Compatibel met MSP" : "MSP niet geverifieerd";
 }
 
 /**

@@ -181,7 +181,7 @@ echo "=== diagnostics ==="
 # having; a killed runner is not.
 bounded "adb logcat -d" adb logcat -d > "$DIAG/logcat.txt" 2>&1 || true
 bounded "adb shell getprop" adb shell getprop > "$DIAG/getprop.txt" 2>&1 || true
-bounded "dumpsys package" adb shell dumpsys package com.fpvarbcon > "$DIAG/dumpsys-package.txt" 2>&1 || true
+bounded "dumpsys package" adb shell dumpsys package "${FPV_APP_ID:-com.fpvarbcon.nl}" > "$DIAG/dumpsys-package.txt" 2>&1 || true
 bounded "adb shell ps -A" adb shell ps -A > "$DIAG/processes.txt" 2>&1 || true
 bounded "dumpsys activity activities" adb shell dumpsys activity activities > "$DIAG/dumpsys-activities.txt" 2>&1 || true
 # WHERE A HUNG TEST IS ACTUALLY STANDING. A stack dump of the app and the

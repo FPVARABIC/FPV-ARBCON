@@ -1,16 +1,16 @@
 {
   "id": "long-range",
   "kind": "FLIGHT_STYLE",
-  "title_ar": "المدى الطويل",
+  "title_ar": "Lange afstand",
   "title_en": "Long Range",
-  "description_ar": "الطيران خارج مدى البصر. النمط الوحيد الذي يكون فيه فقد الإشارة حدثًا متوقعًا لا حادثًا.",
+  "description_ar": "Vliegen is uit het zicht. Het enige patroon dat het signaal verliest is een onvoorziene gebeurtenis, geen ongeluk.",
   "description_en": "Flying beyond visual line of sight — the one style where signal loss is a planned event, not an accident.",
   "difficulty": "advanced",
-  "difficulty_ar": "متقدم",
+  "difficulty_ar": "Geavanceerd",
   "intended_aircraft": [
-    "7 إنش",
-    "6 إنش",
-    "5 إنش خفيفة بمراوح كبيرة"
+    "7 inch",
+    "6 inch",
+    "Licht 5-inch-toestel met grote propellers"
   ],
   "required_screens": [
     "FailsafeScreen",
@@ -26,10 +26,10 @@
     "VideoTransmitterScreen"
   ],
   "hardware_requirements": [
-    "وحدة GPS موصولة على UART مضبوط",
-    "بوصلة (اختيارية لكن موصى بها بشدة)",
-    "رابط راديو بعيد المدى",
-    "هوائي مرسل فيديو مركّب — الطاقة أعلى في هذا النمط"
+    "De GPS-unit is aangesloten op de UART.",
+    "Compass (optioneel maar sterk aanbevolen)",
+    "Afstands-radio-link.",
+    "Ik stuur een gecompliceerde videomaker met hogere energie in dit patroon."
   ],
   "hardware_verification_status": "NOT VERIFIED — DEFERRED",
   "verification_level": "SOFTWARE / REFERENCE VERIFIED",
@@ -43,8 +43,8 @@
   "steps": [
     {
       "n": 1,
-      "title_ar": "المنافذ",
-      "screen": "المنافذ · منفذ GPS",
+      "title_ar": "Poorten",
+      "screen": "Poorten · GPS-poort",
       "screenshot": "images/1-ports.png",
       "targets": [
         {
@@ -57,8 +57,8 @@
     },
     {
       "n": 2,
-      "title_ar": "المستقبل",
-      "screen": "المستقبل · المصدر و RSSI",
+      "title_ar": "Ontvanger",
+      "screen": "Ontvanger · Bron en RSSI",
       "screenshot": "images/2-receiver-cutoffs.png",
       "targets": [
         {
@@ -78,7 +78,7 @@
     {
       "n": 3,
       "title_ar": "GPS",
-      "screen": "GPS · التفعيل و Home والدقة",
+      "screen": "GPS · Inschakelen, thuispositie en nauwkeurigheid",
       "screenshot": "images/3-gps.png",
       "targets": [
         {
@@ -92,25 +92,25 @@
     {
       "n": 4,
       "title_ar": "GPS Rescue",
-      "screen": "Failsafe · معاملات GPS Rescue",
+      "screen": "Failsafe · GPS Rescue-instellingen",
       "screenshot": "images/4-gps-rescue.png",
       "targets": [
         {
           "control": "failsafe-gps-return-altitude",
           "kind": "stepper",
-          "expected": "30 م",
+          "expected": "30 m",
           "source": "S1.12d"
         },
         {
           "control": "failsafe-gps-ground-speed",
           "kind": "stepper",
-          "expected": "7.5 م/ث",
+          "expected": "7.5 m/s",
           "source": "S1.12d"
         },
         {
           "control": "failsafe-gps-descend-rate",
           "kind": "stepper",
-          "expected": "1.5 م/ث",
+          "expected": "1.5 m/s",
           "source": "S1.12d"
         },
         {
@@ -141,8 +141,8 @@
     },
     {
       "n": 5,
-      "title_ar": "الأوضاع",
-      "screen": "الأوضاع · GPS Rescue على مفتاح",
+      "title_ar": "Vliegmodi",
+      "screen": "Vliegmodi · GPS Rescue op een schakelaar",
       "screenshot": "images/5-modes.png",
       "targets": [
         {
@@ -155,8 +155,8 @@
     },
     {
       "n": 6,
-      "title_ar": "الطاقة والبطارية",
-      "screen": "الطاقة · مثال 6S",
+      "title_ar": "Voeding en accu",
+      "screen": "Voeding · Voorbeeld voor 6S",
       "screenshot": "images/6-power.png",
       "targets": [
         {
@@ -175,8 +175,8 @@
     },
     {
       "n": 7,
-      "title_ar": "مرسل الفيديو — الطاقة ومستوياتها الحقيقية",
-      "screen": "مرسل الفيديو · القناة والطاقة",
+      "title_ar": "videozender  —  Energie en de werkelijke niveaus",
+      "screen": "Videozender · Kanaal en zendvermogen",
       "screenshot": "images/7-vtx.png",
       "targets": [
         {
@@ -196,7 +196,7 @@
     {
       "n": 8,
       "title_ar": "OSD",
-      "screen": "OSD · إنذارات السلامة",
+      "screen": "OSD · Veiligheidswaarschuwingen",
       "screenshot": "images/8-osd-alarms.png",
       "targets": [
         {
@@ -215,8 +215,8 @@
     },
     {
       "n": 9,
-      "title_ar": "إحساس العصا",
-      "screen": "ضبط PID · بطاقة إحساس العصا",
+      "title_ar": "Stickrespons",
+      "screen": "PID-afstelling · Stickrespons",
       "screenshot": "images/9-pid-feel.png",
       "targets": [
         {
@@ -243,39 +243,39 @@
   "step_count": 9,
   "decisions": [
     {
-      "requirement": "المحركات و Dynamic Idle",
+      "requirement": "Motoren en Dynamic Idle",
       "decision": "ACTION",
-      "detail": "فعّل Bidirectional DShot، واضبط عدد الأقطاب على محركك، واضبط Dynamic Idle على **30** (×100 rpm) لمقاس 7\". من شاشة المحركات وشاشة ضبط PID.",
+      "detail": "Doe het. Bidirectional DShot En stel het aantal polen op je motor aan, en stel het aan. Dynamic Idle Op de ** 30 ** (× 100 rpm Voor de maat. 7 \". Van het motoren-scherm en het PID.-scherm.",
       "source": "S1.10c"
     },
     {
       "requirement": "Rates",
       "decision": "PILOT_PREFERENCE",
-      "detail": "لا توجد Rates رسمية للمدى الطويل. المبدأ: أبطأ من ملفك المعتاد — أنت تطير في خط مستقيم طويلًا لا تنعطف بحدة. والرقم اختيارك.",
+      "detail": "Er is geen officiële Rates in de lange termijn. Beginsel: Langzamer dan je normaal. Je vliegt in een lange rechte lijn. En het nummer is jouw keuze.",
       "source": null
     },
     {
-      "requirement": "قيم PID (P · I · D)",
+      "requirement": "PID-waarden (P · I · D)",
       "decision": "KEEP_DEFAULT",
-      "detail": "إعداد المدى الطويل الرسمي يغيّر إحساس العصا والتنعيم فقط، ولا يلمس P أو I أو D.",
+      "detail": "De lange termijn opstelling verandert alleen stickrespons en de verlichting, niet aan P of I of D..",
       "source": "S1.5"
     },
     {
-      "requirement": "الفلاتر",
+      "requirement": "Filters",
       "decision": "KEEP_DEFAULT",
-      "detail": "اتبع ضبط مقاسك. القيمة المرجعية لمقاس 7\" هي أدنى فلتر ديناميكي 40Hz، لأن الهيكل الطويل يرنّ عند تردد أخفض.",
+      "detail": "Volg je maat. De referentiewaarde van de 7 is de laagste dynamische 40Hz filter, omdat de lange structuur bij een lagere frequentie tritelt.",
       "source": "S1.10c"
     },
     {
-      "requirement": "قراءة جودة الرابط (LQ) و RSSI بوحدة dBm",
+      "requirement": "Lees linkkwaliteit (LQ) en RSSI in dBm-eenheid",
       "decision": "NOT_APPLICABLE",
-      "detail": "**غير موجودتين في عقد MSP إطلاقًا**، فلا يستطيع أي تطبيق MSP عرضهما حيًّا. تراهما في نظارتك عبر OSD؛ التطبيق يضبط عتبة الإنذار فقط (الخطوة 8).",
+      "detail": "Ze zijn helemaal niet in de MSP-contract. Geen MSP-app kan ze live laten zien. Je ziet ze in je bril via OSD; De app zet alleen de alarmgrens aan (stap 8).",
       "source": null
     },
     {
-      "requirement": "نوع التثبيت (2D/3D) و HDOP/VDOP",
+      "requirement": "Type positiebepaling (2D/3D) en HDOP/VDOP",
       "decision": "NOT_APPLICABLE",
-      "detail": "بروتوكول الاتصال مع المتحكم يرسل **بت تثبيت واحدًا و PDOP وحده** — لا 2D/3D ولا HDOP/VDOP. التطبيق يعرض PDOP بالاسم الصحيح ولا يخترع بديلًا. اسم الأمر نفسه في `_meta/sources.md` § S2.2.",
+      "detail": "Het contactprotocol met de controller stuurt een installatie- PDOP Alleen. 2 D/3D Nee, nee. HDOP/VDOP. De app geeft PDOP de juiste naam en bedenkt geen alternatief. Dezelfde naam in `_meta/sources.md` § S2.2.",
       "source": null
     }
   ]

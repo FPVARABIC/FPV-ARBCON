@@ -172,10 +172,10 @@ describe('Receiver P1 - all live channels are reachable', () => {
         .findAllByType('Text' as never)
         .map(node => String(node.props.children));
     // P3-AC: the four primary axes are named in Arabic, AUX stays Latin.
-    expect(textOf('receiver-channel-1')).toContain('الدوران');
-    expect(textOf('receiver-channel-2')).toContain('الميل');
-    expect(textOf('receiver-channel-3')).toContain('الانحراف');
-    expect(textOf('receiver-channel-4')).toContain('الخانق');
+    expect(textOf('receiver-channel-1')).toContain("Roll");
+    expect(textOf('receiver-channel-2')).toContain("Pitch");
+    expect(textOf('receiver-channel-3')).toContain("Yaw");
+    expect(textOf('receiver-channel-4')).toContain("Gas");
     expect(textOf('receiver-channel-5')).toContain('AUX 1');
     expect(textOf('receiver-channel-16')).toContain('AUX 12');
     act(() => renderer.unmount());

@@ -132,7 +132,7 @@ describe('the PID page against a board, through the shipped controller', () => {
       .findAllByProps({testID: 'pid-active-profile'})
       .flatMap(node => node.findAll(child => child.props?.accessibilityState?.selected === true))
       .map(child => child.props.accessibilityLabel);
-    expect(selected).toContain(`ملف PID ${h.board.activePidProfile() + 1}`);
+    expect(selected).toContain(`PID-profiel ${h.board.activePidProfile() + 1}`);
     act(() => renderer.unmount());
   });
 
@@ -146,7 +146,7 @@ describe('the PID page against a board, through the shipped controller', () => {
     expect(h.board.commandCount(MSP_SET_PID)).toBe(1);
     expect(h.board.commandCount(MSP_EEPROM_WRITE)).toBe(1);
     expect(h.board.pidProfile(h.board.activePidProfile()).pid[0]).toBe(52);
-    expect(screenText(renderer)).toContain('أكدت القراءة الراجعة تطابقها');
+    expect(screenText(renderer)).toContain("De veranderende waarden werden bewaard, en de teruglezing bevestigde dat ze overeenkwamen.");
     act(() => renderer.unmount());
   });
 
@@ -182,7 +182,7 @@ describe('the PID page against a board, through the shipped controller', () => {
     // makes the overwrite warning on the screen a true statement rather
     // than a scary one.
     expect(Array.from(h.board.pidProfile(0).pid)).not.toEqual(Array.from(before));
-    expect(screenText(renderer)).toContain('أعاد المتحكم حساب القيم من الشرائح');
+    expect(screenText(renderer)).toContain("De vluchtcontroller heeft de waarden opnieuw berekend uit de schuifregelaars en opgeslagen. Teruglezen bevestigt de verwachte waarden.");
     act(() => renderer.unmount());
   });
 
@@ -195,7 +195,7 @@ describe('the PID page against a board, through the shipped controller', () => {
     press(renderer, 'pid-simplified-masterMultiplier-value-plus');
     await save(renderer);
     expect(h.board.commandCount(MSP_SET_SIMPLIFIED_TUNING)).toBe(0);
-    expect(screenText(renderer)).toContain('لا يطابق حسابنا');
+    expect(screenText(renderer)).toContain("De controle berekening van het slide-resultaat past niet bij ons. We hebben niets geschreven.");
     act(() => renderer.unmount());
   });
 
@@ -224,8 +224,8 @@ describe('the PID page against a board, through the shipped controller', () => {
     press(renderer, 'pid-rates-type-3');
     await save(renderer);
     const text = screenText(renderer);
-    expect(text).toContain('أعادت اللوحة قيم Rates مختلفة');
-    expect(text).not.toContain('بُدّلت خوارزمية Rates وحُفظت');
+    expect(text).toContain("Na het schrijven van het algoritme type herstelde het bord de Rates-waarden die anders waren dan ze opgeslagen waren. De bewerking is gestopt voordat het opslaan was voltooid.");
+    expect(text).not.toContain("Rates-algoritme gewijzigd en opgeslagen");
     act(() => renderer.unmount());
   });
 
@@ -253,8 +253,8 @@ describe('the PID page against a board, through the shipped controller', () => {
     const h = harness({unsupportedCommands: [MSP_SET_SIMPLIFIED_TUNING, 0x8c /* MSP_SIMPLIFIED_TUNING */]});
     const renderer = await render(h.port);
     const text = screenText(renderer);
-    expect(text).toContain('بناء البرنامج الثابت');
-    expect(text).not.toContain('هذه حدود التطبيق');
+    expect(text).toContain("Deze firmwarebuild bevat geen eenvoudige afstelling. Gebruik de geavanceerde instellingen hieronder.");
+    expect(text).not.toContain("Dit zijn grenzen van de app");
     // With no generator to work in, the direct controls are the workspace.
     expect(renderer.root.findAllByProps({testID: 'pid-roll-p'}).length).toBeGreaterThan(0);
     act(() => renderer.unmount());

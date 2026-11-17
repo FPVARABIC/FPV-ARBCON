@@ -183,7 +183,7 @@ describe('OrientationHero', () => {
     expect(
       findByTestID(renderer, 'orientation-hero-reset-button'),
     ).not.toBeNull();
-    expect(allText(renderer)).toContain('مباشر');
+    expect(allText(renderer)).toContain("Live");
   });
 
   /**
@@ -275,8 +275,8 @@ describe('OrientationHero', () => {
     expect(text).toContain('10°');
     expect(text).toContain('-5°');
     expect(text).toContain('90°');
-    expect(text).toContain('البيانات متأخرة');
-    expect(text).not.toContain('مباشر');
+    expect(text).toContain("Gegevens verouderd");
+    expect(text).not.toContain("Live");
   });
 
   it('sets an accessibility label from describeOrientationForAccessibility() on the renderer wrapper', () => {
@@ -288,7 +288,7 @@ describe('OrientationHero', () => {
     });
     const wrapper = findByTestID(renderer, 'orientation-hero-renderer-wrapper');
     expect(wrapper?.props.accessibilityLabel).toBe(
-      'ميلان 4 درجة لليمين، ارتفاع المقدمة 2 درجة، الاتجاه 274 درجة',
+      "Rolhoek van 4 graden naar rechts, Neus omhoog 2 graden, Koers 274 graden",
     );
   });
 
@@ -337,7 +337,7 @@ describe('OrientationHero', () => {
         findByTestID(renderer, 'orientation-hero-reset-hint'),
       ).not.toBeNull();
       expect(allText(renderer)).toContain(
-        'هذا يعيد ضبط زاوية العرض على الشاشة فقط: يجعل الاتجاه المعروض يبدأ من صفر بالنسبة للوضع الحالي. لا يُرسل أي أمر إلى وحدة التحكم بالطيران ولا يُجري أي معايرة لمستشعراتها.',
+        "Hiermee wordt alleen de kijkhoek op het scherm gereset. De huidige houding wordt het nieuwe nulpunt. Er wordt geen opdracht naar de vluchtcontroller verzonden en er worden geen sensoren gekalibreerd.",
       );
       expect(onResetHintShown).toHaveBeenCalledTimes(1);
     });
@@ -580,7 +580,7 @@ describe('OrientationHero', () => {
       expect(
         findByTestID(renderer, 'orientation-hero-renderer-wrapper')?.props
           .accessibilityLabel,
-      ).toBe('ميلان 30 درجة لليمين، انخفاض المقدمة 20 درجة، الاتجاه 150 درجة');
+      ).toBe("Rolhoek van 30 graden naar rechts, Neus omlaag 20 graden, Koers 150 graden");
       expect(lastModelPose()).toEqual({
         rollDeg: 30,
         pitchDeg: -20,

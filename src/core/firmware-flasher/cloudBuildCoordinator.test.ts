@@ -49,7 +49,7 @@ describe('CloudBuildCoordinator', () => {
       5000,
       async () => {
         controller.abort();
-        throw new Error('أُلغيَ بناء Firmware.');
+        throw new Error("Firmware. is opgeheven.");
       },
       () => 0,
     );
@@ -57,7 +57,7 @@ describe('CloudBuildCoordinator', () => {
       {target: 'S405', release: '4.6.0', options: ['CORE_BUILD']},
       undefined,
       controller.signal,
-    )).rejects.toThrow(/أُلغي/);
+    )).rejects.toThrow(new RegExp("Firmware\\. is opgeheven\\."));
     expect(api.requestBuildStatus).toHaveBeenCalledTimes(1);
     expect(api.loadFirmware).not.toHaveBeenCalled();
   });

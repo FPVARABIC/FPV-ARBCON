@@ -1,17 +1,17 @@
 {
   "id": "cinematic",
   "kind": "FLIGHT_STYLE",
-  "title_ar": "الطيران السينمائي",
+  "title_ar": "Cinematisch vliegen",
   "title_en": "Cinematic",
-  "description_ar": "طيران هادئ ومتصل، الهدف فيه أن تبدو اللقطة كأن كاميرا محمولة على ذراع.",
+  "description_ar": "Vliegen is rustig en verbindend, met als doel dat het beeld eruit ziet als een camera op een arm.",
   "description_en": "Smooth, continuous flying where the shot should look like a camera on a gimbal, not on a drone.",
   "difficulty": "beginner",
-  "difficulty_ar": "مبتدئ",
+  "difficulty_ar": "Beginner",
   "intended_aircraft": [
     "Cinewhoop",
     "Cinelog",
-    "5 إنش بكاميرا HD",
-    "7 إنش للقطات الواسعة"
+    "5 inch met HD-camera",
+    "7 inch voor weidse opnamen"
   ],
   "required_screens": [
     "PidTuningScreen",
@@ -24,8 +24,8 @@
     "ModesScreen"
   ],
   "hardware_requirements": [
-    "كاميرا أو مسجّل فيديو",
-    "ESC يدعم DShot ثنائي الاتجاه (لفلتر RPM)"
+    "Een camera of videorecorder.",
+    "ESC Hij steunt. DShot Twee-richtingsfilter. RPM )"
   ],
   "hardware_verification_status": "NOT VERIFIED — DEFERRED",
   "verification_level": "SOFTWARE / REFERENCE VERIFIED",
@@ -41,8 +41,8 @@
   "steps": [
     {
       "n": 1,
-      "title_ar": "المستقبل",
-      "screen": "المستقبل · بطاقة تنعيم الإشارة",
+      "title_ar": "Ontvanger",
+      "screen": "Ontvanger · Signaalfiltering",
       "screenshot": "images/1-receiver-smoothing.png",
       "targets": [
         {
@@ -61,8 +61,8 @@
     },
     {
       "n": 2,
-      "title_ar": "إحساس العصا",
-      "screen": "ضبط PID · بطاقة إحساس العصا",
+      "title_ar": "Stickrespons",
+      "screen": "PID-afstelling · Stickrespons",
       "screenshot": "images/2-pid-feel.png",
       "targets": [
         {
@@ -87,8 +87,8 @@
     },
     {
       "n": 3,
-      "title_ar": "المحركات",
-      "screen": "المحركات · إعدادات ESC",
+      "title_ar": "Motoren",
+      "screen": "Motoren · ESC-instellingen",
       "screenshot": "images/3-motors.png",
       "targets": [
         {
@@ -114,7 +114,7 @@
     {
       "n": 4,
       "title_ar": "Dynamic Idle",
-      "screen": "ضبط PID · بطاقة Dynamic Idle",
+      "screen": "PID-afstelling · Dynamic Idle",
       "screenshot": "images/4-dynamic-idle.png",
       "targets": [
         {
@@ -128,7 +128,7 @@
     {
       "n": 5,
       "title_ar": "Failsafe",
-      "screen": "Failsafe · إجراء المرحلة 2",
+      "screen": "Failsafe · Actie in fase 2",
       "screenshot": "images/5-failsafe.png",
       "targets": [
         {
@@ -142,7 +142,7 @@
     {
       "n": 6,
       "title_ar": "OSD",
-      "screen": "OSD · بطاقة التنبيهات",
+      "screen": "OSD · Waarschuwingen",
       "screenshot": "images/6-osd-alarms.png",
       "targets": [
         {
@@ -157,51 +157,51 @@
   "step_count": 6,
   "decisions": [
     {
-      "requirement": "ترددا القطع (setpoint · الخانق)",
+      "requirement": "Afkapfrequenties (setpoint · gas)",
       "decision": "KEEP_DEFAULT",
-      "detail": "اتركهما 0 — أي «تلقائي». الإعداد السينمائي الرسمي يضبط المعاملين التلقائيين ولا يلمس ترددي القطع.",
+      "detail": "Laat ze 0  —  geen  —  Automatisch  —. De officiële filmopstelling regelt de automatische processors zonder de frequentie van de stukken aan te raken.",
       "source": "S1.13"
     },
     {
       "requirement": "Rates",
       "decision": "PILOT_PREFERENCE",
-      "detail": "لا توجد Rates رسمية للسينمائي. اختر ملفًا أبطأ من ملفك المعتاد وارفع expo قليلًا لتنعيم المنتصف — ولا نفرض رقمًا واحدًا لهذا النمط.",
+      "detail": "Er is geen officiële Rates voor de bioscoop. Kies een langzamer bestand dan je gewone en verhoog de expo een beetje om het midden te verlichten.",
       "source": null
     },
     {
-      "requirement": "قيم PID (P · I · D)",
+      "requirement": "PID-waarden (P · I · D)",
       "decision": "KEEP_DEFAULT",
-      "detail": "الإعدادان السينمائيان الرسميان لا يلمسان P أو I أو D إطلاقًا. النعومة تأتي من إحساس العصا والتنعيم، لا من خفض PID.",
+      "detail": "De twee officiële bioscopen hebben helemaal geen P, I of D. De flexibiliteit komt van de stickrespons en de verlichting, niet van de PID..",
       "source": "S1.1"
     },
     {
-      "requirement": "الفلاتر (Gyro LPF · D-term LPF · Dynamic Notch)",
+      "requirement": "Gyro LPF · D-term LPF · Dynamic Notch",
       "decision": "KEEP_DEFAULT",
-      "detail": "اتبع ضبط منصتك. القيم المرجعية للسينمائي (سقف 750Hz لـ Cinelog، أدنى 125Hz لبناء نظيف) في قسم «اختياري»، والتطبيق لا يعدّلها إلا إذا أثبتت القراءة أن الميزة نشطة.",
+      "detail": "Volg je platform. De filmreferentiewaarden (750Hz dak voor Cinelog, minimum 125Hz voor schone bouw) zijn in de sectie  — optie —, en de toepassing wijzigt ze alleen als de leeswijze bewijst dat de functie actief is.",
       "source": "S1.11a"
     },
     {
-      "requirement": "الأوضاع (Modes)",
+      "requirement": "Vliegmodi (Modes)",
       "decision": "PILOT_PREFERENCE",
-      "detail": "مفتاح ARM إلزامي ويُضبط مرة واحدة لكل طائرة. ما بعده — Angle أو Beeper أو Turtle — تفضيلك.",
+      "detail": "De ARM-sleutel is verplicht en wordt één keer per vliegtuig ingesteld. Vervolgens  —  Angle of Beeper of Turtle  —  uw voorkeur.",
       "source": null
     },
     {
-      "requirement": "الطاقة والبطارية",
+      "requirement": "Voeding en accu",
       "decision": "PILOT_PREFERENCE",
-      "detail": "لا توجد حدود بطارية «سينمائية». اضبطها على حزمتك أنت: عدد الخلايا، وتحذير الخلية، والسعة.",
+      "detail": "Er zijn geen grenzen aan accu. Pas ze aan op je pakket: aantal cellen, cel waarschuwing, capaciteit.",
       "source": null
     },
     {
-      "requirement": "مرسل الفيديو (VTX)",
+      "requirement": "Videozender (VTX)",
       "decision": "NOT_APPLICABLE",
-      "detail": "لا يغيّره هذا النمط. اضبط القناة والطاقة مرة واحدة حسب مكانك وقوانينه.",
+      "detail": "Dat stijl verandert niet. Pas het kanaal en de stroom één keer aan volgens je locatie en de regels.",
       "source": null
     },
     {
       "requirement": "`thrust_linear`",
       "decision": "NOT_APPLICABLE",
-      "detail": "يضبطه الإعداد الرسمي حسب تردد ESC (0 عند 24k · 20 عند 48k · 40 عند 96k)، ولا يعرضه هذا التطبيق. يُضبط من سطر الأوامر أو بتطبيق الحزمة.",
+      "detail": "Het is geregeld door de officiële opstelling volgens de frequentie ESC (0 bij 24k · 20 bij 48k · 40 bij 96k), en wordt niet weergegeven door deze toepassing. Het wordt ingesteld vanaf de opdrachtlijn of via de pakkettoepassing.",
       "source": "S1.11a"
     }
   ]

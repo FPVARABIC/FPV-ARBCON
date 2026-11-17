@@ -80,7 +80,7 @@ class LifecycleCampaignTest {
    */
   @After
   fun restoreTheShippedState() {
-    applyArabicLayoutDirection(target)
+    applyDutchLayoutDirection(target)
   }
 
   /**
@@ -338,8 +338,8 @@ class LifecycleCampaignTest {
           assertFalse("the Activity finished during a rotation", activity.isFinishing)
           assertWindowStillHasContent(activity, "after rotating to $expected")
           assertTrue(
-            "the app came back left-to-right after a rotation",
-            I18nUtil.instance.isRTL(activity),
+            "the app came back right-to-left after a rotation",
+            !I18nUtil.instance.isRTL(activity),
           )
         }
       }
@@ -385,8 +385,8 @@ class LifecycleCampaignTest {
           assertFalse("the Activity finished at font scale $scale", activity.isFinishing)
           assertWindowStillHasContent(activity, "at font scale $scale")
           assertTrue(
-            "the app is no longer right-to-left at font scale $scale",
-            I18nUtil.instance.isRTL(activity),
+            "the app is no longer left-to-right at font scale $scale",
+            !I18nUtil.instance.isRTL(activity),
           )
         }
       }
@@ -433,8 +433,8 @@ class LifecycleCampaignTest {
         scenario.onActivity { activity ->
           assertWindowStillHasContent(activity, "after Android Back")
           assertTrue(
-            "Back left the app left-to-right",
-            I18nUtil.instance.isRTL(activity),
+            "Back left the app right-to-left",
+            !I18nUtil.instance.isRTL(activity),
           )
         }
       }
@@ -470,8 +470,8 @@ class LifecycleCampaignTest {
         assertFalse("the rebuilt Activity is finishing", activity.isFinishing)
         assertWindowStillHasContent(activity, "after recreation at 2x text")
         assertTrue(
-          "recreation lost the right-to-left layout direction",
-          I18nUtil.instance.isRTL(activity),
+          "recreation lost the left-to-right layout direction",
+          !I18nUtil.instance.isRTL(activity),
         )
       }
     }
@@ -547,8 +547,8 @@ class LifecycleCampaignTest {
         assertFalse(activity.isFinishing)
         assertWindowStillHasContent(activity, "after returning to the foreground")
         assertTrue(
-          "returning to the foreground lost the right-to-left layout direction",
-          I18nUtil.instance.isRTL(activity),
+          "returning to the foreground lost the left-to-right layout direction",
+          !I18nUtil.instance.isRTL(activity),
         )
       }
     }
@@ -571,13 +571,13 @@ class LifecycleCampaignTest {
           target.getSharedPreferences(RN_RTL_PREFERENCES, Context.MODE_PRIVATE)
         assertTrue(
           "round $round: $RN_RTL_KEY_FORCE was lost by a rebuild",
-          preferences.getBoolean(RN_RTL_KEY_FORCE, false),
+          !preferences.getBoolean(RN_RTL_KEY_FORCE, true),
         )
         assertTrue(
           "round $round: $RN_RTL_KEY_ALLOW was lost by a rebuild",
-          preferences.getBoolean(RN_RTL_KEY_ALLOW, false),
+          !preferences.getBoolean(RN_RTL_KEY_ALLOW, true),
         )
-        assertTrue("round $round: the app is no longer RTL", I18nUtil.instance.isRTL(target))
+        assertTrue("round $round: the app is no longer LTR", !I18nUtil.instance.isRTL(target))
       }
     }
   }

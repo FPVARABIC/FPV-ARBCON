@@ -268,8 +268,8 @@ const styles = StyleSheet.create({
        row wraps and the text gets the full width to itself. */
     minWidth: 200,
     color: colors.textPrimary,
-    textAlign: 'right',
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    textAlign: 'left',
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   stripActions: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -303,8 +303,8 @@ const styles = StyleSheet.create({
   dialogTitle: {
     ...typography.sectionTitle,
     color: colors.textPrimary,
-    textAlign: 'right',
-    writingDirection: 'rtl'},
+    textAlign: 'left',
+    writingDirection: 'ltr'},
   option: {
     minHeight: MIN_TOUCH_TARGET,
     flexDirection: 'row',
@@ -321,6 +321,6 @@ const styles = StyleSheet.create({
     ...typography.bodyStrong,
     flex: 1,
     color: colors.textPrimary,
-    textAlign: 'right',
-    writingDirection: 'rtl'},
+    textAlign: 'left',
+    writingDirection: 'ltr'},
 });

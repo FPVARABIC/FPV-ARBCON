@@ -28,8 +28,8 @@
 
 set -uo pipefail
 
-PKG="com.fpvarbcon"
-ACTIVITY="${PKG}/.MainActivity"
+PKG="${FPV_APP_ID:-com.fpvarbcon.nl}"
+ACTIVITY="${PKG}/com.fpvarbcon.MainActivity"
 PREFS="/data/data/${PKG}/shared_prefs/com.facebook.react.modules.i18nmanager.I18nUtil.xml"
 LAUNCH_TIMEOUT_SECONDS="${LAUNCH_TIMEOUT_SECONDS:-60}"
 
@@ -58,14 +58,14 @@ read_prefs() {
 
 # Matches React Native's own SharedPreferences XML, e.g.
 #   <boolean name="RCTI18nUtil_forceRTL" value="true" />
-pref_is_true() {
-  read_prefs | grep -q "name=\"$1\" value=\"true\""
+pref_is_false() {
+  read_prefs | grep -q "name=\"$1\" value=\"false\""
 }
 
 wait_for_pref() {
   local key="$1" deadline=$((SECONDS + LAUNCH_TIMEOUT_SECONDS))
   while [ "$SECONDS" -lt "$deadline" ]; do
-    if pref_is_true "$key"; then
+    if pref_is_false "$key"; then
       return 0
     fi
     sleep 1
@@ -134,12 +134,12 @@ if printf '%s' "$LAUNCH_OUTPUT" | grep -qiE "^Error|Exception|does not exist"; t
 fi
 
 if wait_for_pref RCTI18nUtil_forceRTL; then
-  echo "RCTI18nUtil_forceRTL is true after the first cold launch"
+  echo "RCTI18nUtil_forceRTL is false after the first cold launch"
 else
-  fail "after a fresh install and one cold launch the app is NOT forcing RTL. An Arabic-first UI would render its first session left-to-right."
+  fail "after a fresh install and one cold launch the Dutch app did not explicitly disable RTL before its first surface."
 fi
-if ! pref_is_true RCTI18nUtil_allowRTL; then
-  fail "RCTI18nUtil_allowRTL is not set after the first cold launch"
+if ! pref_is_false RCTI18nUtil_allowRTL; then
+  fail "RCTI18nUtil_allowRTL was not disabled after the first cold launch"
 fi
 echo "preference file now:"
 read_prefs
@@ -160,17 +160,17 @@ for attempt in 2 3; do
   LAUNCH_OUTPUT="$(cold_launch)"
   echo "$LAUNCH_OUTPUT"
   if ! wait_for_pref RCTI18nUtil_forceRTL; then
-    fail "launch ${attempt} left the app not forcing RTL"
+    fail "launch ${attempt} left the app forcing RTL"
   fi
-  if ! pref_is_true RCTI18nUtil_allowRTL; then
-    fail "launch ${attempt} left allowRTL unset"
+  if ! pref_is_false RCTI18nUtil_allowRTL; then
+    fail "launch ${attempt} left allowRTL enabled"
   fi
   CRASH="$(crashed_since_marker)"
   if [ -n "$CRASH" ]; then
     echo "$CRASH"
     fail "the app crashed or hung on launch ${attempt}"
   fi
-  echo "launch ${attempt}: still RTL, no crash"
+  echo "launch ${attempt}: still LTR, no crash"
   echo "::endgroup::"
 done
 
@@ -182,4 +182,4 @@ adb shell am force-stop "$PKG" || true
 if [ "$FAILED" -ne 0 ]; then
   exit 1
 fi
-echo "RTL cold-launch check passed: fresh install, first launch, and two relaunches all right-to-left with no crash."
+echo "RTL cold-launch check passed: fresh install, first launch, and two relaunches all left-to-right with no crash."

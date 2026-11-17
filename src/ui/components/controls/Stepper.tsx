@@ -87,7 +87,7 @@ export function Stepper({
       onPress={onPress}
       disabled={isDisabled}
       accessibilityRole="button"
-      accessibilityLabel={`${accessibilityLabel}: ${kind === 'minus' ? 'إنقاص' : 'زيادة'}`}
+      accessibilityLabel={`${accessibilityLabel}: ${kind === 'minus' ? "Verlagen" : "Verhogen"}`}
       accessibilityState={{disabled: isDisabled}}
       testID={buttonTestID(kind)}
       style={state => {

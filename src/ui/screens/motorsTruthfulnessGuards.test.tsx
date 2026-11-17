@@ -33,7 +33,7 @@ import ReactTestRenderer, {act} from 'react-test-renderer';
 
 import '../../i18n';
 import i18n from '../../i18n';
-import ar from '../../i18n/locales/ar.json';
+import ar from '../../i18n/locales/nl.json';
 import {
   evaluateMotorIdentificationCapability,
   MOTOR_IDENTIFICATION_MODEL_OUTPUT_COUNT,
@@ -223,8 +223,8 @@ describe('D - an acknowledgement is a COMMAND fact, never a physical one', () =>
     // it asked for, under copy that denies being a reading.
     expect(rendered).toContain('M2');
     // The commanded copy must itself deny being a reading or a measurement.
-    expect(ar.escDirection.commandedBody).toContain('وليس قراءة للاتجاه الحالي');
-    expect(ar.escDirection.commandedBody).toContain('ولا إثباتًا لدوران فعلي');
+    expect(ar.escDirection.commandedBody).toContain("geen uitlezing van de huidige richting");
+    expect(ar.escDirection.commandedBody).toContain("geen bewijs dat de motor werkelijk draait");
     // The unreadable-state notice does not disappear once a command lands.
     expect(rendered).toContain(ar.escDirection.currentUnknown);
     act(() => tree.unmount());
@@ -264,18 +264,18 @@ describe('D - an acknowledgement is a COMMAND fact, never a physical one', () =>
 
 describe('F - the unsupported message describes the real gate', () => {
   it('no longer claims the feature requires four motors', () => {
-    expect(ar.escDirection.unsupported).not.toContain('أربعة محركات');
+    expect(ar.escDirection.unsupported).not.toContain("vier motoren");
   });
 
   it('names the conditions the controller actually checks', () => {
     const copy = ar.escDirection.unsupported;
     // Motor within the reported count, DShot family, 3D off, session,
     // disarmed - the five things setEscDirection actually requires.
-    expect(copy).toContain('عدد المحركات');
+    expect(copy).toContain("aantal motoren");
     expect(copy).toContain('DSHOT600');
     expect(copy).toContain('3D');
-    expect(copy).toContain('جلسة');
-    expect(copy).toContain('غير مسلّح');
+    expect(copy).toContain("sessie");
+    expect(copy).toContain("DISARMED");
   });
 });
 
@@ -286,15 +286,15 @@ describe('F - the unsupported message describes the real gate', () => {
 describe('G - M numbers are addressing, not an output-assignment claim', () => {
   it('no longer asserts that M numbers match FC outputs in the same order', () => {
     expect(ar.motorsScreen.numberingNotice).not.toContain(
-      'تطابق مخارج متحكم الطيران بالترتيب نفسه',
+      "M-nummers komen in dezelfde volgorde overeen met de uitgangen",
     );
   });
 
   it('names the two concepts separately, and says the mapping may differ', () => {
     const copy = ar.motorsScreen.numberingNotice;
-    expect(copy).toContain('منطقية');
-    expect(copy).toContain('تخطيط منفصل');
-    expect(copy).toContain('مُعاد ترتيبه');
+    expect(copy).toContain("M-nummers zijn logische adressen");
+    expect(copy).toContain("M-nummers zijn logische adressen");
+    expect(copy).toContain("opnieuw geordend");
   });
 });
 

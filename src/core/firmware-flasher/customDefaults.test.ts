@@ -29,7 +29,7 @@ function image() {
 describe('Betaflight unified custom defaults', () => {
   it('cleans Unicode comments but rejects Unicode inside commands', () => {
     expect(parseUnifiedConfigText('# تعليق\nset foo = 1\n')).toEqual(['# _____', 'set foo = 1', '']);
-    expect(() => parseUnifiedConfigText('set الاسم = 1')).toThrow(/محرفاً غير صالح/);
+    expect(() => parseUnifiedConfigText('set الاسم = 1')).toThrow(new RegExp("Unified Config bevat een ongeldig karakter buiten de opmerkingen\\."));
   });
 
   it('inserts config only into the firmware-advertised free region', () => {
@@ -57,10 +57,10 @@ describe('Betaflight unified custom defaults', () => {
 
   it('refuses injection when the pointer is absent or the declared area overlaps firmware', () => {
     expect(() => insertCustomDefaults({...image(), segments: image().segments.slice(0, 1)}, ['set foo = 1']))
-      .toThrow(/لا يعلن منطقة/);
+      .toThrow(new RegExp("De Firmware specifiek verklaart niet dat de Custom Defaults zone geldig is\\."));
     expect(() => insertCustomDefaults({
       ...image(),
       segments: [...image().segments, {address: 0x08010000, data: Uint8Array.of(9)}],
-    }, ['set foo = 1'])).toThrow(/تتداخل/);
+    }, ['set foo = 1'])).toThrow(new RegExp("Custom Defaults gebied overlapt met Firmware\\. data\\."));
   });
 });

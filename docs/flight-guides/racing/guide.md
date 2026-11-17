@@ -179,22 +179,25 @@
 
 ---
 
-## تحذيرات
+## Waarschuwingen
+Niet draaien. videozender Geen ventilator. Het kan kapot gaan. zender In een paar seconden.
 
-> **لا تشغّل مرسل الفيديو بلا هوائي.** قد يتلف المرسل خلال ثوانٍ.
 
-> **في السباق المنظّم، القناة والطاقة ليستا اختيارك وحدك.** تشغيل
-> قناة غير مخصصة لك يفسد فيديو طيار آخر أثناء طيرانه.
 
-> **فلترة RPM إلزامية مع ضبط السباق.** الإعدادات الرسمية تقول
-> صراحةً إن تشغيل هذا الضبط بدون فلترة RPM **قد يؤدي إلى حريق**
-> (S1.8, S1.9).
+In een georganiseerde race is het kanaal en de energie niet alleen jouw keuze. Het draaien van een kanaal dat niet aan jou is, verpest de video van een andere piloot tijdens zijn vlucht.
 
-> **سلّح على الأرض واستمع قبل أن تطير.** صوت نظيف بلا طحن، ثم تحويم
-> وفحص حرارة المحركات. إن كان أي شيء غريبًا، لا تطر (S1.9).
 
-> **ضبط السباق يفترض إطارًا مخدومًا.** أذرع مرتخية أو محركات متضررة
-> تحوّل الضبط الحاد إلى اهتزاز.
+
+** RPM-filter is verplicht met het regelen van de race.** De officiële instellingen zeggen uitdrukkelijk dat het openen van deze regeling zonder RPM-filter ** een brand kan veroorzaken** (S1.8, S1.9).
+
+
+
+**Arm op de grond en luister voordat u vliegt.** Het geluid moet schoon zijn, zonder schurend geluid. Ga daarna kort hoveren en controleer de motortemperatuur. Als er iets vreemds is, laat S1.9 niet vallen.
+
+
+
+*Rennegeling veronderstelt een gebouwde raam.* *Lose armen of beschadigde motoren die de scherpe regeling omzetten in een trilling.
+
 
 ---
 

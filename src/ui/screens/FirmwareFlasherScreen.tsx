@@ -259,7 +259,7 @@ function errorMessage(error: unknown): string {
   if (typeof native === 'string' && native.trim().length > 0) {
     return native;
   }
-  return 'حدث خطأ غير متوقع في Firmware Flasher.';
+  return "Onverwachte fout in Firmware Flasher.";
 }
 
 /** The `code` a rejection carries, whether it is a DfuError (web engine),
@@ -272,28 +272,28 @@ function errorCode(error: unknown): string | undefined {
 function firmwareDescription(image: FirmwareImage): string {
   switch (image.kind) {
     case 'HEX':
-      return `${image.hex.totalBytes.toLocaleString('ar')} بايت • ${image.hex.segments.length} مناطق • 0x${image.hex.lowestAddress.toString(16)}–0x${image.hex.highestAddressExclusive.toString(16)}`;
+      return `${image.hex.totalBytes.toLocaleString('nl-NL')} byte • ${image.hex.segments.length} gebieden • 0x${image.hex.lowestAddress.toString(16)} — 0x${image.hex.highestAddressExclusive.toString(16)}`;
     case 'UF2':
-      return `${image.uf2.totalPayloadBytes.toLocaleString('ar')} بايت • ${image.uf2.blocks.length} كتل • Family ${image.uf2.familyId === undefined ? 'غير معلن' : `0x${image.uf2.familyId.toString(16)}`}`;
+      return `${image.uf2.totalPayloadBytes.toLocaleString('nl-NL')} byte • ${image.uf2.blocks.length} blokken • Family ${image.uf2.familyId === undefined ? "Niet opgegeven" : `0x${image.uf2.familyId.toString(16)}`}`;
     case 'BIN':
-      return `${image.esp.imageBytes.toLocaleString('ar')} بايت • ESP chip ID 0x${image.esp.chipId.toString(16)} • ${image.esp.segmentCount} مقاطع`;
+      return `${image.esp.imageBytes.toLocaleString('nl-NL')} byte • ESP chip ID 0x${image.esp.chipId.toString(16)} • ${image.esp.segmentCount} delen`;
   }
 }
 
 function groupLabel(group: string | undefined): string {
   switch (group) {
-    case 'supported': return 'شريك موثّق';
-    case 'legacy': return 'قديم / Legacy';
-    default: return 'مجتمع المصنّع';
+    case 'supported': return "Geverifieerde partner";
+    case 'legacy': return "Verouderd / Legacy";
+    default: return "Fabrikantcommunity";
   }
 }
 
 function releaseLabel(release: FirmwareRelease): string {
   const channel = release.channel === 'stable'
-    ? 'مستقر'
+    ? "Stabiel"
     : release.channel === 'candidate'
-      ? 'مرشح'
-      : 'تطويري';
+      ? "Releasekandidaat"
+      : "Ontwikkelversie";
   return `${release.release} • ${channel}`;
 }
 
@@ -363,10 +363,10 @@ function OptionGroup({
   const [open, setOpen] = useState(false);
   if (options.length === 0) return null;
   const choices = [
-    ...(options.some(option => option.value === '') ? [] : [{value: '', label: 'بدون'}]),
+    ...(options.some(option => option.value === '') ? [] : [{value: '', label: "Geen"}]),
     ...options.map(option => ({value: option.value, label: option.name})),
   ].filter((choice, index, all) => all.findIndex(candidate => candidate.value === choice.value) === index);
-  const selectedLabel = choices.find(choice => choice.value === selected)?.label ?? 'اختر';
+  const selectedLabel = choices.find(choice => choice.value === selected)?.label ?? "Kiezen";
   return (
     <View style={styles.optionGroup}>
       <Text style={styles.fieldLabel}>{title}</Text>
@@ -380,7 +380,7 @@ function OptionGroup({
         style={[styles.selectorButton, disabled && styles.dimmed]}>
         <View style={styles.selectorCopy}>
           <Text style={styles.selectorValue}>{selectedLabel}</Text>
-          <Text style={styles.selectorHint}>{open ? 'إخفاء الخيارات' : 'اختيار أو تغيير'}</Text>
+          <Text style={styles.selectorHint}>{open ? "Opties verbergen" : "Kiezen of wijzigen"}</Text>
         </View>
         <Icon
           name={open ? 'chevron-up' : 'chevron-down'}
@@ -487,7 +487,7 @@ export default function FirmwareFlasherScreen({
 
   const [operation, setOperation] = useState<Operation>('idle');
   const [progress, setProgress] = useState(0);
-  const [status, setStatus] = useState('اختر Target وإصداراً من الإنترنت أو حمّل ملفاً من الجهاز.');
+  const [status, setStatus] = useState("Kies een Target en een online versie, of laad een lokaal bestand.");
   const [logLines, setLogLines] = useState<readonly string[]>([]);
   const [buildKey, setBuildKey] = useState<string | null>(null);
   const [buildLogText, setBuildLogText] = useState<string | null>(null);
@@ -523,7 +523,7 @@ export default function FirmwareFlasherScreen({
   const appendLog = useCallback((line: string) => {
     const clean = sanitizeUserVisibleText(line.trim());
     if (!clean) return;
-    setLogLines(previous => [`${new Date().toLocaleTimeString('ar')} — ${clean}`, ...previous].slice(0, MAX_LOG_LINES));
+    setLogLines(previous => [`${new Date().toLocaleTimeString('nl-NL')} — ${clean}`, ...previous].slice(0, MAX_LOG_LINES));
   }, []);
 
   /**
@@ -537,9 +537,9 @@ export default function FirmwareFlasherScreen({
     const diagnostics = sanitizeUserVisibleText(errorMessage(error));
     setOperation('error');
     setStatus(message);
-    appendLog(`خطأ: ${message}`);
+    appendLog(`Fout: ${message}`);
     if (diagnostics.length > 0 && diagnostics !== message) {
-      appendLog(`تفاصيل تشخيصية: ${diagnostics}`);
+      appendLog(`Diagnostiek: ${diagnostics}`);
     }
   }, [appendLog, t]);
 
@@ -653,7 +653,7 @@ export default function FirmwareFlasherScreen({
     setSelectedDfuId(previous => dfu.some(device => device.deviceId === previous)
       ? previous
       : dfu.length === 1 ? dfu[0].deviceId : null);
-    appendLog(`اكتشاف USB: ${supported.length} serial و${dfu.length} DFU.`);
+    appendLog(`Ontdek USB: ${supported.length} serial en ${dfu.length} DFU.`);
   }, [appendLog, client]);
 
   /**
@@ -730,7 +730,7 @@ export default function FirmwareFlasherScreen({
         if (!mounted.current || controller.signal.aborted) return;
         setTargets(loadedTargets);
         setTargetsLoadState('ready');
-        appendLog(`تم تحميل ${loadedTargets.length} Target من المصدر الرسمي.`);
+        appendLog(`${loadedTargets.length} Target is gedownload van de officiële bron.`);
       })
       .catch(error => {
         if (!mounted.current || controller.signal.aborted) return;
@@ -738,8 +738,8 @@ export default function FirmwareFlasherScreen({
         const message = errorMessage(error);
         setTargetsLoadState('error');
         setTargetsLoadError(message);
-        setStatus(`تعذر تحميل القائمة عبر الإنترنت؛ المسار المحلي ما زال متاحاً. ${message}`);
-        appendLog(`تعذر تحديث قائمة Targets: ${message}`);
+        setStatus(`De online lijst kon niet worden geladen. De lokale werkwijze blijft beschikbaar. ${message}`);
+        appendLog(`De Target-lijst kon niet worden bijgewerkt: ${message}`);
       });
   }, [appendLog, buildApi]);
 
@@ -747,7 +747,7 @@ export default function FirmwareFlasherScreen({
     mounted.current = true;
     loadTargetCatalog();
     refreshDevices().catch(error => {
-      if (mounted.current) appendLog(`تعذر اكتشاف USB: ${errorMessage(error)}`);
+      if (mounted.current) appendLog(`USB-apparaten zoeken is mislukt: ${errorMessage(error)}`);
     });
     const unsubscribeAttach = client.onDeviceAttached(() => {
       refreshDevices().catch(error => appendLog(errorMessage(error)));
@@ -798,7 +798,7 @@ export default function FirmwareFlasherScreen({
         setReleases([]);
         setReleasesLoadState('error');
         setReleasesLoadError(message);
-        setStatus(`تعذر تحميل إصدارات ${selectedTarget}: ${message}`);
+        setStatus(`Versies ${selectedTarget}: ${message} niet te downloaden`);
       });
     return () => controller.abort();
   }, [buildApi, selectedTarget]);
@@ -870,7 +870,7 @@ export default function FirmwareFlasherScreen({
       setBuildOptionsLoadState(optionsError === null ? 'ready' : 'error');
       setBuildOptionsLoadError(optionsError);
       if (optionsError !== null) {
-        appendLog(`تعذر تحميل خيارات Cloud Build؛ Core Build ما زال متاحاً: ${optionsError}`);
+        appendLog(`Cloud Build-opties konden niet worden geladen; Core Build blijft beschikbaar: ${optionsError}`);
       }
       setCoreBuild(!detail.cloudBuild || !hasCloudOptions);
       setRadioProtocol(defaultValue(options.radioProtocols));
@@ -882,11 +882,11 @@ export default function FirmwareFlasherScreen({
         ? detail.configuration
         : null;
       setConfigurationLines(configuration);
-      setConfigurationLabel(configuration ? `الإعداد الافتراضي لـ ${detail.target}` : null);
+      setConfigurationLabel(configuration ? `De standaard ${detail.target}.` : null);
       setUnstableConfirmed(false);
       setExpertMode(false);
       setGeneralOptionsExpanded(false);
-      appendLog(`تفاصيل ${selectedTarget} / ${selectedRelease} جاهزة.`);
+      appendLog(`Details ${selectedTarget} / ${selectedRelease} klaar.`);
     }).catch(error => {
       if (controller.signal.aborted) return;
       const message = errorMessage(error);
@@ -894,8 +894,8 @@ export default function FirmwareFlasherScreen({
       setDetailLoadState('error');
       setDetailLoadError(message);
       setBuildOptionsLoadState('error');
-      setBuildOptionsLoadError('لم تُحمّل الخيارات لأن تفاصيل الإصدار لم تكتمل.');
-      setStatus(`تعذر تحميل تفاصيل البناء: ${message}`);
+      setBuildOptionsLoadError("De opties zijn niet geladen omdat de release details nog niet voltooid zijn.");
+      setStatus(`Buildgegevens konden niet worden geladen: ${message}`);
     });
     return () => controller.abort();
   }, [appendLog, buildApi, selectedRelease, selectedTarget]);
@@ -915,7 +915,7 @@ export default function FirmwareFlasherScreen({
         setCommit(previous => items.some(item => item.sha === previous) ? previous : '');
       })
       .catch(error => {
-        if (!controller.signal.aborted) appendLog(`تعذر تحميل Commits: ${errorMessage(error)}`);
+        if (!controller.signal.aborted) appendLog(`Commits: ${errorMessage(error)} kan niet worden geladen.`);
       });
     return () => controller.abort();
   }, [appendLog, buildApi, targetDetail]);
@@ -951,9 +951,9 @@ export default function FirmwareFlasherScreen({
   const releaseChannelChoices = useMemo(() => {
     const available = new Set(releases.map(release => release.channel));
     return ([
-      {value: 'stable', label: 'Stable / مستقر'},
+      {value: 'stable', label: "Stable / stabiel"},
       {value: 'candidate', label: 'Release Candidate'},
-      {value: 'development', label: 'Development / تطويري'},
+      {value: 'development', label: "Development / ontwikkelversie"},
     ] as const).filter(choice => available.has(choice.value));
   }, [releases]);
   const selectedReleaseInfo = useMemo(
@@ -979,7 +979,7 @@ export default function FirmwareFlasherScreen({
   );
   const loadFirmwareBytes = useCallback(async (filename: string, bytes: Uint8Array) => {
     setOperation('loading');
-    setStatus('يجري التحقق البنيوي من ملف Firmware…');
+    setStatus("Structuur van het firmwarebestand controleren…");
     await afterInteractions();
     const parsed = parseFirmwareFile(filename, bytes);
     if (!mounted.current) return;
@@ -987,8 +987,8 @@ export default function FirmwareFlasherScreen({
     setHexMethod(parsed.kind === 'HEX' ? 'dfu' : 'serial');
     setOperation('idle');
     setProgress(0);
-    setStatus(`الملف صالح: ${firmwareFilenameLabel(parsed.filename)}`);
-    appendLog(`نجح تحقق ${parsed.kind}: ${firmwareDescription(parsed)}.`);
+    setStatus(`Het bestand is geldig: ${firmwareFilenameLabel(parsed.filename)}`);
+    appendLog(`${parsed.kind}: ${firmwareDescription(parsed)} is een succes.`);
     setStep('flash');
   }, [appendLog]);
 
@@ -998,10 +998,10 @@ export default function FirmwareFlasherScreen({
       const selection = await client.pickFirmwareFile();
       if (selection === null) return;
       setOperation('loading');
-      setStatus('فك ترميز ملف Firmware والتحقق منه…');
+      setStatus("Firmwarebestand decoderen en verifiëren…");
       await afterInteractions();
       const bytes = await base64ToBytesAsync(selection.dataBase64);
-      if (bytes.length !== selection.sizeBytes) throw new OperatorMessageError({key: 'flasherScreen.e01'}, 'حجم ملف Firmware لا يطابق بياناته المستلمة.');
+      if (bytes.length !== selection.sizeBytes) throw new OperatorMessageError({key: 'flasherScreen.e01'}, "De grootte van het firmwarebestand wijkt af van de ontvangen gegevens.");
       await loadFirmwareBytes(selection.name, bytes);
     } catch (error) {
       setFailure(error);
@@ -1013,12 +1013,12 @@ export default function FirmwareFlasherScreen({
       const selection = await client.pickFirmwareFile();
       if (selection === null) return;
       if (selection.sizeBytes > MAX_UNIFIED_CONFIG_BYTES) {
-        throw new OperatorMessageError({key: 'flasherScreen.e02'}, 'ملف Unified Config أكبر من الحد الآمن 256 KiB.');
+        throw new OperatorMessageError({key: 'flasherScreen.e02'}, "Unified Config is groter dan de veilige limiet van 256 KiB.");
       }
       setOperation('loading');
-      setStatus('فك ترميز Unified Config والتحقق منه…');
+      setStatus("Unified Config decoderen en verifiëren…");
       const bytes = await base64ToBytesAsync(selection.dataBase64);
-      if (bytes.length !== selection.sizeBytes) throw new OperatorMessageError({key: 'flasherScreen.e03'}, 'حجم Unified Config لا يطابق بياناته المستلمة.');
+      if (bytes.length !== selection.sizeBytes) throw new OperatorMessageError({key: 'flasherScreen.e03'}, "De grootte van Unified Config wijkt af van de ontvangen gegevens.");
       let text = '';
       for (let offset = 0; offset < bytes.length; offset += 0x8000) {
         text += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
@@ -1027,8 +1027,8 @@ export default function FirmwareFlasherScreen({
       setConfigurationLines(lines);
       setConfigurationLabel(firmwareFilenameLabel(selection.name));
       setOperation('idle');
-      setStatus(`Unified Config صالح: ${firmwareFilenameLabel(selection.name)}. سيُدخل في منطقة Custom Defaults عند تفليش HEX.`);
-      appendLog(`تم تحميل Unified Config محلي (${lines.length} سطراً).`);
+      setStatus(`Unified Config geldig: ${firmwareFilenameLabel(selection.name)}. De configuratie wordt bij het flashen van HEX in het Custom Defaults-gebied geplaatst.`);
+      appendLog(`Lokale Unified Config geladen (${lines.length} regels).`);
     } catch (error) {
       setFailure(error);
     }
@@ -1037,13 +1037,13 @@ export default function FirmwareFlasherScreen({
   const clearConfiguration = useCallback(() => {
     setConfigurationLines(null);
     setConfigurationLabel(null);
-    setStatus('أزيل Unified Config؛ سيُفلش Firmware دون Custom Defaults مضمّنة.');
+    setStatus("Unified Config verwijderd. De firmware wordt zonder ingebedde Custom Defaults geflasht.");
   }, []);
 
   const buildRemoteFirmware = useCallback(async () => {
     if (targetDetail === null) return;
     if (!coreBuild && buildOptions.osdProtocols.length > 0 && !osdProtocol && !osdOmissionConfirmed) {
-      setFailure(new Error('اختر بروتوكول OSD أو أكّد صراحة متابعة Cloud Build بدونه.'));
+      setFailure(new Error("Kies een OSD-protocol of bevestig expliciet dat Cloud Build zonder OSD mag doorgaan."));
       return;
     }
     const controller = new AbortController();
@@ -1063,7 +1063,7 @@ export default function FirmwareFlasherScreen({
         customDefines: customDefines.split(/\s+/),
         commit,
       });
-      appendLog(`طلب Build: ${request.options.join(', ')}.`);
+      appendLog(`Build: ${request.options.join(', ')} besteld.`);
       const result = await cloudBuild.buildAndDownload(request, update => {
         if (!mounted.current) return;
         if (update.key) setBuildKey(update.key);
@@ -1071,7 +1071,7 @@ export default function FirmwareFlasherScreen({
       }, controller.signal);
       const resolvedConfiguration = result.configuration ?? targetDetail.configuration;
       setConfigurationLines(resolvedConfiguration ?? null);
-      setConfigurationLabel(resolvedConfiguration ? `إعداد Build لـ ${targetDetail.target}` : null);
+      setConfigurationLabel(resolvedConfiguration ? `Build voor ${targetDetail.target}.` : null);
       await loadFirmwareBytes(result.response.file, result.firmware);
     } catch (error) {
       if (mounted.current) setFailure(error);
@@ -1101,7 +1101,7 @@ export default function FirmwareFlasherScreen({
     const controller = new AbortController();
     operationController.current = controller;
     setOperation('detecting');
-    setStatus('التعرف على Flight Controller عبر MSP…');
+    setStatus("Vluchtcontroller via MSP identificeren…");
     try {
       // Enumerate at the moment of the action. Android can assign a new
       // deviceId between the last rendered list and this press; reusing the
@@ -1112,22 +1112,22 @@ export default function FirmwareFlasherScreen({
       if (!chosen) {
         throw devices.length > 1
           ? new FirmwareDetectionError(
-              'اختر جهاز USB واحداً يدوياً قبل التعرف التلقائي.',
+              "Kies handmatig een USB-apparaat voordat u automatisch laat detecteren.",
               undefined,
               {key: 'flasherScreen.e26'},
             )
           : new FirmwareDetectionError(
-              'لم يُعثر على Flight Controller تسلسلي مدعوم.',
+              "Geen vluchtcontroller gevonden.",
               undefined,
               {key: 'flasherScreen.e27'},
             );
       }
       if (selectedPortIndex < 0 || selectedPortIndex >= chosen.portCount) {
-        throw new FirmwareDetectionError('منفذ USB serial المحدد غير صالح؛ اختر المنفذ من القائمة ثم أعد المحاولة.', undefined, {key: 'flasherScreen.e04'});
+        throw new FirmwareDetectionError("Ongeldige USB-seriële poort. Kies een poort uit de lijst en probeer het opnieuw.", undefined, {key: 'flasherScreen.e04'});
       }
       if (chosen.deviceId !== selectedSerialId) {
         setSelectedSerialId(chosen.deviceId);
-        appendLog('تغيّر معرّف USB؛ أُعيد ربط المتحكم الوحيد قبل التعرف التلقائي.');
+        appendLog("De USB-identificatie is veranderd. De enige controller is opnieuw aangesloten voor automatische identificatie.");
       }
       const selection = {
         deviceId: chosen.deviceId,
@@ -1151,8 +1151,8 @@ export default function FirmwareFlasherScreen({
           setSourceMode('online');
         }
         setStatus(catalogMatch
-          ? `تم التعرف واختيار ${catalogMatch.target}.`
-          : `تم التعرف على ${target}، لكنه غير موجود في القائمة المحمّلة.`);
+          ? `${catalogMatch.target} herkend en geselecteerd.`
+          : `${target} is geïdentificeerd, maar niet op de downloadlijst.`);
         appendLog(`Auto detect: ${target} (${firmwareFamilyLabel(identity.firmware.knownFamily)}).`);
       } finally {
         await detected.release();
@@ -1181,11 +1181,11 @@ export default function FirmwareFlasherScreen({
     try {
       const log = await buildApi.loadBuildLog(buildKey);
       setBuildLogText(
-        sanitizeUserVisibleText(log.trim() || 'سجل Build فارغ.'),
+        sanitizeUserVisibleText(log.trim() || "Het Build-record is leeg."),
       );
     } catch (error) {
       setBuildLogText(
-        `تعذر تحميل سجل Build: ${sanitizeUserVisibleText(errorMessage(error))}`,
+        `Build: ${sanitizeUserVisibleText(errorMessage(error))} record niet te downloaden.`,
       );
     } finally {
       setBuildLogLoading(false);
@@ -1201,20 +1201,20 @@ export default function FirmwareFlasherScreen({
         if (dfu.length > 0) {
           throw new OperatorMessageError(
             {key: 'flasherScreen.e28'},
-            'الجهاز متصل في وضع DFU بالفعل، وليس Serial. فعّل «بدون تسلسل إعادة تشغيل»، اختر جهاز DFU، وأكّد Target يدوياً.',
+            "Het apparaat staat in DFU-modus, niet in seriële modus. Kies DFU en bevestig het Target handmatig.",
           );
         }
       }
       throw devices.length > 1
-        ? new OperatorMessageError({key: 'flasherScreen.e29'}, 'اختر جهاز serial واحداً يدوياً قبل المتابعة.')
-        : new OperatorMessageError({key: 'flasherScreen.e30'}, 'لم يُعثر على جهاز serial المحدد.');
+        ? new OperatorMessageError({key: 'flasherScreen.e29'}, "Kies handmatig een serieel apparaat om door te gaan.")
+        : new OperatorMessageError({key: 'flasherScreen.e30'}, "Het seriële apparaat is niet gevonden.");
     }
     if (selectedPortIndex < 0 || selectedPortIndex >= chosen.portCount) {
-      throw new OperatorMessageError({key: 'flasherScreen.e05'}, 'رقم منفذ serial المحدد غير صالح.');
+      throw new OperatorMessageError({key: 'flasherScreen.e05'}, "Ongeldig nummer voor de seriële poort.");
     }
     if (chosen.deviceId !== selectedSerialId) {
       setSelectedSerialId(chosen.deviceId);
-      appendLog('تغيّر معرّف USB بعد إعادة التعداد؛ أُعيد ربط الجهاز الوحيد المتصل بأمان.');
+      appendLog("De USB-identificatie verandert na het opnieuw tellen; Ik heb het enige veilig verbonden apparaat opnieuw aangesloten.");
     }
     return chosen;
   }, [appendLog, client, selectedPortIndex, selectedSerialId]);
@@ -1235,7 +1235,7 @@ export default function FirmwareFlasherScreen({
     const controller = new AbortController();
     operationController.current = controller;
     setOperation('saving');
-    setStatus('اختر مكان حفظ Firmware…');
+    setStatus("Kies waar u de firmware wilt opslaan…");
     try {
       const saved = await abortable(
         client.saveFirmwareFile(
@@ -1246,13 +1246,13 @@ export default function FirmwareFlasherScreen({
         controller.signal,
       );
       setOperation(saved ? 'success' : 'idle');
-      setStatus(saved ? 'تم حفظ Firmware بنجاح.' : 'أُلغيَ حفظ Firmware دون تغيير الملف.');
-      if (saved) appendLog(`حُفظ ${firmwareFilenameLabel(firmware.filename)}.`);
+      setStatus(saved ? "Firmware is succesvol opgeslagen." : "Opslaan van firmware geannuleerd. Het bestand is niet gewijzigd.");
+      if (saved) appendLog(`${firmwareFilenameLabel(firmware.filename)} is opgeslagen.`);
     } catch (error) {
       if (controller.signal.aborted) {
         // The operator's own cancel is not a failure banner.
         setOperation('idle');
-        setStatus('أُلغيَ حفظ Firmware.');
+        setStatus("Opslaan van firmware geannuleerd.");
       } else {
         setFailure(error);
       }
@@ -1268,26 +1268,26 @@ export default function FirmwareFlasherScreen({
     const shouldBackup = backupMode === 'always' || (backupMode === 'ask' && backupThisRun);
     if (!shouldBackup) return null;
     setOperation('backing-up');
-    setStatus('إنشاء نسخة CLI بـ diff all قبل المسح…');
+    setStatus("CLI-back-up maken met diff all vóór het wissen…");
     const backup = await cliBackup.capture(device.deviceId, selectedPortIndex, signal);
     const filename = `fpv-arbcon-backup-${selectedTarget || 'fc'}-${Date.now()}.txt`;
     // Same reasoning as saveCurrentFirmware: a save dialog has no honest
     // deadline, so the flash's own cancel is what ends the wait.
     const saved = await abortable(cliBackup.saveBackup(filename, backup), signal);
-    if (!saved) throw new OperatorMessageError({key: 'flasherScreen.e06'}, 'أُلغيَ حفظ النسخة الاحتياطية؛ لن يبدأ المسح.');
-    appendLog(`حُفظت نسخة CLI (${backup.length} حرفاً) قبل التفليش.`);
+    if (!saved) throw new OperatorMessageError({key: 'flasherScreen.e06'}, "Back-up geannuleerd. Wissen is niet gestart.");
+    appendLog(`CLI-back-up opgeslagen (${backup.length} tekens) vóór het flashen.`);
     return backup;
   }, [appendLog, backupMode, backupThisRun, cliBackup, selectedPortIndex, selectedTarget]);
 
   const validateSafety = useCallback(() => {
-    if (!firmware) throw new OperatorMessageError({key: 'flasherScreen.e07'}, 'حمّل Firmware صالحاً أولاً.');
-    if (!propsRemoved) throw new OperatorMessageError({key: 'flasherScreen.e08'}, 'أكّد إزالة المراوح قبل التفليش.');
-    if (!usbPowerOnly) throw new OperatorMessageError({key: 'flasherScreen.e09'}, 'أكّد فصل البطارية والاعتماد على USB فقط.');
+    if (!firmware) throw new OperatorMessageError({key: 'flasherScreen.e07'}, "Kies eerst een geldig firmwarebestand.");
+    if (!propsRemoved) throw new OperatorMessageError({key: 'flasherScreen.e08'}, "Bevestig dat de propellers verwijderd zijn voordat u flasht.");
+    if (!usbPowerOnly) throw new OperatorMessageError({key: 'flasherScreen.e09'}, "Bevestig dat de accu losgekoppeld is en alleen USB voeding levert.");
     if (selectedReleaseInfo?.channel === 'development' && !unstableConfirmed) {
-      throw new OperatorMessageError({key: 'flasherScreen.e10'}, 'الإصدار التطويري يحتاج إقراراً صريحاً بالمخاطر.');
+      throw new OperatorMessageError({key: 'flasherScreen.e10'}, "Een ontwikkelversie vereist expliciete aanvaarding van het risico.");
     }
     if (noReboot && !manualTargetConfirmed) {
-      throw new OperatorMessageError({key: 'flasherScreen.e11'}, 'في وضع «بدون إعادة تشغيل» يجب تأكيد Target يدوياً.');
+      throw new OperatorMessageError({key: 'flasherScreen.e11'}, "Het Target moet handmatig worden bevestigd.");
     }
   }, [firmware, manualTargetConfirmed, noReboot, propsRemoved, selectedReleaseInfo, unstableConfirmed, usbPowerOnly]);
 
@@ -1304,15 +1304,15 @@ export default function FirmwareFlasherScreen({
   ): Promise<Exclude<FlashRestoreTruth['kind'], 'FAILED'>> => {
     if (!backup || !restoreAfterFlash) return 'SKIPPED';
     setOperation('restoring');
-    setStatus('انتظار عودة Flight Controller ثم استعادة إعدادات CLI…');
+    setStatus("Wachten op de vluchtcontroller en daarna de CLI-instellingen herstellen…");
     const device = await bootloader.waitForOneSerialDevice(30_000, signal);
     const result = await cliBackup.restore(device.deviceId, 0, backup, signal, (done, total) => {
-      reportProgress(total > 0 ? 95 + done * 4 / total : 95, `استعادة CLI: ${done}/${total}`);
+      reportProgress(total > 0 ? 95 + done * 4 / total : 95, `CLI: ${done} / ${total} herstellen`);
     });
     if (result.errors.length > 0) {
-      throw new OperatorMessageError({key: 'flasherScreen.e12', values: {v0: result.errors.length}}, `لم تُرسل save لأن ${result.errors.length} أوامر CLI فشلت.`);
+      throw new OperatorMessageError({key: 'flasherScreen.e12', values: {v0: result.errors.length}}, `save is niet verzonden omdat ${result.errors.length} CLI-opdrachten zijn mislukt.`);
     }
-    appendLog(`استُعيدت ${result.commandCount} أوامر CLI ثم أُرسلت save.`);
+    appendLog(`${result.commandCount} CLI-opdrachten hersteld; daarna is save verzonden.`);
     return 'SUCCEEDED';
   }, [appendLog, bootloader, cliBackup, reportProgress, restoreAfterFlash]);
 
@@ -1326,11 +1326,11 @@ export default function FirmwareFlasherScreen({
     if (noReboot) {
       const devices = await client.listDfuDevices();
       const chosen = resolveDfuSelection(devices, selectedDfuId);
-      if (!chosen) throw new OperatorMessageError({key: 'flasherScreen.e13'}, 'اختر جهاز DFU واحداً؛ لن يخمّن التطبيق جهاز التفليش.');
+      if (!chosen) throw new OperatorMessageError({key: 'flasherScreen.e13'}, "Kies één DFU-apparaat. De app kiest het flashdoel niet op goed geluk.");
       if (chosen.deviceId !== selectedDfuId) setSelectedDfuId(chosen.deviceId);
       dfu = chosen;
     } else {
-      if (serial === null) throw new OperatorMessageError({key: 'flasherScreen.e14'}, 'لم يُحدد جهاز serial لإعادة التشغيل إلى DFU.');
+      if (serial === null) throw new OperatorMessageError({key: 'flasherScreen.e14'}, "Geen serieel apparaat gekozen voor de herstart naar DFU.");
       const detected = await bootloader.detectFlightController(signal, {
         deviceId: serial.deviceId,
         portIndex: selectedPortIndex,
@@ -1339,7 +1339,7 @@ export default function FirmwareFlasherScreen({
         if (!targetMismatchOverride && !detected.targetMatches(selectedTarget)) {
           const actual = describeFlightControllerHardware(detected.identity.board);
           setDetectedTarget(actual);
-          throw new OperatorMessageError({key: 'flasherScreen.e15', values: {v0: selectedTarget, v1: actual}}, `Target المحدد ${selectedTarget} لا يطابق ${actual}. فعّل تجاوز عدم التطابق فقط بعد التحقق اليدوي.`);
+          throw new OperatorMessageError({key: 'flasherScreen.e15', values: {v0: selectedTarget, v1: actual}}, `Target ${selectedTarget} komt niet overeen met ${actual}. Sta dit verschil alleen toe na handmatige controle.`);
         }
         await detected.rebootToBootloader(selectedTarget, targetMismatchOverride);
       } finally {
@@ -1347,7 +1347,7 @@ export default function FirmwareFlasherScreen({
          * obligation only when that transfer never happened. */
         if (detected.leaseState === 'HELD_BY_CALLER') await detected.release();
       }
-      setStatus('انتظار ظهور STM32 DFU…');
+      setStatus("Wachten op STM32 DFU…");
       try {
         dfu = await bootloader.waitForOneDfuDevice(20_000, signal);
       } catch (error) {
@@ -1381,7 +1381,7 @@ export default function FirmwareFlasherScreen({
       setBootloaderState('COMPLETED');
     }
     setOperation('flashing');
-    appendLog(`بدء DfuSe على deviceId ${dfu.deviceId}.`);
+    appendLog(`DfuSe op deviceId ${dfu.deviceId} starten.`);
     await client.flashDfuFirmware(dfu.deviceId, bytesToBase64(image.bytes), fullErase);
     return {completed: true, backup};
   }, [
@@ -1432,7 +1432,7 @@ export default function FirmwareFlasherScreen({
         if (!targetMismatchOverride && !detected.targetMatches(selectedTarget)) {
           const actual = describeFlightControllerHardware(detected.identity.board);
           setDetectedTarget(actual);
-          throw new OperatorMessageError({key: 'flasherScreen.e16', values: {v0: selectedTarget, v1: actual}}, `Target المحدد ${selectedTarget} لا يطابق ${actual}.`);
+          throw new OperatorMessageError({key: 'flasherScreen.e16', values: {v0: selectedTarget, v1: actual}}, `Target ${selectedTarget} komt niet overeen met ${actual}.`);
         }
         await detected.rebootToBootloader(selectedTarget, targetMismatchOverride);
       } finally {
@@ -1494,7 +1494,7 @@ export default function FirmwareFlasherScreen({
         if (!targetMismatchOverride && !detected.targetMatches(selectedTarget)) {
           const actual = describeFlightControllerHardware(detected.identity.board);
           setDetectedTarget(actual);
-          throw new OperatorMessageError({key: 'flasherScreen.e17', values: {v0: selectedTarget, v1: actual}}, `Target المحدد ${selectedTarget} لا يطابق ${actual}.`);
+          throw new OperatorMessageError({key: 'flasherScreen.e17', values: {v0: selectedTarget, v1: actual}}, `Target ${selectedTarget} komt niet overeen met ${actual}.`);
         }
       } finally {
         await detected.release();
@@ -1561,12 +1561,12 @@ export default function FirmwareFlasherScreen({
       setFlashResult({kind: 'UNCONFIRMED', reason, nextAction, recovery});
       setOperation('unconfirmed');
       setStatus(reason);
-      appendLog(`لم يتأكد اكتمال التفليش: ${reason}`);
+      appendLog(`Voltooiing van het flashen niet bevestigd: ${reason}`);
     } else {
       setFlashResult({kind: 'FAILED', reason, recovery});
       setOperation('error');
       setStatus(reason);
-      appendLog(`خطأ: ${reason}`);
+      appendLog(`Fout: ${reason}`);
     }
     if (recovery !== undefined) appendLog(recovery);
     /**
@@ -1580,7 +1580,7 @@ export default function FirmwareFlasherScreen({
     }
     /* The engine's own words are kept, as diagnostics, never as the reason. */
     if (code !== undefined && diagnostics.length > 0) {
-      appendLog(`تفاصيل تشخيصية: ${diagnostics}`);
+      appendLog(`Diagnostiek: ${diagnostics}`);
     }
   }, [appendLog, t]);
 
@@ -1595,8 +1595,8 @@ export default function FirmwareFlasherScreen({
     signal: AbortSignal,
     attempt: number,
   ) => {
-    reportProgress(100, 'اكتملت الكتابة والتحقق بنجاح.', true, true);
-    appendLog('اكتملت كتابة Firmware والتحقق بالقراءة الراجعة.');
+    reportProgress(100, "Schrijven en verifiëren voltooid.", true, true);
+    appendLog("Firmware geschreven en door teruglezen geverifieerd.");
     let restore: FlashRestoreTruth;
     try {
       restore = {kind: await restoreBackupAfterFlash(backup, signal)};
@@ -1614,15 +1614,15 @@ export default function FirmwareFlasherScreen({
             ? t(flashReasonLabelKey(restoreCode), {defaultValue: rawDetail})
             : rawDetail,
       };
-      appendLog(`فشلت استعادة إعدادات CLI بعد تفليش ناجح: ${restore.detail}`);
+      appendLog(`Flashen geslaagd, maar CLI-instellingen herstellen is mislukt: ${restore.detail}`);
     }
     if (!mounted.current || flashAttemptSerial.current !== attempt) return;
     setFlashResult({kind: 'SUCCESS', restore});
     setOperation('success');
     setStatus(
       restore.kind === 'FAILED'
-        ? 'نجح تثبيت Firmware، لكن فشلت استعادة الإعدادات.'
-        : 'تمت كتابة Firmware والتحقق منه بنجاح.',
+        ? "Firmware geïnstalleerd, maar de instellingen zijn niet hersteld."
+        : "Firmware geschreven en geverifieerd.",
     );
     await refreshDevices().catch(() => undefined);
   }, [appendLog, refreshDevices, reportProgress, restoreBackupAfterFlash, t]);
@@ -1638,14 +1638,14 @@ export default function FirmwareFlasherScreen({
     if (!firmware) return;
     if (firmware.kind === 'UF2') {
       await saveCurrentFirmware();
-      setStatus('UF2 صالح ومحفوظ. انقله إلى قرص bootloader الظاهر في Android Files؛ لا يمكن تفليشه كـ DfuSe.');
+      setStatus("UF2 is geldig en opgeslagen. Kopieer het bestand naar de bootloaderschijf in Android Bestanden. UF2 kan niet via DfuSe worden geflasht.");
       return;
     }
     let selectedFirmware = firmware;
     if (firmware.kind === 'HEX' && configurationLines !== null) {
       try {
         selectedFirmware = applyCustomDefaultsToFirmware(firmware, configurationLines);
-        appendLog(`أُدخل Unified Config (${configurationLines.length} سطراً) في منطقة Custom Defaults المعلنة.`);
+        appendLog(`Unified Config (lijn ${configurationLines.length}) is ingevoerd in het aangegeven gebied Custom Defaults.`);
       } catch (error) {
         setFailure(error);
         return;
@@ -1664,7 +1664,7 @@ export default function FirmwareFlasherScreen({
     lastProgressAt.current = Date.now();
     setProgress(0);
     setOperation('flashing');
-    setStatus('بدء عملية Firmware المتحقَّق منها…');
+    setStatus("Het begin van de geverifieerde Firmware...");
     try {
       let outcome: FlashMethodOutcome;
       if (selectedFirmware.kind === 'HEX') {
@@ -1804,13 +1804,13 @@ export default function FirmwareFlasherScreen({
       if (settledAs === 'restoring') {
         // The firmware truth was recorded before restore began; only the
         // restore is being settled here.
-        appendLog('انقطع تقدّم استعادة الإعدادات نهائياً بعد تفليش ناجح؛ جُمّدت الاستعادة.');
+        appendLog("Het herstel van instellingen is definitief gestopt na succesvolle flashen; De restitusie is bevroren.");
         setFlashResult({
           kind: 'SUCCESS',
           restore: {kind: 'FAILED', detail: t('firmwareFlasher.restoreSilent')},
         });
         setOperation('success');
-        setStatus('نجح تثبيت Firmware، لكن فشلت استعادة الإعدادات.');
+        setStatus("Firmware geïnstalleerd, maar de instellingen zijn niet hersteld.");
         return;
       }
       client.cancelDfuFlash().catch(() => undefined);
@@ -1819,7 +1819,7 @@ export default function FirmwareFlasherScreen({
         // pending: a plain, honest failure and a safe restart.
         lastFlashErrorCode.current = FLASH_CODE_NEVER_STARTED;
         const reason = t(flashReasonLabelKey(FLASH_CODE_NEVER_STARTED));
-        appendLog(`خطأ: ${reason}`);
+        appendLog(`Fout: ${reason}`);
         setFlashResult({kind: 'FAILED', reason});
         setOperation('error');
         setStatus(reason);
@@ -1827,7 +1827,7 @@ export default function FirmwareFlasherScreen({
       }
       lastFlashErrorCode.current = FLASH_CODE_UI_BACKSTOP;
       const reason = t(flashReasonLabelKey(FLASH_CODE_UI_BACKSTOP));
-      appendLog(`لم يتأكد اكتمال التفليش: ${reason}`);
+      appendLog(`Voltooiing van het flashen niet bevestigd: ${reason}`);
       setFlashResult({
         kind: 'UNCONFIRMED',
         reason,
@@ -1876,7 +1876,7 @@ export default function FirmwareFlasherScreen({
     if (!resumable.resumable) {
       setBootloaderState('FAILED_SAFELY');
       setFailure(
-        new Error('بدأت الكتابة بالفعل؛ لا يجوز استئنافها. افصل وأعد المحاولة من البداية.'),
+        new Error("Ik ben al begonnen met schrijven. Ze mag niet herhaald worden. Maak het los en probeer het opnieuw."),
       );
       return;
     }
@@ -1908,7 +1908,7 @@ export default function FirmwareFlasherScreen({
         lastFlashErrorCode.current = undefined;
         lastProgressAt.current = Date.now();
         setOperation('flashing');
-        appendLog('استُؤنفت العملية المعلّقة بعد منح إذن المتصفح؛ لم يُعَد إرسال أمر إعادة التشغيل.');
+        appendLog("De ophangende operatie is hervat nadat de browser toestemming heeft gegeven; Het restartbevel is niet meer verzonden.");
         try {
           await client.flashDfuFirmware(
             (device as DfuIdentity & {deviceId: number}).deviceId,
@@ -2147,14 +2147,14 @@ export default function FirmwareFlasherScreen({
     try {
       const devices = await client.listDfuDevices();
       const chosen = resolveDfuSelection(devices, selectedDfuId);
-      if (!chosen) throw new OperatorMessageError({key: 'flasherScreen.e18'}, 'اختر جهاز DFU واحداً للخروج الآمن.');
+      if (!chosen) throw new OperatorMessageError({key: 'flasherScreen.e18'}, "Kies een DFU-apparaat om de modus veilig te verlaten.");
       if (chosen.deviceId !== selectedDfuId) setSelectedDfuId(chosen.deviceId);
       setOperation('flashing');
-      setStatus('إرسال أمر الخروج من DFU…');
+      setStatus("Opdracht om DFU te verlaten verzenden…");
       await client.exitDfuMode(chosen.deviceId);
       setOperation('success');
-      setStatus('تم إرسال أمر الخروج من DFU.');
-      appendLog('Exit DFU مكتمل.');
+      setStatus("De opdracht om DFU te verlaten is verzonden.");
+      appendLog("Exit DFU voltooid.");
       await refreshDevices();
     } catch (error) {
       setFailure(error);
@@ -2163,22 +2163,22 @@ export default function FirmwareFlasherScreen({
 
   const unprotectDfu = useCallback(async () => {
     if (!readUnprotectConfirmed) {
-      setFailure(new Error('أكّد أولاً أن إزالة Read Protection ستمسح Flash بالكامل.'));
+      setFailure(new Error("Bevestig eerst dat het verwijderen van Read Protection het volledige flashgeheugen wist."));
       return;
     }
     try {
       const devices = await client.listDfuDevices();
       const chosen = resolveDfuSelection(devices, selectedDfuId);
-      if (!chosen) throw new OperatorMessageError({key: 'flasherScreen.e19'}, 'اختر جهاز DFU واحداً لإزالة Read Protection.');
+      if (!chosen) throw new OperatorMessageError({key: 'flasherScreen.e19'}, "Kies een DFU-apparaat om Read Protection te verwijderen.");
       if (chosen.deviceId !== selectedDfuId) setSelectedDfuId(chosen.deviceId);
       setOperation('flashing');
-      setStatus('إزالة Read Protection؛ لا تفصل USB حتى يعيد الجهاز التشغيل…');
-      appendLog('بدأ DFU read-unprotect؛ هذه العملية تمسح Flash بحكم STM32 ROM.');
+      setStatus("Read Protection verwijderen; USB moet niet worden ontkoppeld totdat de besturingsapparaat...");
+      appendLog("DFU begint read-unprotect; Dit proces verwijdert Flash via STM32 ROM..");
       await client.unprotectDfuDevice(chosen.deviceId);
       setOperation('success');
       setReadUnprotectConfirmed(false);
-      setStatus('أزيلت Read Protection. افصل اللوحة، أعد إدخال DFU، ثم نفّذ التفليش من جديد.');
-      appendLog('اكتمل read-unprotect مع reset/disconnect متوقع.');
+      setStatus("Read Protection. is verwijderd. Snijd het bord af, voer DFU opnieuw in en voer flashen opnieuw uit.");
+      appendLog("read-unprotect voltooid met reset/disconnect verwacht.");
       await refreshDevices().catch(() => undefined);
     } catch (error) {
       setFailure(error);
@@ -2192,24 +2192,24 @@ export default function FirmwareFlasherScreen({
       const selection = await client.pickFirmwareFile();
       if (selection === null) return;
       if (selection.sizeBytes > MAX_CLI_BACKUP_BYTES) {
-        throw new OperatorMessageError({key: 'flasherScreen.e20'}, 'ملف CLI أكبر من الحد الآمن 1 MiB.');
+        throw new OperatorMessageError({key: 'flasherScreen.e20'}, "Het CLI-bestand is groter dan de veilige limiet van 1 MiB.");
       }
       const bytes = await base64ToBytesAsync(selection.dataBase64);
-      if (bytes.length !== selection.sizeBytes) throw new OperatorMessageError({key: 'flasherScreen.e21'}, 'حجم ملف CLI لا يطابق بياناته المستلمة.');
+      if (bytes.length !== selection.sizeBytes) throw new OperatorMessageError({key: 'flasherScreen.e21'}, "De grootte van het CLI-bestand wijkt af van de ontvangen gegevens.");
       let text = '';
       for (const byte of bytes) {
-        if (byte > 127) throw new OperatorMessageError({key: 'flasherScreen.e22'}, 'ملف CLI يجب أن يكون ASCII.');
+        if (byte > 127) throw new OperatorMessageError({key: 'flasherScreen.e22'}, "Het CLI-bestand moet ASCII bevatten.");
         text += String.fromCharCode(byte);
       }
-      if (!isPlausibleCliBackup(text)) throw new OperatorMessageError({key: 'flasherScreen.e23'}, 'ملف CLI المختار غير صالح.');
+      if (!isPlausibleCliBackup(text)) throw new OperatorMessageError({key: 'flasherScreen.e23'}, "Het gekozen CLI-bestand is ongeldig.");
       const device = await requireOneSerial();
       setOperation('restoring');
       const result = await cliBackup.restore(device.deviceId, selectedPortIndex, text, controller.signal, (done, total) => {
-        reportProgress(total > 0 ? done * 100 / total : 0, `استعادة CLI: ${done}/${total}`);
+        reportProgress(total > 0 ? done * 100 / total : 0, `CLI: ${done} / ${total} herstellen`);
       });
-      if (result.errors.length > 0) throw new OperatorMessageError({key: 'flasherScreen.e24', values: {v0: result.errors.length}}, `فشل ${result.errors.length} أوامر؛ لم يُرسل save.`);
+      if (result.errors.length > 0) throw new OperatorMessageError({key: 'flasherScreen.e24', values: {v0: result.errors.length}}, `${result.errors.length}-opdrachten mislukken; save. is niet gestuurd.`);
       setOperation('success');
-      setStatus(`استُعيد ${result.commandCount} أوامر CLI بنجاح.`);
+      setStatus(`${result.commandCount} heeft de opdrachten van CLI succesvol teruggevonden.`);
     } catch (error) {
       setFailure(error);
     } finally {
@@ -2226,9 +2226,9 @@ export default function FirmwareFlasherScreen({
     return navigation?.addListener('beforeRemove', event => {
       event.preventDefault();
       Alert.alert(
-        'عملية Firmware قيد التنفيذ',
-        'ألغِ العملية من زر «إلغاء» وانتظر توقفها قبل مغادرة الشاشة.',
-        [{text: 'حسناً'}],
+        "Operatie Firmware wordt uitgevoerd.",
+        "Schakel de procedure uit van de 'Cancele' knop en wacht tot ze is gestopt voordat je het scherm verlaat.",
+        [{text: "OK"}],
       );
     });
   }, [isBusy, navigation]);
@@ -2242,12 +2242,12 @@ export default function FirmwareFlasherScreen({
         <View style={styles.modalRoot} testID="target-picker-modal">
           <View style={styles.modalHeader}>
             <View style={styles.flexOne}>
-              <Text style={styles.modalTitle}>اختيار Flight Controller</Text>
-              <Text style={styles.selectorHint}>ابحث باسم Target أو الشركة أو MCU</Text>
+              <Text style={styles.modalTitle}>{"Vluchtcontroller kiezen"}</Text>
+              <Text style={styles.selectorHint}>{"Zoek op Target, fabrikant of MCU"}</Text>
             </View>
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="إغلاق قائمة اللوحات"
+              accessibilityLabel={"De lijst van platen sluiten."}
               onPress={() => setTargetListOpen(false)}
               style={styles.modalClose}>
               <Text style={styles.modalCloseText}>×</Text>
@@ -2257,7 +2257,7 @@ export default function FirmwareFlasherScreen({
             value={targetQuery}
             onChangeText={setTargetQuery}
             autoFocus
-            placeholder="مثال: SPEEDYBEEF405V4"
+            placeholder={"Voorbeeld: SPEEDYBEEF405V4"}
             placeholderTextColor={colors.textMuted}
             style={styles.input}
             testID="target-search"
@@ -2265,14 +2265,14 @@ export default function FirmwareFlasherScreen({
           {targetsLoadState === 'loading' ? (
             <View style={styles.loadingRow}>
               <ActivityIndicator color={colors.accent} />
-              <Text style={styles.loadingText}>يجري تحميل قائمة اللوحات…</Text>
+              <Text style={styles.loadingText}>{"De lijst met printplaaten wordt geüpload."}</Text>
             </View>
           ) : null}
           {targetsLoadState === 'error' ? (
             <View style={styles.catalogRetry}>
               <FirmwareNotice
-                title="تعذر تحميل قائمة اللوحات"
-                text={targetsLoadError ?? 'تحقق من الإنترنت أو استخدم ملف Firmware محلياً.'}
+                title={"De printplaatenlijst kan niet worden geladen."}
+                text={targetsLoadError ?? "Zoek op het internet of gebruik het Firmware-bestand lokaal."}
                 tone="error"
               />
               {/* The sentence above offers a retry, so one exists. It
@@ -2280,7 +2280,7 @@ export default function FirmwareFlasherScreen({
                   discovery and the attach/detach subscriptions are not
                   involved in an HTTP failure and are not disturbed. */}
               <FirmwareButton
-                title="إعادة تحميل القائمة"
+                title={"Herladen van de lijst."}
                 tone="secondary"
                 size="compact"
                 onPress={loadTargetCatalog}
@@ -2312,13 +2312,13 @@ export default function FirmwareFlasherScreen({
                 style={[styles.targetRow, selectedTarget === item.target && styles.targetRowSelected]}>
                 <View style={styles.targetCopy}>
                   <Text style={styles.targetName}>{item.target}</Text>
-                  <Text style={styles.targetMeta}>{item.manufacturer ?? 'مصنّع غير معلن'} • {item.mcu ?? 'MCU غير معلن'}</Text>
+                  <Text style={styles.targetMeta}>{item.manufacturer ?? "Een onbekende fabrikant."} • {item.mcu ?? "MCU niet bekend."}</Text>
                 </View>
                 <Text style={styles.targetGroup}>{groupLabel(item.group)}</Text>
               </Pressable>
             )}
             ListEmptyComponent={targetsLoadState === 'ready'
-              ? <Text style={styles.emptyText}>لا توجد Targets مطابقة.</Text>
+              ? <Text style={styles.emptyText}>{"Er is geen Targets match."}</Text>
               : null}
           />
         </View>
@@ -2390,7 +2390,7 @@ export default function FirmwareFlasherScreen({
       <View style={styles.header}>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="العودة"
+          accessibilityLabel={"Terug"}
           accessibilityState={{disabled: isBusy}}
           disabled={isBusy}
           onPress={() => navigation?.goBack()}
@@ -2398,7 +2398,7 @@ export default function FirmwareFlasherScreen({
           <Icon name="chevron-back" size={24} color={colors.textPrimary} />
         </Pressable>
         <View style={styles.headerCopy}>
-          <Text style={styles.headerEyebrow}>أداة مستقلة وآمنة</Text>
+          <Text style={styles.headerEyebrow}>{"Een onafhankelijk en veilig instrument."}</Text>
           <Text style={styles.headerTitle}>Firmware Flasher</Text>
         </View>
         <View style={styles.formatPill}>
@@ -2414,7 +2414,7 @@ export default function FirmwareFlasherScreen({
           testID="firmware-step-board"
           onPress={() => setStep('board')}
           style={[styles.step, step === 'board' && styles.stepActive]}>
-          <Text style={[styles.stepText, step === 'board' && styles.stepTextActive]}>1  اللوحة والبناء</Text>
+          <Text style={[styles.stepText, step === 'board' && styles.stepTextActive]}>{"1 Printplaat en build"}</Text>
         </Pressable>
         <Pressable
           accessibilityRole="tab"
@@ -2423,7 +2423,7 @@ export default function FirmwareFlasherScreen({
           testID="firmware-step-flash"
           onPress={() => setStep('flash')}
           style={[styles.step, step === 'flash' && styles.stepActive]}>
-          <Text style={[styles.stepText, step === 'flash' && styles.stepTextActive]}>2  التحقق والتفليش</Text>
+          <Text style={[styles.stepText, step === 'flash' && styles.stepTextActive]}>{"2 verifiëren en flashen"}</Text>
         </Pressable>
       </View>
 
@@ -2434,46 +2434,46 @@ export default function FirmwareFlasherScreen({
         nestedScrollEnabled>
         {step === 'board' ? (
           <>
-            <FirmwareSection title="مصدر Firmware" caption="المساران يمران عبر نفس التحقق الصارم قبل السماح بالتفليش.">
+            <FirmwareSection title={"Firmwarebron"} caption={"De twee sporen gaan door dezelfde strenge controle voordat flashen wordt toegelaten."}>
               <FirmwareChoice
                 value={sourceMode}
                 disabled={isBusy}
                 testIDPrefix="firmware-source"
-                choices={[{value: 'online', label: 'Firmware الرسمي عبر الإنترنت'}, {value: 'local', label: 'ملف من الجهاز'}]}
+                choices={[{value: 'online', label: "Officiële firmware online"}, {value: 'local', label: "Lokaal bestand"}]}
                 onChange={setSourceMode}
               />
               {sourceMode === 'local' ? (
-                <FirmwareButton title="اختيار HEX أو UF2 أو BIN" onPress={pickLocalFirmware} disabled={isBusy} testID="pick-local-firmware" />
+                <FirmwareButton title={"Kies HEX of UF2 of BIN"} onPress={pickLocalFirmware} disabled={isBusy} testID="pick-local-firmware" />
               ) : null}
             </FirmwareSection>
 
-            <FirmwareSection title="Unified Config / Custom Defaults" caption="تُدخل الإعدادات داخل منطقة يعلنها HEX، ولا تكتب فوق Firmware عشوائياً.">
+            <FirmwareSection title="Unified Config / Custom Defaults" caption={"De instellingen worden in het door HEX aangegeven gebied geplaatst. De app schrijft ze niet op willekeurige firmwareadressen."}>
               <View style={styles.twoButtons}>
                 <View style={styles.flexOne}>
-                  <FirmwareButton title="اختيار Unified Config" onPress={pickLocalConfiguration} disabled={isBusy} tone="secondary" testID="pick-unified-config" />
+                  <FirmwareButton title={"Kies Unified Config"} onPress={pickLocalConfiguration} disabled={isBusy} tone="secondary" testID="pick-unified-config" />
                 </View>
                 <View style={styles.flexOne}>
-                  <FirmwareButton title="إزالة الإعداد" onPress={clearConfiguration} disabled={isBusy || configurationLines === null} tone="secondary" testID="clear-unified-config" />
+                  <FirmwareButton title={"Verwijder de setup."} onPress={clearConfiguration} disabled={isBusy || configurationLines === null} tone="secondary" testID="clear-unified-config" />
                 </View>
               </View>
               {configurationLines ? (
                 <FirmwareNotice
-                  title={configurationLabel ?? 'Unified Config صالح'}
-                  text={`${configurationLines.length} سطراً • سيُتحقق من مؤشري البداية والنهاية والتداخل قبل أي مسح.`}
+                  title={configurationLabel ?? "Unified Config is geldig."}
+                  text={`${configurationLines.length} regels • Begin- en eindmarkeringen en overlappende gebieden worden vóór het wissen gecontroleerd.`}
                   tone="success"
                 />
               ) : (
-                <FirmwareNotice title="بدون Custom Defaults" text="يمكن التفليش كما هو أو تحميل Unified Config محلياً." tone="info" />
+                <FirmwareNotice title={"Custom Defaults"} text={"U kunt zo flashen of een lokale Unified Config laden."} tone="info" />
               )}
             </FirmwareSection>
 
             {sourceMode === 'online' ? (
               <>
-                <FirmwareSection title="Flight Controller والـ Target" caption="اختر جهاز USB عند التعدد، أو استخدم التعرف التلقائي الذي يسأل اللوحة عن اسمها فعليًا.">
+                <FirmwareSection title={"Flight Controller en Target"} caption={"Kies bij meerdere USB-apparaten het juiste apparaat, of gebruik automatische identificatie om de printplaatnaam uit te lezen."}>
                   <View style={styles.twoButtons}>
                     <View style={styles.flexOne}>
                       <FirmwareButton
-                        title="تحديث أجهزة USB"
+                        title={"USB-apparaten vernieuwen"}
                         onPress={() => refreshDevices().catch(setFailure)}
                         disabled={isBusy}
                         tone="secondary"
@@ -2481,11 +2481,11 @@ export default function FirmwareFlasherScreen({
                       />
                     </View>
                     <View style={styles.flexOne}>
-                      <FirmwareButton title="التعرف التلقائي" onPress={autoDetect} disabled={isBusy} testID="auto-detect-fc" />
+                      <FirmwareButton title={"Automatisch identificeren"} onPress={autoDetect} disabled={isBusy} testID="auto-detect-fc" />
                     </View>
                   </View>
-                  {serialDevices.length > 0 ? <Text style={styles.fieldLabel}>جهاز USB المستخدم في Auto Detect</Text> : (
-                    <FirmwareNotice title="لا يوجد جهاز Serial" text="يمكنك اختيار Target يدوياً، أو توصيل Flight Controller ثم الضغط على تحديث." tone="info" />
+                  {serialDevices.length > 0 ? <Text style={styles.fieldLabel}>{"USB apparaat gebruikt in Auto Detect"}</Text> : (
+                    <FirmwareNotice title={"Geen seriële poort"} text={"Je kunt Target handmatig kiezen, of Flight Controller aansluiten en vervolgens op update klikken."} tone="info" />
                   )}
                   {serialDevices.map(device => (
                     <Pressable
@@ -2497,42 +2497,42 @@ export default function FirmwareFlasherScreen({
                       onPress={() => { setSelectedSerialId(device.deviceId); setSelectedPortIndex(0); }}
                       style={[styles.deviceRow, selectedSerialId === device.deviceId && styles.deviceRowSelected]}>
                       <Text style={styles.deviceName}>{deviceLabel(device)}</Text>
-                      <Text style={styles.deviceMeta}>{device.driverType} • {device.portCount} منفذ</Text>
+                      <Text style={styles.deviceMeta}>{device.driverType} • {device.portCount} {"Uitgang."}</Text>
                     </Pressable>
                   ))}
                   {selectedSerial && selectedSerial.portCount > 1 ? (
                     <FirmwareChoice
                       value={String(selectedPortIndex)}
-                      choices={Array.from({length: selectedSerial.portCount}, (_, index) => ({value: String(index), label: `المنفذ ${index}`}))}
+                      choices={Array.from({length: selectedSerial.portCount}, (_, index) => ({value: String(index), label: `Port ${index}`}))}
                       onChange={value => setSelectedPortIndex(Number(value))}
                       disabled={isBusy}
                       testIDPrefix="detect-port"
                     />
                   ) : null}
-                  {detectedSummary ? <FirmwareNotice title="نتيجة التعرف" text={detectedSummary} tone="success" /> : null}
+                  {detectedSummary ? <FirmwareNotice title={"Het resultaat van de identificatie."} text={detectedSummary} tone="success" /> : null}
                   <Pressable
                     disabled={isBusy}
                     testID="target-selector"
                     onPress={() => setTargetListOpen(true)}
                     style={[styles.selectorButton, isBusy && styles.dimmed]}>
-                    <Text style={styles.selectorValue}>{selectedTarget || 'اختر Target يدوياً'}</Text>
-                    <Text style={styles.selectorHint}>فتح قائمة واضحة قابلة للبحث</Text>
+                    <Text style={styles.selectorValue}>{selectedTarget || "Target handmatig kiezen."}</Text>
+                    <Text style={styles.selectorHint}>{"Doorzoekbare lijst openen"}</Text>
                   </Pressable>
                   {selectedTargetInfo ? (
                     <FirmwareNotice
-                      title={`تصنيف اللوحة: ${groupLabel(selectedTargetInfo.group)}`}
-                      text={`${selectedTargetInfo.manufacturer ?? 'المصنّع غير معلن'} • ${selectedTargetInfo.mcu ?? 'MCU غير معلن'} • Target ${selectedTargetInfo.target}`}
+                      title={`Printplaatcategorie: ${groupLabel(selectedTargetInfo.group)}`}
+                      text={`${selectedTargetInfo.manufacturer ?? "De fabrikant is onbekend."} • ${selectedTargetInfo.mcu ?? "MCU niet bekend."} • Target ${selectedTargetInfo.target}`}
                       tone={selectedTargetInfo.group === 'supported'
                         ? 'success'
                         : selectedTargetInfo.group === 'legacy' ? 'warning' : 'info'}
                     />
                   ) : null}
-                  {targetsLoadState === 'loading' ? <FirmwareNotice title="قائمة اللوحات" text="يجري تحميلها الآن؛ الاختيار المحلي وUSB يبقيان متاحين." /> : null}
+                  {targetsLoadState === 'loading' ? <FirmwareNotice title={"De lijst met printplaaten."} text={"Ze wordt nu geüpload. Plaatselijke selectie en USB blijven beschikbaar."} /> : null}
                   {targetsLoadState === 'error' ? (
                     <View style={styles.catalogRetry}>
-                      <FirmwareNotice title="القائمة غير متاحة" text={targetsLoadError ?? 'استخدم الملف المحلي أو أعد المحاولة.'} tone="error" />
+                      <FirmwareNotice title={"De lijst is niet beschikbaar."} text={targetsLoadError ?? "Gebruik het lokale bestand of probeer het opnieuw."} tone="error" />
                       <FirmwareButton
-                        title="إعادة تحميل القائمة"
+                        title={"Herladen van de lijst."}
                         tone="secondary"
                         size="compact"
                         onPress={loadTargetCatalog}
@@ -2542,12 +2542,12 @@ export default function FirmwareFlasherScreen({
                   ) : null}
                 </FirmwareSection>
 
-                <FirmwareSection title="إصدار Firmware" caption="اختر القناة أولاً، ثم الإصدار والتاريخ بوضوح. الإصدارات التطويرية تحتاج إقراراً منفصلاً قبل التفليش.">
+                <FirmwareSection title={"Firmware versie"} caption={"Kies eerst het kanaal en daarna de versie met datum. Ontwikkelversies vereisen vóór het flashen een afzonderlijke risicobevestiging."}>
                   {releasesLoadState === 'loading' ? (
-                    <FirmwareNotice title="تحميل الإصدارات" text={`يجري جلب الإصدارات المتاحة لـ ${selectedTarget}.`} />
+                    <FirmwareNotice title={"Versies downloaden"} text={`De beschikbare versies van ${selectedTarget} worden ingevoerd.`} />
                   ) : null}
                   {releasesLoadState === 'error' ? (
-                    <FirmwareNotice title="تعذر تحميل الإصدارات" text={releasesLoadError ?? 'أعد اختيار اللوحة أو استخدم ملفاً محلياً.'} tone="error" />
+                    <FirmwareNotice title={"Versies kunnen niet worden gedownload."} text={releasesLoadError ?? "Selecteer het bord opnieuw of gebruik een lokaal bestand."} tone="error" />
                   ) : null}
                   {releaseChannelChoices.length > 0 ? (
                     <FirmwareChoice
@@ -2566,10 +2566,10 @@ export default function FirmwareFlasherScreen({
                         onPress={() => setReleaseListOpen(value => !value)}
                         style={[styles.selectorButton, isBusy && styles.dimmed]}>
                         <Text style={styles.selectorValue}>
-                          {selectedReleaseInfo ? releaseLabel(selectedReleaseInfo) : 'اختر إصدار Firmware'}
+                          {selectedReleaseInfo ? releaseLabel(selectedReleaseInfo) : "Kies een Firmware-versie."}
                         </Text>
                         <Text style={styles.selectorHint}>
-                          {selectedReleaseInfo?.label ?? 'الإصدار والتاريخ'} • {releaseListOpen ? 'إخفاء القائمة' : 'عرض القائمة'}
+                          {selectedReleaseInfo?.label ?? "Versie en datum"} • {releaseListOpen ? "Lijst verbergen" : "Lijst tonen"}
                         </Text>
                       </Pressable>
                       {releaseListOpen ? (
@@ -2587,24 +2587,24 @@ export default function FirmwareFlasherScreen({
                               }}
                               style={[styles.releaseRow, selectedRelease === release.release && styles.releaseRowSelected]}>
                               <Text style={[styles.releaseText, selectedRelease === release.release && styles.releaseTextSelected]}>{releaseLabel(release)}</Text>
-                              <Text style={styles.releaseMeta}>تاريخ الإصدار: {release.label}</Text>
+                              <Text style={styles.releaseMeta}>{"Uitgave datum:"}{release.label}</Text>
                             </Pressable>
                           ))}
                         </View>
                       ) : null}
                     </>
                   ) : null}
-                  {detailLoadState === 'loading' ? <FirmwareNotice title="تفاصيل البناء" text="يجري تحميل معلومات Target وخيارات البناء…" /> : null}
-                  {detailLoadState === 'error' ? <FirmwareNotice title="تعذر تحميل تفاصيل البناء" text={detailLoadError ?? 'اختر إصداراً آخر أو أعد المحاولة.'} tone="error" /> : null}
+                  {detailLoadState === 'loading' ? <FirmwareNotice title={"De details van de bouw."} text={"Target informatie en bouwopties worden geladen..."} /> : null}
+                  {detailLoadState === 'error' ? <FirmwareNotice title={"Buildgegevens konden niet worden geladen"} text={detailLoadError ?? "Kies een andere versie of probeer het opnieuw."} tone="error" /> : null}
                   {targetDetail ? (
                     <>
                       <FirmwareNotice
                         title={`${targetDetail.target} • ${targetDetail.release}`}
-                        text={`${targetDetail.manufacturer ?? 'المصنّع غير معلن'} • ${targetDetail.mcu ?? 'MCU غير معلن'} • ${targetDetail.date ?? 'تاريخ البناء يحدده الخادم'} • ${targetDetail.cloudBuild ? 'يدعم Cloud Build' : 'Core Build جاهز'}`}
+                        text={`${targetDetail.manufacturer ?? "De fabrikant is onbekend."} • ${targetDetail.mcu ?? "MCU niet bekend."} • ${targetDetail.date ?? "De server bepaalt de builddatum"} • ${targetDetail.cloudBuild ? "Ondersteunt Cloud Build" : "Core Build klaar."}`}
                       />
                       <FirmwareNotice
-                        title="المعلومات داخل FPV-ARBCON"
-                        text="لن يفتح اختيار اللوحة أو الإصدار أي تطبيق أو موقع خارجي؛ جميع خطوات البناء والتفليش تبقى داخل هذه الشاشة."
+                        title={"Informatie binnen FPV-ARBCON"}
+                        text={"Het selecteren van het bord of de versie zal geen externe app of site openen; Alle bouwstappen en flashen blijven binnen dit scherm."}
                         tone="success"
                       />
                     </>
@@ -2612,18 +2612,18 @@ export default function FirmwareFlasherScreen({
                 </FirmwareSection>
 
                 <FirmwareSection
-                  title="تهيئة البناء"
-                  caption="⁦Core Build⁩ أو ⁦Cloud Build⁩، ثم ⁦Radio⁩ و⁦Telemetry⁩ و⁦OSD⁩ و⁦Motor⁩ وبقية الخيارات."
+                  title={"Build configureren"}
+                  caption={"Kies Core Build of Cloud Build en daarna Radio, Telemetry, OSD, Motor en de overige opties."}
                   testID="build-configuration">
                   {targetDetail ? (
                     <>
                     {targetDetail.cloudBuild ? (
                       <FirmwareChoice
                         value={coreBuild ? 'core' : 'cloud'}
-                        choices={[{value: 'core', label: 'Core Build'}, {value: 'cloud', label: 'Cloud Build مخصص'}]}
+                        choices={[{value: 'core', label: 'Core Build'}, {value: 'cloud', label: "Aangepaste Cloud Build"}]}
                         onChange={value => {
                           if (value === 'cloud' && !cloudOptionsAvailable) {
-                            setStatus('خيارات Cloud Build لم تجهز بعد؛ أبقِ Core Build أو أعد اختيار الإصدار.');
+                            setStatus("Opties Cloud Build nog niet klaar; Houd Core Build bij of kies de versie opnieuw.");
                             return;
                           }
                           setCoreBuild(value === 'core');
@@ -2632,24 +2632,24 @@ export default function FirmwareFlasherScreen({
                         testIDPrefix="build-mode"
                       />
                     ) : (
-                      <FirmwareNotice title="Core Build" text="هذا الإصدار لا يعلن Cloud Build؛ سيُستخدم البناء الأساسي الكامل." />
+                      <FirmwareNotice title="Core Build" text={"Deze versie biedt geen Cloud Build; De volledige Core Build wordt gebruikt."} />
                     )}
-                    {buildOptionsLoadState === 'loading' ? <FirmwareNotice title="خيارات البناء" text="يجري تحميل Radio وTelemetry وOSD وMotor والخيارات الأخرى…" /> : null}
+                    {buildOptionsLoadState === 'loading' ? <FirmwareNotice title={"Buildopties"} text={"Radio, Telemetry, OSD, Motor en de overige opties laden…"} /> : null}
                     {buildOptionsLoadState === 'error' ? (
                       <FirmwareNotice
-                        title="Cloud Build غير متاح حالياً"
-                        text={`${buildOptionsLoadError ?? 'تعذر تحميل الخيارات.'} ما زال Core Build متاحاً بأمان.`}
+                        title={"Cloud Build momenteel niet beschikbaar"}
+                        text={`${buildOptionsLoadError ?? "Opties kunnen niet worden geladen."} Core Build is nog steeds veilig beschikbaar.`}
                         tone="warning"
                       />
                     ) : null}
                     {targetDetail.cloudBuild && !coreBuild ? (
                       <>
-                        <OptionGroup testIDPrefix="radio-protocol" title="بروتوكول الراديو" options={buildOptions.radioProtocols} selected={radioProtocol} onChange={setRadioProtocol} />
+                        <OptionGroup testIDPrefix="radio-protocol" title={"Radioprotocol"} options={buildOptions.radioProtocols} selected={radioProtocol} onChange={setRadioProtocol} />
                         <OptionGroup
                           testIDPrefix="telemetry-protocol"
                           title="Telemetry"
                           options={selectedRadioIncludesTelemetry
-                            ? [{name: 'مضمّن تلقائياً مع بروتوكول الراديو', value: '-1', default: true, includesTelemetry: true}]
+                            ? [{name: "Automatisch opgenomen bij het radioprotocol", value: '-1', default: true, includesTelemetry: true}]
                             : buildOptions.telemetryProtocols}
                           selected={telemetryProtocol}
                           onChange={setTelemetryProtocol}
@@ -2658,8 +2658,8 @@ export default function FirmwareFlasherScreen({
                         <OptionGroup testIDPrefix="osd-protocol" title="OSD" options={buildOptions.osdProtocols} selected={osdProtocol} onChange={setOsdProtocol} />
                         {buildOptions.osdProtocols.length > 0 && !osdProtocol ? (
                           <FirmwareToggle
-                            label="متابعة Cloud Build بدون OSD"
-                            detail="إقرار صريح قبل بناء Firmware بلا OSD."
+                            label={"Doorgaan met Cloud Build zonder OSD"}
+                            detail={"Expliciete bevestiging voordat firmware zonder OSD wordt gebouwd."}
                             value={osdOmissionConfirmed}
                             onValueChange={setOsdOmissionConfirmed}
                             disabled={isBusy}
@@ -2667,11 +2667,11 @@ export default function FirmwareFlasherScreen({
                             testID="confirm-no-osd"
                           />
                         ) : null}
-                        <OptionGroup testIDPrefix="motor-protocol" title="بروتوكول المحركات" options={buildOptions.motorProtocols} selected={motorProtocol} onChange={setMotorProtocol} />
+                        <OptionGroup testIDPrefix="motor-protocol" title={"Motorprotocol"} options={buildOptions.motorProtocols} selected={motorProtocol} onChange={setMotorProtocol} />
                         {buildOptions.generalOptions.length > 0 ? (
                           <View style={styles.optionGroup}>
                             <FirmwareButton
-                              title={`${generalOptionsExpanded ? 'إخفاء' : 'عرض'} الخيارات الأخرى (${buildOptions.generalOptions.length})`}
+                              title={`${generalOptionsExpanded ? "Verbergen" : "Tonen"} overige opties (${buildOptions.generalOptions.length})`}
                               onPress={() => setGeneralOptionsExpanded(value => !value)}
                               disabled={isBusy}
                               tone="secondary"
@@ -2691,8 +2691,8 @@ export default function FirmwareFlasherScreen({
                           </View>
                         ) : null}
                         <FirmwareToggle
-                          label="وضع الخبير"
-                          detail="يعرض Custom Defines واختيار Commit التطويري؛ اتركه مغلقاً للاستخدام العادي."
+                          label={"Expertmodus"}
+                          detail={"Toont Custom Defines en de keuze van een ontwikkelcommit; Laat dit uitgeschakeld voor normaal gebruik."}
                           value={expertMode}
                           onValueChange={setExpertMode}
                           disabled={isBusy}
@@ -2700,7 +2700,7 @@ export default function FirmwareFlasherScreen({
                         />
                         {expertMode ? (
                           <>
-                            <Text style={styles.fieldLabel}>Custom Defines (تفصلها مسافات)</Text>
+                            <Text style={styles.fieldLabel}>{"Custom Defines (gescheiden door spaties)"}</Text>
                             <TextInput
                               value={customDefines}
                               onChangeText={setCustomDefines}
@@ -2712,13 +2712,13 @@ export default function FirmwareFlasherScreen({
                             />
                             {isDevelopment ? (
                               <>
-                                <Text style={styles.fieldLabel}>Commit SHA اختياري</Text>
+                                <Text style={styles.fieldLabel}>{"Commit SHA (optioneel)"}</Text>
                                 <TextInput
                                   value={commit}
                                   onChangeText={setCommit}
                                   editable={!isBusy}
                                   autoCapitalize="none"
-                                  placeholder="اكتب SHA أو ابحث في القائمة"
+                                  placeholder={"Voer een SHA in of zoek in de lijst"}
                                   placeholderTextColor={colors.textMuted}
                                   style={[styles.input, styles.monoInput]}
                                 />
@@ -2733,7 +2733,7 @@ export default function FirmwareFlasherScreen({
                                     <Text style={styles.commitSha}>{item.sha}</Text>
                                   </Pressable>
                                 ))}
-                                {filteredCommits.length > 20 ? <Text style={styles.selectorHint}>اكتب جزءاً من SHA أو الرسالة لتضييق النتائج.</Text> : null}
+                                {filteredCommits.length > 20 ? <Text style={styles.selectorHint}>{"Voer een deel van de SHA of het commitbericht in om te filteren."}</Text> : null}
                               </>
                             ) : null}
                           </>
@@ -2743,15 +2743,15 @@ export default function FirmwareFlasherScreen({
                     </>
                   ) : (
                     <FirmwareNotice
-                      title="تهيئة البناء جاهزة"
-                      text="اختر Flight Controller وإصدار Firmware أعلاه؛ ستظهر هنا مباشرة خيارات Core/Cloud وRadio وTelemetry وOSD وMotor والخيارات الأخرى."
+                      title={"Buildconfiguratie gereed"}
+                      text={"Selecteer Flight Controller en versie Firmware hierboven; Hier worden de opties Core/Cloud, Radio, Telemetry, OSD, Motor en andere opties direct weergegeven."}
                       tone="info"
                     />
                   )}
                 </FirmwareSection>
 
                 <FirmwareButton
-                  title="بناء وتنزيل Firmware"
+                  title={"Firmware bouwen en downloaden"}
                   onPress={buildRemoteFirmware}
                   disabled={isBusy || targetDetail === null}
                   testID="build-firmware"
@@ -2760,20 +2760,20 @@ export default function FirmwareFlasherScreen({
             ) : null}
 
             {firmware ? (
-              <FirmwareNotice title={`${firmware.kind} صالح • ${firmwareFilenameLabel(firmware.filename)}`} text={firmwareDescription(firmware)} tone="success" />
+              <FirmwareNotice title={`${firmware.kind} geldig • ${firmwareFilenameLabel(firmware.filename)}`} text={firmwareDescription(firmware)} tone="success" />
             ) : null}
           </>
         ) : (
           <>
-            <FirmwareSection title="Firmware المحمّل" caption="لا يكفي امتداد الملف؛ تم تحليل البنية والعناوين والـ checksum.">
+            <FirmwareSection title={"Gedownloade firmware"} caption={"De bestandsextensie alleen is onvoldoende. Structuur, adressen en checksum zijn gecontroleerd."}>
               {firmware ? (
                 <FirmwareNotice title={`${firmware.kind} • ${firmwareFilenameLabel(firmware.filename)}`} text={firmwareDescription(firmware)} tone="success" />
               ) : (
-                <FirmwareNotice title="لا يوجد ملف" text="ارجع إلى الخطوة الأولى وحمّل Firmware صالحاً." tone="warning" />
+                <FirmwareNotice title={"Geen bestand"} text={"Ga terug naar de eerste stap en laad een geldig firmwarebestand."} tone="warning" />
               )}
               <View style={styles.twoButtons}>
-                <View style={styles.flexOne}><FirmwareButton title="اختيار ملف آخر" onPress={pickLocalFirmware} disabled={isBusy} tone="secondary" /></View>
-                <View style={styles.flexOne}><FirmwareButton title="حفظ نسخة" onPress={saveCurrentFirmware} disabled={isBusy || !firmware} tone="secondary" /></View>
+                <View style={styles.flexOne}><FirmwareButton title={"Ander bestand kiezen"} onPress={pickLocalFirmware} disabled={isBusy} tone="secondary" /></View>
+                <View style={styles.flexOne}><FirmwareButton title={"Kopie opslaan"} onPress={saveCurrentFirmware} disabled={isBusy || !firmware} tone="secondary" /></View>
               </View>
               {firmware?.kind === 'HEX' ? (
                 <FirmwareChoice
@@ -2786,29 +2786,29 @@ export default function FirmwareFlasherScreen({
               ) : null}
               {firmware?.kind === 'UF2' ? (
                 <FirmwareNotice
-                  title="مسار UF2 الصحيح"
-                  text="سيُحفظ الملف بعد التحقق. أدخل RP2040/STM32 في وضع BOOT ثم انسخ UF2 إلى قرص USB الظاهر؛ UF2 ليس DfuSe ولا يُرسل إلى واجهة DFU."
+                  title={"UF2 correct overzetten"}
+                  text={"Het bestand wordt na verificatie opgeslagen. Start RP2040/STM32 in BOOT-modus en kopieer UF2 naar de getoonde USB-schijf. UF2 is geen DfuSe en wordt niet naar de DFU-interface verzonden."}
                   tone="info"
                 />
               ) : null}
               {configurationLines ? (
                 <FirmwareNotice
-                  title={`Custom Defaults • ${configurationLabel ?? 'إعداد صالح'}`}
+                  title={`Custom Defaults • ${configurationLabel ?? "Goed voorbereid."}`}
                   text={firmware?.kind === 'HEX'
-                    ? `${configurationLines.length} سطراً ستُدخل في المساحة التي يعلنها HEX قبل المسح.`
-                    : 'Custom Defaults لا تنطبق إلا على HEX؛ لن تُحقن في UF2 أو BIN.'}
+                    ? `${configurationLines.length} een lijn die zal worden ingevoerd in de ruimte die HEX voor het onderzoek aankondigt.`
+                    : "Custom Defaults gelden alleen voor HEX. Ze worden niet in UF2 of BIN geplaatst."}
                   tone={firmware?.kind === 'HEX' ? 'success' : 'warning'}
                 />
               ) : null}
               <View style={styles.twoButtons}>
-                <View style={styles.flexOne}><FirmwareButton title="تغيير Unified Config" onPress={pickLocalConfiguration} disabled={isBusy} tone="secondary" testID="change-unified-config" /></View>
-                <View style={styles.flexOne}><FirmwareButton title="إزالة Unified Config" onPress={clearConfiguration} disabled={isBusy || configurationLines === null} tone="secondary" /></View>
+                <View style={styles.flexOne}><FirmwareButton title={"Unified Config wijzigen"} onPress={pickLocalConfiguration} disabled={isBusy} tone="secondary" testID="change-unified-config" /></View>
+                <View style={styles.flexOne}><FirmwareButton title={"Unified Config verwijderen"} onPress={clearConfiguration} disabled={isBusy || configurationLines === null} tone="secondary" /></View>
               </View>
             </FirmwareSection>
 
-            <FirmwareSection title="USB وBootloader" caption="يجب اختيار جهاز واحد بوضوح عند وجود أكثر من وحدة USB.">
+            <FirmwareSection title={"USB en Bootloader"} caption={"Een apparaat moet duidelijk worden gekozen als er meer dan één USB.-unit is."}>
               <View style={styles.twoButtons}>
-                <View style={styles.flexOne}><FirmwareButton title="تحديث أجهزة USB" onPress={() => refreshDevices().catch(setFailure)} disabled={isBusy} tone="secondary" /></View>
+                <View style={styles.flexOne}><FirmwareButton title={"USB-apparaten vernieuwen"} onPress={() => refreshDevices().catch(setFailure)} disabled={isBusy} tone="secondary" /></View>
                 <View style={styles.flexOne}><FirmwareButton title="Auto detect" onPress={autoDetect} disabled={isBusy} tone="secondary" /></View>
               </View>
               {/* Browser only - see chooseSerialDevice()/chooseDfuDevice().
@@ -2819,7 +2819,7 @@ export default function FirmwareFlasherScreen({
                   {supportsSerialPicker ? (
                     <View style={styles.flexOne}>
                       <FirmwareButton
-                        title="اختيار جهاز USB"
+                        title={"USB-apparaat kiezen"}
                         onPress={chooseSerialDevice}
                         disabled={isBusy}
                         tone="secondary"
@@ -2830,7 +2830,7 @@ export default function FirmwareFlasherScreen({
                   {supportsDfuPicker ? (
                     <View style={styles.flexOne}>
                       <FirmwareButton
-                        title="اختيار STM32 DFU"
+                        title={"Kies STM32 DFU"}
                         onPress={chooseDfuDevice}
                         disabled={isBusy}
                         tone="secondary"
@@ -2844,39 +2844,39 @@ export default function FirmwareFlasherScreen({
                 noReboot ? (
                   dfuDevices.length > 0 ? (
                     <FirmwareNotice
-                      title="وضع DFU جاهز"
-                      text="الجهاز ظاهر كـ STM32 DFU. سيبدأ DfuSe مباشرةً بعد إقرارات الأمان من دون البحث عن Serial."
+                      title={"DFU is klaar."}
+                      text={"Het apparaat ziet eruit als STM32 DFU.. DfuSe begint direct na de beveiligingsverklaringen zonder zoektocht naar Serial.."}
                       tone="success"
                     />
                   ) : (
                     <FirmwareNotice
-                      title="ينتظر DFU اليدوي"
-                      text="خيار «بدون تسلسل إعادة تشغيل» مفعّل، لكن لا يوجد جهاز DFU الآن. اضغط BOOT أثناء توصيل USB ثم حدّث الأجهزة."
+                      title={"DFU wacht op de hand."}
+                      text={"De optie zonder actieve reboot-sequentie, maar er is geen DFU-apparaat. Druk op BOOT tijdens het aansluiten van USB en zet de apparaten aan."}
                       tone="warning"
                     />
                   )
                 ) : serialDevices.length > 0 ? (
                   <FirmwareNotice
-                    title="الوضع العادي مكتشف"
-                    text="الجهاز ظاهر كمنفذ USB عادي. عند البدء سيقرأ التطبيق هوية Target، يرسل أمر MSP الآمن للدخول إلى Bootloader، ثم ينتظر ظهور DFU تلقائياً قبل أي مسح."
+                    title={"De normale situatie is ontdekt."}
+                    text={"Het apparaat verschijnt als een normale USB-uitvoerder. Bij het opstarten leest de app de Target-ID, stuurt de MSP-beveiligde opdracht naar Bootloader, en wacht dan automatisch op het verschijnen van DFU voor elke scan."}
                     tone="info"
                   />
                 ) : dfuDevices.length > 0 ? (
                   <FirmwareNotice
-                    title="الجهاز في DFU بالفعل"
-                    text="فعّل «بدون تسلسل إعادة تشغيل» وأكّد Target يدوياً؛ لا يوجد منفذ Serial يمكن استخدامه للتعرف التلقائي أو النسخة الاحتياطية."
+                    title={"Het apparaat is al in DFU."}
+                    text={"Target handmatig bevestigen. Er is geen Serial-poort die gebruikt kan worden voor automatische herkenning of back-up."}
                     tone="warning"
                   />
                 ) : (
                   <FirmwareNotice
-                    title="لا يوجد مسار USB جاهز"
-                    text="صِل Flight Controller بكابل بيانات ثم حدّث الأجهزة. سيظهر إما كمنفذ Serial عادي أو كجهاز STM32 DFU."
+                    title={"Er is geen USB-traject klaar."}
+                    text={"Verbind Flight Controller met een data-kabel en stel de apparaten aan. Het zal verschijnen als een gewone Serial-uitvoerder of als een STM32 DFU.-uitvoerder."}
                     tone="warning"
                   />
                 )
               ) : null}
               <FirmwareButton
-                title={`${advancedUsbRecoveryExpanded ? 'إخفاء' : 'عرض'} أدوات USB والاستعادة المتقدمة`}
+                title={`${advancedUsbRecoveryExpanded ? "Verbergen" : "Tonen"} USB tools en geavanceerd herstel`}
                 onPress={() => setAdvancedUsbRecoveryExpanded(value => !value)}
                 disabled={isBusy}
                 tone="secondary"
@@ -2887,7 +2887,7 @@ export default function FirmwareFlasherScreen({
               <View style={styles.twoButtons}>
                 <View style={styles.flexOne}>
                   <FirmwareButton
-                    title="إجراء التفليش الأساسي"
+                    title={"flashen basisprocedure"}
                     tone="secondary"
                     onPress={() => setShowFlashGuide(value => !value)}
                     testID="toggle-flash-guide"
@@ -2895,7 +2895,7 @@ export default function FirmwareFlasherScreen({
                 </View>
                 <View style={styles.flexOne}>
                   <FirmwareButton
-                    title="استكشاف أعطال Firmware"
+                    title={"Firmware ontfouten verkennen."}
                     tone="secondary"
                     onPress={() => setShowTroubleshooting(value => !value)}
                     testID="toggle-flash-troubleshooting"
@@ -2904,27 +2904,27 @@ export default function FirmwareFlasherScreen({
               </View>
               {showFlashGuide ? (
                 <FirmwareNotice
-                  title="الإجراء الأساسي داخل FPV-ARBCON"
-                  text="أزل المراوح وافصل البطارية، اختر Target والإصدار أو ملفاً محلياً، تحقق من صيغة HEX/UF2/BIN، صِل USB فقط، اختر جهازاً واحداً، أكّد بوابة الأمان، ثم ابدأ ولا تفصل الكابل حتى يكتمل التحقق وإعادة التشغيل."
+                  title={"De basisprocedure binnen FPV-ARBCON"}
+                  text={"propellers verwijderen en accu ontkoppelen, Target en lokale versie of bestand kiezen, HEX/UF2/BIN-formulier controleren, USB alleen koppelen, één apparaat selecteren, de beveiligingspoort bevestigen, en vervolgens beginnen en de kabel niet ontkoppelen totdat de controle en herstart zijn voltooid."}
                   tone="info"
                 />
               ) : null}
               {showTroubleshooting ? (
                 <FirmwareNotice
-                  title="استكشاف الأعطال داخل التطبيق"
-                  text="إذا لم يظهر الجهاز: بدّل كابل USB إلى كابل بيانات، امنح إذن USB، أعد إدخال BOOT/DFU ثم حدّث الأجهزة. عند تعدد الأجهزة اختر الجهاز والمنفذ يدوياً. لا تتجاوز عدم تطابق Target، ولا تستخدم المسح الكامل إلا للاستعادة المتقدمة."
+                  title={"Het verkennen van storingen in een applicatie"}
+                  text={"Als het apparaat niet verschijnt: verander de USB-kabel in een data-kabel, geef USB toestemming, voer opnieuw BOOT/DFU in en stel de apparaten weer in. Als je meerdere apparaten hebt, selecteer je apparaat en de poort handmatig. Target is niet meer in overeenstemming, en gebruik de volledige scanner alleen voor geavanceerde herstel."}
                   tone="warning"
                 />
               ) : null}
                 </>
               ) : (
                 <FirmwareNotice
-                  title="المسار البسيط جاهز"
-                  text="عند وجود جهاز واحد يختاره التطبيق تلقائياً، ويعيد ربط Android USB ID إذا تغيّر. افتح الأدوات المتقدمة فقط للاستعادة أو التشخيص."
+                  title={"De eenvoudige baan is klaar."}
+                  text={"Als er één apparaat is, wordt het automatisch door de app gekozen en Android USB ID wordt opnieuw aangesloten als het verandert. Open de geavanceerde instrumenten alleen voor herstel of diagnose."}
                   tone="success"
                 />
               )}
-              {serialDevices.length > 0 ? <Text style={styles.fieldLabel}>أجهزة Serial</Text> : null}
+              {serialDevices.length > 0 ? <Text style={styles.fieldLabel}>{"Serial apparaten."}</Text> : null}
               {serialDevices.map(device => (
                 <Pressable
                   accessibilityRole="radio"
@@ -2934,18 +2934,18 @@ export default function FirmwareFlasherScreen({
                   onPress={() => { setSelectedSerialId(device.deviceId); setSelectedPortIndex(0); }}
                   style={[styles.deviceRow, selectedSerialId === device.deviceId && styles.deviceRowSelected]}>
                   <Text style={styles.deviceName}>{deviceLabel(device)}</Text>
-                  <Text style={styles.deviceMeta}>{device.driverType} • {device.portCount} منفذ</Text>
+                  <Text style={styles.deviceMeta}>{device.driverType} • {device.portCount} {"Uitgang."}</Text>
                 </Pressable>
               ))}
               {selectedSerial && selectedSerial.portCount > 1 ? (
                 <FirmwareChoice
                   value={String(selectedPortIndex)}
-                  choices={Array.from({length: selectedSerial.portCount}, (_, index) => ({value: String(index), label: `المنفذ ${index}`}))}
+                  choices={Array.from({length: selectedSerial.portCount}, (_, index) => ({value: String(index), label: `Port ${index}`}))}
                   onChange={value => setSelectedPortIndex(Number(value))}
                   disabled={isBusy}
                 />
               ) : null}
-              {dfuDevices.length > 0 ? <Text style={styles.fieldLabel}>أجهزة DFU</Text> : null}
+              {dfuDevices.length > 0 ? <Text style={styles.fieldLabel}>{"DFU apparaten."}</Text> : null}
               {dfuDevices.map(device => (
                 <Pressable
                   accessibilityRole="radio"
@@ -2956,15 +2956,15 @@ export default function FirmwareFlasherScreen({
                   onPress={() => setSelectedDfuId(device.deviceId)}
                   style={[styles.deviceRow, selectedDfuId === device.deviceId && styles.deviceRowSelected]}>
                   <Text style={styles.deviceName}>{dfuLabel(device)}</Text>
-                  <Text style={styles.deviceMeta}>Interface {device.interfaceNumber} • Alt {device.alternateSetting} • {device.memoryLayout ?? 'Memory layout سيُتحقق منه قبل المسح'}</Text>
+                  <Text style={styles.deviceMeta}>Interface {device.interfaceNumber} • Alt {device.alternateSetting} • {device.memoryLayout ?? "De geheugenindeling wordt vóór het wissen gecontroleerd"}</Text>
                 </Pressable>
               ))}
               {advancedUsbRecoveryExpanded ? (
                 <>
-                  <FirmwareButton title="الخروج من وضع DFU" onPress={exitDfu} disabled={isBusy || dfuDevices.length === 0} tone="secondary" />
+                  <FirmwareButton title={"DFU-modus verlaten"} onPress={exitDfu} disabled={isBusy || dfuDevices.length === 0} tone="secondary" />
                   <FirmwareToggle
-                    label="أفهم أن إزالة Read Protection تمسح Flash بالكامل"
-                    detail="خيار إنقاذ متقدم فقط للوحات STM32 المحمية؛ ستحتاج إعادة إدخال DFU والتفليش بعدها."
+                    label={"Ik begrijp dat het verwijderen van Read Protection Flash volledig verwijdert."}
+                    detail={"Geavanceerde redoptie alleen voor beschermde STM32-platen; Je moet DFU en flashen later opnieuw invoeren."}
                     value={readUnprotectConfirmed}
                     onValueChange={setReadUnprotectConfirmed}
                     disabled={isBusy || dfuDevices.length === 0}
@@ -2972,7 +2972,7 @@ export default function FirmwareFlasherScreen({
                     testID="confirm-dfu-read-unprotect"
                   />
                   <FirmwareButton
-                    title="إزالة DFU Read Protection"
+                    title={"DFU Read Protection verwijderen"}
                     onPress={unprotectDfu}
                     disabled={isBusy || dfuDevices.length === 0 || !readUnprotectConfirmed}
                     tone="danger"
@@ -2982,14 +2982,14 @@ export default function FirmwareFlasherScreen({
               ) : null}
             </FirmwareSection>
 
-            <FirmwareSection title="خيارات التفليش والاستعادة" caption="الإعدادات الافتراضية هي المسار الموصى به؛ التفاصيل المتقدمة متاحة عند الحاجة.">
+            <FirmwareSection title={"Flash- en herstelopties"} caption={"De standaardinstellingen zijn het aanbevolen pad. Geavanceerde details zijn beschikbaar wanneer nodig."}>
               <FirmwareNotice
-                title="الإعداد الآمن الموصى به"
-                text="مسح انتقائي، دخول Bootloader تلقائي، Baud تلقائي، ونسخة CLI لهذا التشغيل مع استعادتها بعد النجاح."
+                title={"De aanbevolen beveiligingsinstelling"}
+                text={"Selectief wissen, automatisch naar de bootloader, automatische baudsnelheid en een CLI-back-up voor deze poging met herstel na geslaagd flashen."}
                 tone="success"
               />
               <FirmwareButton
-                title={`${advancedFlashOptionsExpanded ? 'إخفاء' : 'عرض'} خيارات التفليش المتقدمة`}
+                title={`${advancedFlashOptionsExpanded ? "Verbergen" : "Tonen"} geavanceerde flashen opties`}
                 onPress={() => setAdvancedFlashOptionsExpanded(value => !value)}
                 disabled={isBusy}
                 tone="secondary"
@@ -2998,16 +2998,16 @@ export default function FirmwareFlasherScreen({
               {advancedFlashOptionsExpanded ? (
                 <>
               <FirmwareToggle
-                label="مسح كامل للـ Chip"
-                detail="يمسح كل القطاعات؛ المسح الانتقائي هو الخيار الافتراضي الأكثر أماناً."
+                label={"Volledige chip wissen"}
+                detail={"Wist alle sectoren. Selectief wissen is de veiligere standaardinstelling."}
                 value={fullErase}
                 onValueChange={setFullErase}
                 disabled={isBusy}
                 warning
               />
               <FirmwareToggle
-                label="بدون تسلسل إعادة تشغيل"
-                detail="استخدمه عندما وضعت اللوحة يدوياً في bootloader."
+                label={"Zonder herstartprocedure"}
+                detail={"Gebruik dit wanneer u de printplaat handmatig in bootloadermodus hebt gezet."}
                 value={noReboot}
                 onValueChange={value => {
                   setNoReboot(value);
@@ -3017,15 +3017,15 @@ export default function FirmwareFlasherScreen({
               />
               <FirmwareToggle
                 label="Flash on connect"
-                detail="يبدأ عند توصيل bootloader فقط بعد اكتمال جميع إقرارات الأمان."
+                detail={"bootloader begint pas nadat alle veiligheidsverklaringen zijn voltooid."}
                 value={flashOnConnect}
                 onValueChange={setFlashOnConnect}
                 disabled={isBusy || !noReboot}
                 warning
               />
               <FirmwareToggle
-                label="Baud rate يدوي"
-                detail="التلقائي: 256000 لـ STM32 و460800 لـ ESP."
+                label={"Baud rate handmatig"}
+                detail={"256000 voor STM32 en 460800 voor ESP."}
                 value={manualBaud}
                 onValueChange={setManualBaud}
                 disabled={isBusy}
@@ -3038,41 +3038,41 @@ export default function FirmwareFlasherScreen({
                   disabled={isBusy}
                 />
               ) : null}
-              <Text style={styles.fieldLabel}>سياسة النسخة الاحتياطية CLI</Text>
+              <Text style={styles.fieldLabel}>{"CLI back-upbeleid"}</Text>
               <FirmwareChoice
                 value={backupMode}
-                choices={[{value: 'ask', label: 'اسأل / لكل تشغيل'}, {value: 'always', label: 'دائماً'}, {value: 'never', label: 'معطّل'}]}
+                choices={[{value: 'ask', label: "Bij elke poging vragen"}, {value: 'always', label: "Altijd"}, {value: 'never', label: "Uitgeschakeld"}]}
                 onChange={setBackupMode}
                 disabled={isBusy}
               />
               {backupMode === 'ask' ? (
                 <FirmwareToggle
-                  label="إنشاء Backup لهذا التشغيل"
-                  detail="diff all ثم حفظ ملف فعلي قبل أي erase."
+                  label={"Back-up maken voor deze poging"}
+                  detail={"Voer diff all uit en sla een echt back-upbestand op vóór het wissen."}
                   value={backupThisRun}
                   onValueChange={setBackupThisRun}
                   disabled={isBusy}
                 />
               ) : null}
               <FirmwareToggle
-                label="استعادة الإعدادات بعد التفليش"
-                detail="تُستعاد نسخة الذاكرة فقط إذا نجح التفليش وعاد المنفذ؛ save لا يُرسل عند أي خطأ CLI."
+                label={"Instellingen na het flashen herstellen"}
+                detail={"De back-up uit het geheugen wordt alleen hersteld als het flashen slaagt en de poort terugkomt. Bij een CLI-fout wordt save niet verzonden."}
                 value={restoreAfterFlash}
                 onValueChange={setRestoreAfterFlash}
                 disabled={isBusy || backupMode === 'never'}
               />
-              <FirmwareButton title="استعادة Backup CLI من ملف" onPress={restoreLocalBackup} disabled={isBusy || serialDevices.length === 0} tone="secondary" />
+              <FirmwareButton title={"Backup CLI herstellen uit een bestand"} onPress={restoreLocalBackup} disabled={isBusy || serialDevices.length === 0} tone="secondary" />
                 </>
               ) : null}
             </FirmwareSection>
 
-            <FirmwareSection title="بوابة الأمان" caption="لا يمكن تجاوز هذه الخطوات ضمنياً حتى مع Flash on connect.">
-              <FirmwareToggle label="أزلت جميع المراوح" value={propsRemoved} onValueChange={setPropsRemoved} disabled={isBusy} warning testID="confirm-props-removed" />
-              <FirmwareToggle label="فصلت البطارية والطاقة من USB فقط" value={usbPowerOnly} onValueChange={setUsbPowerOnly} disabled={isBusy} warning testID="confirm-usb-power-only" />
+            <FirmwareSection title={"Veiligheidscontrole"} caption={"Deze controles worden ook bij Flash on connect niet automatisch overgeslagen."}>
+              <FirmwareToggle label={"Ik heb alle propellers verwijderd"} value={propsRemoved} onValueChange={setPropsRemoved} disabled={isBusy} warning testID="confirm-props-removed" />
+              <FirmwareToggle label={"Ik heb de accu losgekoppeld; alleen USB levert voeding"} value={usbPowerOnly} onValueChange={setUsbPowerOnly} disabled={isBusy} warning testID="confirm-usb-power-only" />
               {noReboot ? (
                 <FirmwareToggle
-                  label="تحققت يدوياً من Target والـ bootloader"
-                  detail="مطلوب لأن MSP auto detect غير متاح بعد الدخول اليدوي إلى bootloader."
+                  label={"Ik heb de Target en bootloader handmatig gecontroleerd."}
+                  detail={"Zoekt omdat MSP auto detect niet beschikbaar is na handmatige toegang tot bootloader."}
                   value={manualTargetConfirmed}
                   onValueChange={setManualTargetConfirmed}
                   disabled={isBusy}
@@ -3081,8 +3081,8 @@ export default function FirmwareFlasherScreen({
               ) : null}
               {selectedTarget && detectedTarget && selectedTarget.toUpperCase() !== detectedTarget.toUpperCase() ? (
                 <FirmwareToggle
-                  label="تجاوز عدم تطابق Target"
-                  detail={`المحدد ${selectedTarget}، المكتشف ${detectedTarget}. تفعيل هذا الخيار قد يعطّل اللوحة.`}
+                  label={"Afwijkend Target toch toestaan"}
+                  detail={`Gekozen: ${selectedTarget}. Gedetecteerd: ${detectedTarget}. Deze optie kan de printplaat onbruikbaar maken.`}
                   value={targetMismatchOverride}
                   onValueChange={setTargetMismatchOverride}
                   disabled={isBusy}
@@ -3091,8 +3091,8 @@ export default function FirmwareFlasherScreen({
               ) : null}
               {isDevelopment ? (
                 <FirmwareToggle
-                  label="أفهم مخاطر الإصدار التطويري"
-                  detail="قد توجد تغييرات غير مستقرة؛ لن يبدأ التفليش دون هذا الإقرار."
+                  label={"Ik begrijp de risico's van een ontwikkelversie"}
+                  detail={"Er kunnen onstabiele veranderingen zijn; flashen zal niet beginnen zonder deze bevestiging."}
                   value={unstableConfirmed}
                   onValueChange={setUnstableConfirmed}
                   disabled={isBusy}
@@ -3103,7 +3103,7 @@ export default function FirmwareFlasherScreen({
           </>
         )}
 
-        <FirmwareSection title="حالة العملية" caption="آخر 60 رسالة فقط تُحفظ في الذاكرة لمنع نمو السجل وإبطاء الشاشة.">
+        <FirmwareSection title={"Bewerkingsstatus"} caption={"Alleen de laatste 60 berichten worden in het geheugen bewaard, zodat het logboek niet onbeperkt groeit en het scherm niet vertraagt."}>
           <FirmwareProgress percent={progress} label={status} />
           {flashResult !== undefined ? (
             /* THE ONE RESULT (P0-F). Every flash attempt ends with exactly
@@ -3220,7 +3220,7 @@ export default function FirmwareFlasherScreen({
           {buildKey ? (
             <>
               <FirmwareButton
-                title={buildLogLoading ? 'تحميل سجل Build…' : 'عرض سجل Build داخل التطبيق'}
+                title={buildLogLoading ? "Build record downloaden..." : "Build-record in de app"}
                 onPress={loadBuildLogInsideApp}
                 disabled={buildLogLoading}
                 tone="secondary"
@@ -3236,14 +3236,14 @@ export default function FirmwareFlasherScreen({
           <View style={styles.twoButtons}>
             <View style={styles.flexOne}>
               <FirmwareButton
-                title={firmware?.kind === 'UF2' ? 'تحقق وحفظ UF2' : 'ابدأ التفليش الآمن'}
+                title={firmware?.kind === 'UF2' ? "UF2 verifiëren en opslaan" : "Veilig flashen starten"}
                 onPress={startFlash}
                 disabled={isBusy || !firmware}
                 testID="start-safe-flash"
               />
             </View>
             {canCancel ? (
-              <View style={styles.flexOne}><FirmwareButton title="إلغاء" onPress={cancelOperation} tone="danger" testID="cancel-firmware-operation" /></View>
+              <View style={styles.flexOne}><FirmwareButton title={"Annuleren"} onPress={cancelOperation} tone="danger" testID="cancel-firmware-operation" /></View>
             ) : null}
           </View>
           {logLines.length > 0 ? (
@@ -3300,11 +3300,11 @@ const styles = StyleSheet.create({
   stallTitle: {
     ...typography.sectionTitle,
     color: colors.warning,
-    writingDirection: 'rtl'},
+    writingDirection: 'ltr'},
   stallBody: {
     ...typography.caption,
     color: colors.textSecondary,
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   root: {flex: 1, backgroundColor: colors.background},
   modalRoot: {
     flex: 1,
@@ -3333,12 +3333,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.error,
   },
-  confirmBody: {...typography.body, color: colors.textPrimary, textAlign: 'right'},
+  confirmBody: {...typography.body, color: colors.textPrimary, textAlign: 'left'},
   resultRecovery: {
     ...typography.body,
     color: colors.error,
     fontWeight: '700',
-    textAlign: 'right',
+    textAlign: 'left',
   },
   modalClose: {
     width: 44,
@@ -3413,7 +3413,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.backgroundRaised,
     color: colors.textPrimary,
     paddingHorizontal: spacing.md,
-    textAlign: 'right',
+    textAlign: 'left',
     ...typography.body, maxWidth: PROSE_MEASURE},
   monoInput: {...typography.mono, textAlign: 'left', writingDirection: 'ltr'},
   selectorButton: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.sm, minHeight: 48, padding: spacing.md, borderRadius: radii.md, backgroundColor: colors.surface, borderWidth: 1.5, borderColor: colors.borderStrong}, selectorCopy: {flex: 1, gap: 2},
@@ -3452,7 +3452,7 @@ const styles = StyleSheet.create({
      left-to-right-first and painted its words out of order. The Latin
      identifiers inside stay left-to-right on their own, as bidi
      isolates - that never needed the whole line to be ltr. */
-  logLine: {...typography.mono, color: colors.textSecondary, textAlign: 'right', writingDirection: 'rtl'},
+  logLine: {...typography.mono, color: colors.textSecondary, textAlign: 'left', writingDirection: 'ltr'},
   /* The BUILD SERVER's output. Machine text, genuinely left-to-right,
      and it keeps that. */
   machineLine: {...typography.mono, color: colors.textSecondary, textAlign: 'left', writingDirection: 'ltr'},

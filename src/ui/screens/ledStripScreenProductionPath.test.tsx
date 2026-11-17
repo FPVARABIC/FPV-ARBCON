@@ -25,7 +25,7 @@ import ReactTestRenderer, {act} from 'react-test-renderer';
 
 import '../../i18n';
 import i18n from '../../i18n';
-import ar from '../../i18n/locales/ar.json';
+import ar from '../../i18n/locales/nl.json';
 import LedStripScreen from './LedStripScreen';
 import {LedStripConfigurationController} from '../../platforms/react-native/protocol/LedStripConfigurationController';
 import {VirtualSession} from '../../platforms/react-native/protocol/__testUtils__/virtualSession';

@@ -41,17 +41,17 @@ describe('unconfirmedWriteMessage', () => {
   });
 
   it('names the setting the operator was actually changing', () => {
-    expect(unconfirmedWriteMessage('RXFAIL_CONFIG')).toContain('قيم القنوات عند فقد النبض');
-    expect(unconfirmedWriteMessage('GPS_RESCUE')).toContain('معاملات GPS Rescue');
-    expect(unconfirmedWriteMessage('CURRENT_METER_CONFIG')).toContain('معايرة مقياس التيار');
-    expect(unconfirmedWriteMessage('POWER_LEVEL')).toContain('مستويات الطاقة');
+    expect(unconfirmedWriteMessage('RXFAIL_CONFIG')).toContain("Kanaalwaarden bij signaalverlies");
+    expect(unconfirmedWriteMessage('GPS_RESCUE')).toContain("GPS Rescue-instellingen");
+    expect(unconfirmedWriteMessage('CURRENT_METER_CONFIG')).toContain("Stroommeter kalibreren");
+    expect(unconfirmedWriteMessage('POWER_LEVEL')).toContain("Vermogensniveaus");
   });
 
   it('tells the operator not to retry, on every stage', () => {
     // An unconfirmed write is exactly the case where a reflexive second
     // save can apply the change twice or onto a board that moved.
     for (const stage of EVERY_STAGE) {
-      expect(unconfirmedWriteMessage(stage)).toContain('لا تكرر الحفظ');
+      expect(unconfirmedWriteMessage(stage)).toContain("Sla niet opnieuw op");
     }
   });
 
@@ -60,18 +60,18 @@ describe('unconfirmedWriteMessage', () => {
     // may not be committed" is a different fact from "this setting may
     // not have been written", and the operator acts on it differently.
     const persist = unconfirmedWriteMessage('EEPROM');
-    expect(persist).toContain('لم يتأكد حفظها بشكل دائم');
-    expect(persist).not.toContain('كتابة ');
+    expect(persist).toContain("De instellingen kunnen de controller hebben bereikt, maar permanent opslaan is niet bevestigd. Sla niet opnieuw op; verbind opnieuw en lees eerst de instellingen uit.");
+    expect(persist).not.toContain("Schrijven van");
   });
 
   it('numbers a row from one, the way the screens do', () => {
     // Channel 0 on the wire is "القناة 1" everywhere in this app.
-    expect(unconfirmedWriteMessage('RXFAIL_CONFIG', 0)).toContain('رقم 1');
-    expect(unconfirmedWriteMessage('ELEMENT', 4)).toContain('رقم 5');
+    expect(unconfirmedWriteMessage('RXFAIL_CONFIG', 0)).toContain("nummer 1");
+    expect(unconfirmedWriteMessage('ELEMENT', 4)).toContain("nummer 5");
   });
 
   it('omits the row entirely when the write had none', () => {
-    expect(unconfirmedWriteMessage('BATTERY_CONFIG')).not.toContain('رقم');
-    expect(unconfirmedWriteMessage('BATTERY_CONFIG', undefined)).not.toContain('رقم');
+    expect(unconfirmedWriteMessage('BATTERY_CONFIG')).not.toContain("nummer");
+    expect(unconfirmedWriteMessage('BATTERY_CONFIG', undefined)).not.toContain("nummer");
   });
 });

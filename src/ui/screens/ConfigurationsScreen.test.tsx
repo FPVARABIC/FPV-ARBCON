@@ -147,7 +147,7 @@ describe('ConfigurationsScreen', () => {
     );
     expect(source).not.toMatch(/\bLinking\b|openURL|betaflight\.com|inavflight\.com/i);
     expect(
-      JSON.stringify(require('../../i18n/locales/ar.json').configurationsSystem),
+      JSON.stringify(require('../../i18n/locales/nl.json').configurationsSystem),
     ).not.toMatch(/betaflight|inav/i);
   });
 

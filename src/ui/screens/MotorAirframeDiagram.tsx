@@ -661,7 +661,7 @@ function MotorNode({
   const spokenRotation =
     expectedRotation === undefined
       ? ''
-      : `، ${t('motorsScreen.expectedRotationLabel')}: ${t(
+      : `${t('motorsScreen.expectedRotationLabel')}: ${t(
           expectedRotation === 'CW'
             ? 'motorsScreen.expectedRotationCw'
             : 'motorsScreen.expectedRotationCcw',
@@ -676,9 +676,7 @@ function MotorNode({
       // node sits on the frame - and on a coaxial arm the deck is part
       // of the position. Rotation is spoken only where a source
       // determines it; nothing invents one.
-      accessibilityLabel={`M${slot}${spokenDeck}، ${spokenStation}${spokenRotation}${
-        badge === undefined ? '' : `، ${badge.text}`
-      }`}
+      accessibilityLabel={`M${slot}${spokenDeck}, ${spokenStation}${spokenRotation}${badge === undefined ? '' : `${badge.text}.`}`}
       style={[
         styles.motorNode,
         {left, top, width: NODE_SIZE, height: NODE_SIZE},
@@ -843,7 +841,7 @@ export function MotorAirframeDiagram({
     liveSlot !== undefined && liveActivity !== undefined
       ? `M${liveSlot} · ${t(activityLabelKey(liveActivity))}`
       : verifiedSlots.length > 0
-      ? `${verifiedSlots.map(slot => `M${slot}`).join('، ')} · ${t(
+      ? `${verifiedSlots.map(slot => `M${slot}`).join(", ")} · ${t(
           'motorsScreen.slotStateObserved',
         )}`
       : undefined;

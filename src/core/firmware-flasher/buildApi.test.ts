@@ -32,7 +32,7 @@ describe('BetaflightBuildApi', () => {
     await expect(api.loadFirmware('https://evil.example/test.bin')).rejects.toBeInstanceOf(BuildApiError);
 
     fetcher.mockResolvedValueOnce(response({length: String(9 * 1024 * 1024)}));
-    await expect(api.loadFirmware('/large.hex')).rejects.toThrow(/أكبر/);
+    await expect(api.loadFirmware('/large.hex')).rejects.toThrow(new RegExp("Het Firmware-bestand van de server is groter dan de beveiliging\\."));
   });
 
   it('surfaces HTTP and malformed JSON failures', async () => {
@@ -69,7 +69,7 @@ describe('BetaflightBuildApi', () => {
     }
   });
 
-  it('explains a network rejection in Arabic and keeps the browser English out of the message', async () => {
+  it('explains a network rejection in Dutch and keeps the browser English out of the message', async () => {
     // A raw TypeError("Failed to fetch") is browser-internal English. An
     // Arabic operator learns nothing from it and it reads as an
     // untranslated defect, so the message states what happened and what
@@ -80,7 +80,7 @@ describe('BetaflightBuildApi', () => {
     const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
     const api = new BetaflightBuildApi(fetcher as unknown as typeof fetch);
 
-    await expect(api.loadTargets()).rejects.toThrow(/تعذّر الوصول إلى خادم البناء/);
+    await expect(api.loadTargets()).rejects.toThrow(new RegExp("De buildserver is vanaf deze pagina niet bereikbaar\\. Controleer de internetverbinding en probeer het opnieuw\\."));
     await expect(api.loadTargets()).rejects.not.toThrow(/Failed to fetch/);
     expect(warn).toHaveBeenCalledWith(
       '[buildApi] network/CORS failure:',

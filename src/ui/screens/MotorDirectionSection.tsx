@@ -424,11 +424,11 @@ const styles = StyleSheet.create({
   title: {
     ...typography.bodyStrong,
     color: colors.textPrimary,
-    writingDirection: 'rtl'},
+    writingDirection: 'ltr'},
   caption: {
     ...typography.caption,
     color: colors.textSecondary,
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   row: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -439,7 +439,7 @@ const styles = StyleSheet.create({
   rowLabel: {
     ...typography.caption,
     color: colors.textSecondary,
-    writingDirection: 'rtl'},
+    writingDirection: 'ltr'},
   rowValueGroup: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -449,7 +449,7 @@ const styles = StyleSheet.create({
   rowValue: {
     ...typography.body,
     color: colors.textPrimary,
-    writingDirection: 'rtl',
+    writingDirection: 'ltr',
     flexShrink: 1, maxWidth: PROSE_MEASURE},
   rowValueStrong: { fontWeight: '700' },
   badge: {
@@ -465,17 +465,17 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
     color: colors.textPrimary,
-    writingDirection: 'rtl'},
+    writingDirection: 'ltr'},
   mismatch: {
     ...typography.body,
     color: colors.warning,
     fontWeight: '700',
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   match: {
     ...typography.caption,
     color: colors.success,
     fontWeight: '700',
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   unavailable: {
     gap: spacing.xs,
     padding: spacing.md,
@@ -488,7 +488,7 @@ const styles = StyleSheet.create({
     ...typography.body,
     color: colors.textPrimary,
     fontWeight: '700',
-    writingDirection: 'rtl'},
+    writingDirection: 'ltr'},
   authoringBlock: { gap: spacing.xs },
   detailsBlock: { gap: spacing.xs },
   linkButton: { minHeight: 44, justifyContent: 'center', alignItems: 'flex-start' },
@@ -496,7 +496,7 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.accentStrong,
     fontWeight: '700',
-    writingDirection: 'rtl'},
+    writingDirection: 'ltr'},
   primaryButton: {
     minHeight: 48,
     alignSelf: 'flex-start',
@@ -509,7 +509,7 @@ const styles = StyleSheet.create({
   primaryButtonText: {
     ...typography.label,
     color: colors.accentText,
-    writingDirection: 'rtl'},
+    writingDirection: 'ltr'},
   secondaryButton: {
     minHeight: 44,
     alignItems: 'center',
@@ -522,20 +522,20 @@ const styles = StyleSheet.create({
   secondaryButtonText: {
     ...typography.label,
     color: colors.textPrimary,
-    writingDirection: 'rtl'},
+    writingDirection: 'ltr'},
   resultGood: {
     ...typography.caption,
     color: colors.success,
     fontWeight: '700',
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   resultDanger: {
     ...typography.caption,
     color: colors.error,
     fontWeight: '700',
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   verifyTitle: {
     ...typography.body,
     color: colors.textPrimary,
     fontWeight: '700',
-    writingDirection: 'rtl'},
+    writingDirection: 'ltr'},
 });

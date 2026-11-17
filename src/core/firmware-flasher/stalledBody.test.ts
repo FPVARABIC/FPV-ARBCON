@@ -124,7 +124,7 @@ describe('the build API cannot hang on a body that stops arriving', () => {
     const attempt = api.loadTargets().catch((error: unknown) => error);
     await runClockPast(PAST_EVERY_BOUND);
     const error = (await attempt) as Error;
-    expect(error.message).toContain('توقّف تنزيل البيانات');
+    expect(error.message).toContain("Stop met het downloaden van de buildserver. Controleer de internetverbinding en probeer het opnieuw.");
     expect(error.message).not.toMatch(/[A-Z]{3,}_[A-Z]/);
   });
 
@@ -158,7 +158,7 @@ describe('the preset repository cannot hang on a body that stops arriving', () =
       await runClockPast(PAST_EVERY_BOUND);
       const error = (await attempt) as Error;
       expect(error).toBeInstanceOf(Error);
-      expect(error.message).toContain('توقّف تنزيل');
+      expect(error.message).toContain("Stop met het downloaden van");
     },
   );
 

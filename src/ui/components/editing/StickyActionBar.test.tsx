@@ -37,8 +37,8 @@ function render(
       <StickyActionBar
         visible
         summary="UART6: GPS"
-        saveLabel="حفظ والتحقق"
-        discardLabel="تجاهل التغييرات"
+        saveLabel="Opslaan en verifiëren"
+        discardLabel="Wijzigingen verwerpen"
         onSave={() => undefined}
         onDiscard={() => undefined}
         {...props}
@@ -74,7 +74,7 @@ describe('StickyActionBar', () => {
     const text = allText(renderer);
     expect(text).toContain('UART6: GPS');
     expect(text).toContain('UART1: MSP');
-    expect(text).toContain('تغييرات غير محفوظة');
+    expect(text).toContain("Niet-opgeslagen wijzigingen");
   });
 
   it('save and discard are both reachable and both fire', () => {
@@ -100,13 +100,13 @@ describe('StickyActionBar', () => {
   });
 
   it('a disabled save NAMES its reason in Arabic instead of being a dead grey button', () => {
-    const renderer = render({ disabledReason: 'تعذّر الحفظ: توجد قيمة غير صالحة أعلاه.' });
+    const renderer = render({ disabledReason: "Opslaan mislukt: hierboven staat een ongeldige waarde." });
     const save = renderer.root.findAll(
       node => node.props.testID === 'sticky-action-bar-save',
       { deep: false },
     )[0];
     expect(save.props.disabled).toBe(true);
-    expect(allText(renderer)).toContain('تعذّر الحفظ');
+    expect(allText(renderer)).toContain("Opslaan mislukt: hierboven staat een ongeldige waarde.");
   });
 
   it('an enabled save carries no reason text at all', () => {
@@ -124,7 +124,7 @@ describe('StickyActionBar', () => {
   });
 
   it('while busy it blocks BOTH actions and says it is saving', () => {
-    const renderer = render({ busy: true, busyLabel: 'جارٍ الحفظ…' });
+    const renderer = render({ busy: true, busyLabel: "Opslaan…" });
     const save = renderer.root.findAll(
       node => node.props.testID === 'sticky-action-bar-save',
       { deep: false },
@@ -135,7 +135,7 @@ describe('StickyActionBar', () => {
     )[0];
     expect(save.props.disabled).toBe(true);
     expect(discard.props.disabled).toBe(true);
-    expect(allText(renderer)).toContain('جارٍ الحفظ…');
+    expect(allText(renderer)).toContain("Opslaan…");
   });
 
   it('shows the real transaction outcome inside the persistent surface', () => {

@@ -232,27 +232,29 @@ dBm حيًّا**. لا يوجدان في عقد MSP إطلاقًا (`_meta/gaps.
 
 ---
 
-## تحذيرات
+## Waarschuwingen
+GPS Rescue is geen garantie. Het is een procedure die werkt als alle afleveringen van de reeks geldig zijn. Eén verkeerde ring  —  een niet-gegradeerde kompas, een paar satellieten, Home onstabiele  —  betekent een vliegtuig dat met vertrouwen in de verkeerde richting vliegt.
 
-> **GPS Rescue ليس ضمانًا.** هو إجراء يعمل عندما تكون كل حلقات
-> السلسلة صحيحة. حلقة واحدة خاطئة — بوصلة غير معايرة، أقمار قليلة،
-> Home غير مثبَّت — تعني طائرة تطير بثقة في الاتجاه الخطأ.
 
-> **اختبر الإنقاذ وأنت ترى الطائرة.** أول تجربة لإجراء العودة يجب أن
-> تكون على ارتفاع آمن، في مساحة مفتوحة، ضمن مدى بصرك. لا تجعل أول
-> تجربة هي الحالة الحقيقية.
 
-> **البطارية تُحسب للعودة.** طائرة تنقطع في أبعد نقطة ببطارية كافية
-> للذهاب فقط لن تصل.
+Test redding en je ziet het vliegtuig. De eerste test om terug te keren moet op een veilige hoogte zijn, in een open ruimte, binnen je zicht. Maak niet de eerste ervaring de echte situatie.
 
-> **لا تشغّل مرسل الفيديو بلا هوائي.** قد يتلف خلال ثوانٍ. وهذا أخطر
-> في المدى الطويل لأنك ترفع الطاقة.
 
-> **`السماح بالتسليح دون GPS Fix` مطفأ لسبب.** تشغيله يعني تسليحًا
-> بلا نقطة عودة معروفة.
 
-> **الرابط البطيء ليس للطيران الحر.** الإعداد الرسمي يحذّر من هذا
-> نصًّا (S1.5). لا تطر أكروبات على وضع 15Hz.
+accu wordt berekend als terugkeer. Een vliegtuig dat op een afstand van accu afhaalt, is alleen genoeg om te vertrekken.
+
+
+
+videozender mag binnen een paar seconden kapot gaan. Dit is op lange termijn gevaarlijker omdat je energie verhoogt.
+
+
+
+**Armen zonder GPS-fix toestaan** staat bewust uit. Armen zonder fix betekent dat er geen thuispositie voor terugkeer bekend is.
+
+
+
+De slow link is niet voor vrije vlucht. De officiële opstelling waarschuwt hiervoor. S1.5 ). Er zijn geen acrobaten op de plaats. 15 Hz.
+
 
 ---
 

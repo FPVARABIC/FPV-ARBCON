@@ -79,13 +79,13 @@ const styles = StyleSheet.create({
   title: {
     ...typography.bodyStrong,
     color: colors.textPrimary,
-    textAlign: 'right',
+    textAlign: 'left',
   },
   description: {
     ...typography.caption,
     color: colors.textSecondary,
-    textAlign: 'right',
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    textAlign: 'left',
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   controlWide: {
     flexShrink: 0,
     alignItems: 'flex-end',

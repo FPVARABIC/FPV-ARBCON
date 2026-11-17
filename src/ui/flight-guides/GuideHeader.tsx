@@ -34,7 +34,7 @@ export function GuideHeader({
     <View style={styles.header} testID={testID}>
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel="العودة"
+        accessibilityLabel={"Terug"}
         onPress={onBack}
         testID="guide-back"
         style={state => {
@@ -72,6 +72,6 @@ const styles = StyleSheet.create({
   backHovered: {backgroundColor: colors.surfaceHover},
   backPressed: {backgroundColor: colors.surfacePressed},
   copy: {flex: 1},
-  eyebrow: {...typography.eyebrow, color: colors.accentStrong, textAlign: 'right'},
-  title: {...typography.title, color: colors.textPrimary, textAlign: 'right'},
+  eyebrow: {...typography.eyebrow, color: colors.accentStrong, textAlign: 'left'},
+  title: {...typography.title, color: colors.textPrimary, textAlign: 'left'},
 });

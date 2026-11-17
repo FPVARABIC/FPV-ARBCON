@@ -209,26 +209,26 @@ export function buildFlashReport(
 ): string {
   const verdict = evaluateFlashStall(snapshot, nowMs);
   const lines: string[] = [];
-  lines.push('FPV-ARBCON — تقرير تفليش تقني');
+  lines.push("FPV-ARBCON  —  Technisch rapport flashen");
   if (extra?.buildIdentity !== undefined) {
-    lines.push(`البنية: ${extra.buildIdentity}`);
+    lines.push(`Structuur: ${extra.buildIdentity}`);
   }
-  lines.push(`الطريقة: ${snapshot.method}`);
-  lines.push(`الجهاز الهدف: ${snapshot.targetIdentity ?? 'غير متاح'}`);
-  lines.push(`المرحلة: ${snapshot.phase}`);
-  lines.push(`النسبة: ${snapshot.percent}%`);
-  lines.push(`البايتات: ${snapshot.bytesProcessed}/${snapshot.totalBytes}`);
-  lines.push(`رقم الكتلة: ${snapshot.blockNumber ?? 'غير متاح'}`);
-  lines.push(`آخر عملية مكتملة: ${snapshot.lastCompletedOperation ?? 'غير متاح'}`);
-  lines.push(`الزمن المنقضي: ${Math.max(0, Math.round(nowMs - snapshot.startedAtMs))}ms`);
-  lines.push(`صمت منذ آخر تقدّم: ${verdict.silentForMs}ms`);
-  lines.push(`مصنّفة متوقفة: ${verdict.stalled ? 'نعم' : 'لا'}`);
+  lines.push(`De methode: ${snapshot.method}`);
+  lines.push(`Doel: ${snapshot.targetIdentity ?? "Niet beschikbaar"}.`);
+  lines.push(`Stage: ${snapshot.phase}`);
+  lines.push(`${snapshot.percent}%`);
+  lines.push(`${snapshot.bytesProcessed}/${snapshot.totalBytes}`);
+  lines.push(`Massasnummer: ${snapshot.blockNumber ?? "Niet beschikbaar"}`);
+  lines.push(`Het laatste proces voltooid: ${snapshot.lastCompletedOperation ?? "Niet beschikbaar"}.`);
+  lines.push(`Tijd: ${Math.max(0, Math.round(nowMs - snapshot.startedAtMs))}ms`);
+  lines.push(`Zwijgen sinds de laatste stap: ${verdict.silentForMs} ms`);
+  lines.push(`${verdict.stalled ? "Ja" : "Nee"}.`);
   lines.push(
-    `قد يكون نقل المتصفح ما زال معلّقًا: ${snapshot.transferMayBePending ? 'نعم' : 'لا'}`,
+    `Het is mogelijk dat de browser overdracht nog niet is voltooid: ${snapshot.transferMayBePending ? "Ja" : "Nee"}`,
   );
-  lines.push(`آخر كود خطأ: ${extra?.lastErrorCode ?? 'غير متاح'}`);
+  lines.push(`De laatste foutcode: ${extra?.lastErrorCode ?? "Niet beschikbaar"}`);
   lines.push(
-    'ملاحظة: لا يمكن إلغاء نقل WebUSB قيد التنفيذ؛ التصنيف أعلاه وصف لحالة الواجهة لا للجهاز.',
+    "Opmerking: WebUSB-transmissie in werking kan niet worden geannuleerd; De bovenstaande classificatie beschrijft de interface-status van het apparaat.",
   );
   return lines.join('\n');
 }

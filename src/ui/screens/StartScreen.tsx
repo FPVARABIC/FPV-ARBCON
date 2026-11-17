@@ -238,24 +238,22 @@ function GuideSection({
 }): React.JSX.Element {
   return (
     <Band tone="surface" cap={cap} testID="start-guide-section">
-      <Text style={styles.eyebrow}>قبل الضبط</Text>
+      <Text style={styles.eyebrow}>{"Voordat het is ingesteld."}</Text>
       <View style={desktop ? styles.guideRow : styles.guideColumn}>
         <View style={styles.guideCopy}>
           <View style={styles.guideHeading}>
             <Icon name="compass" size={22} color={colors.accentStrong} />
-            <Text style={styles.guideTitle}>دليل أنماط الطيران</Text>
+            <Text style={styles.guideTitle}>{"Vliegpatroon handleiding."}</Text>
           </View>
           <Text style={styles.guideDescription}>
-            خمسة أنماط، كل واحد بخطواته وقيمه وصوره.
-          </Text>
+            {"Vijf patronen, elk met zijn eigen stappen, eigen waarden en foto's."}</Text>
           <Text style={styles.guideMeta}>
-            سينمائي · حر · سباق · وووب داخلي · مدى طويل
-          </Text>
-          <Text style={styles.guideMeta}>أرقام رسمية بمصادرها</Text>
+            {"Film · vrije · wedstrijd · interne web · lange termijn"}</Text>
+          <Text style={styles.guideMeta}>{"Officiële cijfers van de bronnen."}</Text>
         </View>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="فتح دليل أنماط الطيران"
+          accessibilityLabel={"Maak een vluchtregister open."}
           testID="start-flight-style-guide"
           onPress={onPress}
           style={state => {
@@ -267,7 +265,7 @@ function GuideSection({
               pressed && styles.pressed,
             ];
           }}>
-          <Text style={styles.actionButtonQuietText}>فتح دليل أنماط الطيران</Text>
+          <Text style={styles.actionButtonQuietText}>{"Maak een vluchtregister open."}</Text>
           <Icon name="chevron-forward" size={22} color={colors.accentStrong} />
         </Pressable>
       </View>
@@ -331,12 +329,10 @@ function SupportProjectSection(): React.JSX.Element {
           and two spellings of one product on one page is the kind of
           drift a literal invites. */}
       <Text style={styles.supportTitle}>
-        {`ساهم في تطوير ${BRAND_PRODUCT_NAME}`}
+        {`Draag bij aan de ontwikkeling van ${BRAND_PRODUCT_NAME}`}
       </Text>
       <Text style={styles.supportBody}>
-        إذا أفادك التطبيق، يمكنك دعم استمرار تطويره وتحسينه. دعمك اختياري
-        ويساعدنا على إضافة ميزات جديدة وتحسين التجربة للجميع.
-      </Text>
+        {"Als de applicatie werkt, kun je de ontwikkeling en verbetering ondersteunen. Je steun is mijn keuze. Het helpt ons nieuwe functies toe te voegen en de ervaring voor iedereen te verbeteren."}</Text>
       {/* The shared Button, `secondary`, `sm`: narrower than an action
           card's bar but the same 44pt touch floor.
 
@@ -352,18 +348,16 @@ function SupportProjectSection(): React.JSX.Element {
           glyph registry bans emoji for exactly this reason, and Lucide's
           `coffee` draws in the app's stroke weight and text colour. */}
       <Button
-        label="ادعم المشروع"
+        label={"Ondersteun het project."}
         icon="coffee"
         variant="secondary"
         size="sm"
         onPress={openSupportPage}
         testID="start-support-kofi"
-        accessibilityHint="يفتح صفحة الدعم على Ko-fi في المتصفح خارج التطبيق"
+        accessibilityHint={"Het ondersteuningspagina op Ko-fi opent in de browser buiten de app."}
       />
       <Text style={styles.supportFootnote}>
-        يفتح ko-fi.com في المتصفح خارج التطبيق. لا يطلب التطبيق أي بيانات دفع،
-        وكل الميزات تبقى متاحة بدونه.
-      </Text>
+        {"ko-fi.com opent in de browser buiten de app. De app vraagt geen betaaldata. Alle functies blijven beschikbaar zonder hem."}</Text>
     </View>
   );
 }
@@ -440,7 +434,7 @@ export default function StartScreen({navigation}: Props): React.JSX.Element {
         ) : null}
 
         <View style={styles.hero}>
-          <Text style={styles.heroTitle}>اختر ما تريد تنفيذه</Text>
+          <Text style={styles.heroTitle}>{"Kies wat je wilt uitvoeren."}</Text>
         </View>
       </Band>
 
@@ -471,14 +465,14 @@ export default function StartScreen({navigation}: Props): React.JSX.Element {
               because it is what most sessions are for; flashing is the
               step before it, but only occasionally. */}
           <PrimaryCard
-            title="إعداد الدرون"
-            description="الاتصال باللوحة وضبط إعداداتها."
+            title={"Maak de drone klaar."}
+            description={"Maak contact met het bord en stel de instellingen aan."}
             bullets={[
-              'الاتصال باللوحة',
-              'Motors و Receiver و OSD',
-              'GPS و Sensors و CLI',
+              "Contact met de plaat.",
+              "Motors, Receiver en OSD.",
+              "GPS, Sensors en CLI.",
             ]}
-            button="فتح إعداد الدرون"
+            button={"Open de drone."}
             testID="start-configure"
             icon="sliders-horizontal"
             accent="teal"
@@ -487,14 +481,14 @@ export default function StartScreen({navigation}: Props): React.JSX.Element {
           />
 
           <PrimaryCard
-            title="تحديث Firmware"
-            description="تثبيت أو تحديث Firmware واختيار Target وإعدادات البناء."
+            title={"Firmware bijwerken"}
+            description={"Firmware installeren of bijwerken en Target en bouwinstellingen kiezen."}
             bullets={[
-              'اختيار اللوحة والإصدار',
-              'إعدادات البناء الرسمية',
-              'تفليش عبر DFU مع تحقق كامل',
+              "Het selecteren van het printplaat en de versie",
+              "Officiële bouwinstellingen",
+              "flashen via DFU met volledige controle",
             ]}
-            button="فتح تحديث Firmware"
+            button={"Open de Firmware-update."}
             testID="start-firmware"
             icon="cpu"
             accent="blue"
@@ -522,8 +516,7 @@ export default function StartScreen({navigation}: Props): React.JSX.Element {
         <View style={[styles.safetyWrap, {maxWidth: readingCap}]}>
           <View style={styles.safetyNote}>
             <Text style={styles.safetyText}>
-              لن يبدأ أي مسح أو كتابة قبل التحقق من الملف واللوحة و Target.
-            </Text>
+              {"Wissen of schrijven begint pas nadat het bestand, de printplaat en het Target zijn gecontroleerd."}</Text>
           </View>
         </View>
       </Band>
@@ -619,8 +612,8 @@ const styles = StyleSheet.create({
   brandTagline: {
     ...typography.body,
     color: colors.textSecondary,
-    writingDirection: 'rtl',
-    textAlign: 'right', maxWidth: PROSE_MEASURE},
+    writingDirection: 'ltr',
+    textAlign: 'left', maxWidth: PROSE_MEASURE},
   hero: {gap: spacing.sm},
   heroTitle: {...typography.display, color: colors.textPrimary},
 
@@ -689,7 +682,7 @@ const styles = StyleSheet.create({
   primaryDescription: {
     ...typography.body,
     color: colors.textSecondary,
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   bullets: {gap: 7, paddingVertical: spacing.sm},
   bulletRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.sm},
   bulletDot: {width: 7, height: 7, borderRadius: 4, backgroundColor: colors.accent},
@@ -703,8 +696,8 @@ const styles = StyleSheet.create({
        paragraph inherits ITS direction - so an Arabic sentence was laid
        out left-to-right and the words came out in the wrong order.
        Measured in a real browser, not theorised. */
-    writingDirection: 'rtl',
-    textAlign: 'right', maxWidth: PROSE_MEASURE},
+    writingDirection: 'ltr',
+    textAlign: 'left', maxWidth: PROSE_MEASURE},
 
   /* --------------------------------------------- calls to action */
   actionButton: {
@@ -755,14 +748,14 @@ const styles = StyleSheet.create({
   safetyText: {
     ...typography.body,
     color: colors.textSecondary,
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
 
   /* ---------------------------------------------------------- guide */
   eyebrow: {
     ...typography.eyebrow,
     color: colors.textMuted,
-    writingDirection: 'rtl',
-    textAlign: 'right'},
+    writingDirection: 'ltr',
+    textAlign: 'left'},
   /* NO `justifyContent: 'space-between'`. With it, the call to action
      was flung to the opposite end of a 1148px band and read as
      unrelated to the text it belongs to. Packed to the start with a
@@ -782,13 +775,13 @@ const styles = StyleSheet.create({
   guideDescription: {
     ...typography.body,
     color: colors.textSecondary,
-    writingDirection: 'rtl',
-    textAlign: 'right', maxWidth: PROSE_MEASURE},
+    writingDirection: 'ltr',
+    textAlign: 'left', maxWidth: PROSE_MEASURE},
   guideMeta: {
     ...typography.caption,
     color: colors.textMuted,
-    writingDirection: 'rtl',
-    textAlign: 'right', maxWidth: PROSE_MEASURE},
+    writingDirection: 'ltr',
+    textAlign: 'left', maxWidth: PROSE_MEASURE},
 
   /* -------------------------------------------------------- support */
   /* A TINTED PANEL, AND STILL NOT A CARD. radii.sm where the action
@@ -813,19 +806,19 @@ const styles = StyleSheet.create({
     /* Ends with the product's Latin name. Without an explicit direction
        the paragraph would take its own from the first strong character
        and could lay the Arabic out left-to-right. */
-    writingDirection: 'rtl',
-    textAlign: 'right'},
+    writingDirection: 'ltr',
+    textAlign: 'left'},
   supportBody: {
     ...typography.caption,
     color: colors.textSecondary,
-    writingDirection: 'rtl',
-    textAlign: 'right', maxWidth: PROSE_MEASURE},
+    writingDirection: 'ltr',
+    textAlign: 'left', maxWidth: PROSE_MEASURE},
   /* The smallest type on the screen, and still 12px - the floor the rest
      of the product holds to. It opens with a bare host name, so it needs
      the same explicit direction the title does. */
   supportFootnote: {
     ...typography.helper,
     color: colors.textMuted,
-    writingDirection: 'rtl',
-    textAlign: 'right', maxWidth: PROSE_MEASURE},
+    writingDirection: 'ltr',
+    textAlign: 'left', maxWidth: PROSE_MEASURE},
 });

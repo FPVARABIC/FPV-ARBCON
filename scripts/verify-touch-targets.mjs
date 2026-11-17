@@ -88,10 +88,10 @@ const EXPECTED = {
     /* The remove control. It renders ONLY when an AUX range already
        exists, which is why no earlier sweep ever measured it and why the
        fixture carries a configured range. */
-    'حذف',
+    "Verwijderen",
   ],
   presets: [
-    'الكل', 'Tune', 'Rates', 'Filters', 'RC Link',
+    "Alles", 'Tune', 'Rates', 'Filters', 'RC Link',
     'Modes', 'OSD', 'VTX', 'LEDs', 'BNF', 'Other',
   ],
   choice: [
@@ -697,10 +697,10 @@ try {
       await clickId(page, 'pick-local-firmware');
       await clickId(page, 'hex-method-serial');
       await clickId(page, 'toggle-advanced-flash-options');
-      await clickAria(page, 'بدون تسلسل إعادة تشغيل');
+      await clickAria(page, "Zonder herstartprocedure");
       await clickId(page, 'confirm-props-removed');
       await clickId(page, 'confirm-usb-power-only');
-      await clickAria(page, 'تحققت يدوياً من Target والـ bootloader');
+      await clickAria(page, "Ik heb de Target en bootloader handmatig gecontroleerd.");
       await clickId(page, 'start-safe-flash');
 
       /* A real signal from the device, not a sleep. */
@@ -938,7 +938,7 @@ try {
       const countWithdrawals = async () =>
         page.evaluate(() => {
           const box = document.querySelector('[data-testid="firmware-log"]');
-          return (box?.textContent ?? '').split('تراجع المستخدم عن الإلغاء').length - 1;
+          return (box?.textContent ?? '').split("De gebruiker heeft de annulering ingetrokken").length - 1;
         });
       /* Exactly three dialogs were opened and dismissed above, so exactly
          three withdrawals should be on record. More would mean one

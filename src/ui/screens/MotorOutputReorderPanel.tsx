@@ -273,15 +273,15 @@ const styles = StyleSheet.create({
   eyebrow: {
     ...typography.eyebrow,
     color: colors.accentStrong,
-    writingDirection: 'rtl'},
+    writingDirection: 'ltr'},
   title: {
     ...typography.sectionTitle,
     color: colors.textPrimary,
-    writingDirection: 'rtl'},
+    writingDirection: 'ltr'},
   caption: {
     ...typography.caption,
     color: colors.textSecondary,
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   notice: {
     gap: spacing.xs,
     padding: spacing.md,
@@ -292,7 +292,7 @@ const styles = StyleSheet.create({
     ...typography.body,
     color: colors.textPrimary,
     fontWeight: '700',
-    writingDirection: 'rtl'},
+    writingDirection: 'ltr'},
   review: { gap: spacing.md },
   mapRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
   mapCell: {
@@ -315,7 +315,7 @@ const styles = StyleSheet.create({
   mapResource: {
     ...typography.caption,
     color: colors.textPrimary,
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   primaryButton: {
     minHeight: 48,
     alignSelf: 'flex-start',
@@ -334,21 +334,21 @@ const styles = StyleSheet.create({
        effectively invisible. accentText is the theme's designated
        text-on-accent colour and clears AA. */
     color: colors.accentText,
-    writingDirection: 'rtl'},
+    writingDirection: 'ltr'},
   resultDanger: {
     ...typography.body,
     color: colors.error,
     fontWeight: '700',
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   resultGood: {
     ...typography.body,
     color: colors.success,
     fontWeight: '700',
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   progress: {
     ...typography.body,
     color: colors.accentStrong,
     textAlign: 'center',
-    writingDirection: 'rtl',
+    writingDirection: 'ltr',
   },
 });

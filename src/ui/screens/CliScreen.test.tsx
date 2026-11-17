@@ -183,7 +183,7 @@ describe('CliScreen', () => {
     let attempts = 0;
     (cli.begin as jest.Mock).mockImplementation(async () => {
       attempts += 1;
-      throw new Error('جلسة MSP غير جاهزة لـCLI.');
+      throw new Error("De MSP-sessie is niet gereed voor CLI.");
     });
     const { renderer } = await renderStarted(cli);
     expect(attempts).toBe(1);
@@ -191,7 +191,7 @@ describe('CliScreen', () => {
     const texts = renderer.root
       .findAll(node => typeof node.props.children === 'string')
       .map(node => node.props.children as string);
-    expect(texts.some(text => text.includes('جلسة MSP غير جاهزة'))).toBe(true);
+    expect(texts.some(text => text.includes("De MSP-sessie is niet gereed"))).toBe(true);
     const retry = renderer.root.findByProps({ testID: 'cli-start' });
     // A re-render does not re-attempt on its own.
     await ReactTestRenderer.act(async () => {
@@ -242,7 +242,7 @@ describe('CliScreen', () => {
     const texts = renderer.root
       .findAll(node => typeof node.props.children === 'string')
       .map(node => node.props.children as string);
-    expect(texts.some(text => text.includes('انقطع اتصال'))).toBe(true);
+    expect(texts.some(text => text.includes("verbinding met de vluchtcontroller is verbroken"))).toBe(true);
     ReactTestRenderer.act(() => renderer.unmount());
   });
 

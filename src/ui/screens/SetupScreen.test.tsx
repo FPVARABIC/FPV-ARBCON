@@ -1637,7 +1637,7 @@ describe('SetupScreen - Step 6: accessibility properties through the real screen
     );
     expect(wrapper?.props.accessible).toBe(true);
     expect(wrapper?.props.accessibilityLabel).toBe(
-      'ميلان 4 درجة لليمين، انخفاض المقدمة 2 درجة، الاتجاه 90 درجة',
+      "Rolhoek van 4 graden naar rechts, Neus omlaag 2 graden, Koers 90 graden",
     );
 
     const resetButton = findAnyByTestID(
@@ -2258,7 +2258,7 @@ describe('SetupScreen - Pass 7.6c complete Region 3 card grid through the REAL p
 
     const text = allText(renderer);
     // SETUP P2: no filler caption, and still no percentage anywhere.
-    expect(text.join(' ')).not.toContain('الشحن التقديري');
+    expect(text.join(' ')).not.toContain("Geschatte lading");
     // The battery card carries no percent figure at all (the receiver's
     // own RSSI percent lives on a different card and is unrelated).
     const batteryChip = findAnyByTestID(renderer, 'setup-status-battery-live');
@@ -2477,7 +2477,7 @@ describe('SetupScreen - Pass 7.7 Region 4 diagnostics through the REAL pipeline'
        into the Status column of the grid, so the grid's title is what
        the diagnostics disclosure must follow. */
     const gridTitleIndex = text.indexOf(i18n.t('setupInfo.status.title'));
-    const region4Index = text.indexOf('التشخيص والجاهزية');
+    const region4Index = text.indexOf("Diagnose en gereedheid");
     expect(gridTitleIndex).toBeGreaterThanOrEqual(0);
     expect(region4Index).toBeGreaterThan(gridTitleIndex);
     // Regions 1-3 are all still present around it.
@@ -2541,9 +2541,9 @@ describe('SetupScreen - Pass 7.7 Region 4 diagnostics through the REAL pipeline'
     const sessionId = 'pass77-region4-short';
     const { renderer } = await renderSession(sessionId); // default 13-byte fixture
     const text = allText(renderer);
-    expect(text).toContain('لا يمكن تأكيد موانع التسليح في الوقت الحالي');
+    expect(text).toContain("Armblokkeringsredenen kunnen momenteel niet worden bevestigd");
     expect(text).not.toContain(
-      'لم يُبلِّغ متحكم الطيران عن أي مانع في هذه القراءة',
+      "De vluchtcontroller meldt in deze meting geen armblokkeringen",
     );
     // The rest of the section still works - one absent field does not
     // take down identity, compatibility or sensors.
@@ -2564,9 +2564,9 @@ describe('SetupScreen - Pass 7.7 Region 4 diagnostics through the REAL pipeline'
       client.setResponse(MSP_STATUS_EX, statusExWithBlockers(mask));
     });
     const text = allText(renderer);
-    expect(text).toContain('الخانق ليس في وضعه الأدنى (THROTTLE)');
+    expect(text).toContain("Gas staat niet op de minimumstand (THROTTLE)");
     expect(text).toContain(
-      'مفتاح التسليح مُفعَّل بينما يوجد مانع آخر (ARM_SWITCH)',
+      "Armschakelaar ingeschakeld terwijl een andere blokkering actief is (ARM_SWITCH)",
     );
     await teardown(sessionId, renderer);
   });
@@ -2578,9 +2578,9 @@ describe('SetupScreen - Pass 7.7 Region 4 diagnostics through the REAL pipeline'
     });
     const text = allText(renderer).join(' | ');
     expect(text).toContain(
-      'لم يُبلِّغ متحكم الطيران عن أي مانع في هذه القراءة',
+      "De vluchtcontroller meldt in deze meting geen armblokkeringen",
     );
-    expect(text).not.toContain('جاهزة للطيران');
+    expect(text).not.toContain("vliegklaar");
     await teardown(sessionId, renderer);
   });
 
@@ -2596,11 +2596,11 @@ describe('SetupScreen - Pass 7.7 Region 4 diagnostics through the REAL pipeline'
     const text = allText(renderer);
     // The identity is still read and still gates compatibility; what the
     // DIAGNOSTICS PANEL prints is the capability, not the project name.
-    expect(text).toContain('نوع البرنامج الثابت: MSP متوافق');
+    expect(text).toContain("Firmwaretype: Compatibel met MSP");
     expect(text.join(' ')).not.toMatch(/BTFL|betaflight/i);
-    expect(text).toContain('متوافق مع هذا الإصدار');
+    expect(text).toContain("Compatibel met deze versie");
     expect(text).not.toContain(
-      'واجهة غير مُتحقَّق منها في هذا الإصدار؛ تُعرض القراءات فقط',
+      "Interface niet geverifieerd voor deze versie; alleen metingen beschikbaar",
     );
     await teardown(sessionId, renderer);
   });
@@ -2610,7 +2610,7 @@ describe('SetupScreen - Pass 7.7 Region 4 diagnostics through the REAL pipeline'
     const { renderer } = await renderSession(sessionId, client => {
       client.setResponse(MSP_API_VERSION, Uint8Array.from([0, 1, 47]));
     });
-    expect(allText(renderer)).toContain('متوافق مع هذا الإصدار');
+    expect(allText(renderer)).toContain("Compatibel met deze versie");
     await teardown(sessionId, renderer);
   });
 
@@ -2620,20 +2620,20 @@ describe('SetupScreen - Pass 7.7 Region 4 diagnostics through the REAL pipeline'
     const { renderer } = await renderSession(sessionId, client => {
       client.setResponse(MSP_STATUS_EX, statusExWithBlockers(mask));
     });
-    expect(allText(renderer)).toContain('الخانق ليس في وضعه الأدنى (THROTTLE)');
+    expect(allText(renderer)).toContain("Gas staat niet op de minimumstand (THROTTLE)");
 
     await act(async () => {
       mspSessionCoordinator.deactivateMspSession(sessionId);
       await flushAsync();
     });
     const afterTeardown = allText(renderer);
-    expect(afterTeardown).toContain('غير متصل');
+    expect(afterTeardown).toContain("Niet verbonden");
     expect(afterTeardown).toContain(
-      'لا يمكن تأكيد موانع التسليح في الوقت الحالي',
+      "Armblokkeringsredenen kunnen momenteel niet worden bevestigd",
     );
-    expect(afterTeardown).toContain('لا يمكن تأكيد المستشعرات في الوقت الحالي');
+    expect(afterTeardown).toContain("Sensoren kunnen momenteel niet worden bevestigd");
     // The replaced generation's blocker text is gone entirely.
-    expect(afterTeardown).not.toContain('الخانق ليس في وضعه الأدنى (THROTTLE)');
+    expect(afterTeardown).not.toContain("Gas staat niet op de minimumstand (THROTTLE)");
 
     // A NEW physical session on the same id re-derives from its own
     // reading - nothing from the previous generation leaks in.
@@ -2652,9 +2652,9 @@ describe('SetupScreen - Pass 7.7 Region 4 diagnostics through the REAL pipeline'
       await flushAsync();
     });
     const afterReplacement = allText(renderer);
-    expect(afterReplacement).toContain('الطائرة ليست مستوية (ANGLE)');
+    expect(afterReplacement).toContain("Het toestel staat niet horizontaal (ANGLE)");
     expect(afterReplacement).not.toContain(
-      'الخانق ليس في وضعه الأدنى (THROTTLE)',
+      "Gas staat niet op de minimumstand (THROTTLE)",
     );
 
     await teardown(sessionId, renderer);
@@ -2708,8 +2708,8 @@ describe('SetupScreen - Pass 7.7 Region 5 FC tools through the REAL pipeline', (
 
     expect(findAnyByTestID(renderer, 'fc-tools-section')).not.toBeNull();
     const text = allText(renderer);
-    const region4 = text.indexOf('التشخيص والجاهزية');
-    const region5 = text.indexOf('أدوات وحدة التحكم');
+    const region4 = text.indexOf("Diagnose en gereedheid");
+    const region5 = text.indexOf("Vluchtcontrollertools");
     // SETUP P2: the calibration/reboot tools moved to the BOTTOM
     // maintenance region. P0 measured them at 908px on a 390px phone,
     // standing between the operator and every live aircraft fact. They
@@ -2719,9 +2719,9 @@ describe('SetupScreen - Pass 7.7 Region 5 FC tools through the REAL pipeline', (
     expect(region5).toBeGreaterThan(region4);
     expect(text).toEqual(
       expect.arrayContaining([
-        'معايرة مقياس التسارع',
-        'معايرة البوصلة المغناطيسية',
-        'إعادة تشغيل متحكم الطيران',
+        "Versnellingsmeter kalibreren",
+        "Magnetisch kompas kalibreren",
+        "Vluchtcontroller opnieuw opstarten",
       ]),
     );
 
@@ -2763,7 +2763,7 @@ describe('SetupScreen - Pass 7.7 Region 5 FC tools through the REAL pipeline', (
       await flushAsync();
     });
 
-    expect(allText(renderer)).toContain('غير متاح: لا يوجد اتصال نشط');
+    expect(allText(renderer)).toContain("Niet beschikbaar: geen actieve verbinding");
     act(() => {
       renderer.unmount();
     });
@@ -2962,7 +2962,7 @@ describe('SetupScreen - P2 dashboard hierarchy', () => {
     expect(findAnyByTestID(renderer, 'fc-tool-ACC_CALIBRATION')).not.toBeNull();
     expect(findAnyByTestID(renderer, 'fc-tool-MAG_CALIBRATION')).not.toBeNull();
     expect(findAnyByTestID(renderer, 'fc-tool-REBOOT')).not.toBeNull();
-    expect(allText(renderer)).toContain('أدوات وحدة التحكم');
+    expect(allText(renderer)).toContain("Vluchtcontrollertools");
 
     /* SETUP R9: the four elevated cards are gone and their facts live in
        exactly one place each. The grid carries Status / GPS / Build; the

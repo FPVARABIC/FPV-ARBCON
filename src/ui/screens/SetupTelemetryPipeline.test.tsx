@@ -483,7 +483,7 @@ describe('Setup attitude pipeline - real coordinator, real scheduler, real SVG r
     });
     expect(attitudePoll(sessionId)!.status).toBe('FRESH');
     expect(textOf(renderer, 'orientation-hero-status-badge')).toContain(
-      'مباشر',
+      "Live",
     );
     const livePolygons = svgPolygonPoints(renderer);
 
@@ -501,10 +501,10 @@ describe('Setup attitude pipeline - real coordinator, real scheduler, real SVG r
     expect(svgPolygonPoints(renderer)).toBe(livePolygons);
     // ...and the screen says so, in words, rather than looking live.
     expect(textOf(renderer, 'orientation-hero-status-badge')).not.toContain(
-      'مباشر',
+      "Live",
     );
     expect(textOf(renderer, 'orientation-hero-stale-label')).toContain(
-      'البيانات متأخرة',
+      "Gegevens verouderd",
     );
     expect(orientationRenderObserver.read().lastStatus).toBe('STALE');
   });

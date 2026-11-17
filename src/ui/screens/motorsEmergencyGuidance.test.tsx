@@ -33,7 +33,7 @@ import ReactTestRenderer, {act} from 'react-test-renderer';
 
 import '../../i18n';
 import i18n from '../../i18n';
-import ar from '../../i18n/locales/ar.json';
+import ar from '../../i18n/locales/nl.json';
 import type {MotorTestControllerSnapshot} from '../../core/state/motorTestController';
 import type {MotorTestOperatorPort} from '../../platforms/react-native/protocol';
 import {openMotorsDirectionTool, openMotorsReorderTool, openMotorsTechnicalDetails} from './__testUtils__/motorsTechnicalDetails';
@@ -314,7 +314,7 @@ describe('M-2 - the bench card no longer competes with identity truth', () => {
   it('renders no X-of-4 badge on a quad', () => {
     const tree = mount(new Port(snapshotFor({})));
     expect(has(tree, 'motors-progress')).toBe(false);
-    expect(textOf(tree)).not.toContain('من أصل');
+    expect(textOf(tree)).not.toMatch(/\b\d+\s+van(?: de)?\s+\d+\b/i);
     // The authoritative count still exists, once, in the identity
     // summary - which M-E moved under the technical details disclosure
     // with the rest of the verification workflow it belongs to.
@@ -326,12 +326,12 @@ describe('M-2 - the bench card no longer competes with identity truth', () => {
   it('renders no 0-of-4 contradiction on a hex', () => {
     const tree = mount(new Port(snapshotFor({motorCount: 6})));
     expect(has(tree, 'motors-progress')).toBe(false);
-    expect(textOf(tree)).not.toContain('من أصل');
+    expect(textOf(tree)).not.toMatch(/\b\d+\s+van(?: de)?\s+\d+\b/i);
     // The honest capability statement stands alone, in the verification
     // section where the count it replaces also lives.
     openMotorsTechnicalDetails(tree);
     const rendered = textOf(tree);
-    expect(rendered).not.toContain('من أصل');
+    expect(rendered).not.toMatch(/\b\d+\s+van(?: de)?\s+\d+\b/i);
     expect(rendered).toContain(ar.motorsScreen.summaryConfirmedUnavailable);
     act(() => tree.unmount());
   });
@@ -340,9 +340,9 @@ describe('M-2 - the bench card no longer competes with identity truth', () => {
     const tree = mount(new Port(snapshotFor({})));
     const rendered = textOf(tree);
     // The turquoise-button reference and the old bench tutorial are gone.
-    expect(rendered).not.toContain('الزر الفيروزي');
-    expect(rendered).not.toContain('اختر مخرجًا من الشريط');
-    expect(rendered).not.toContain('اختر M1–M4 ثم اضغط مطولًا');
+    expect(rendered).not.toContain("de turquoise knop");
+    expect(rendered).not.toContain("Kies een uitgang in de balk");
+    expect(rendered).not.toContain("Kies M1–M4 en houd ingedrukt");
     act(() => tree.unmount());
   });
 

@@ -414,8 +414,8 @@ describe('SETUP P2 - Receiver summary', () => {
     const joined = allText(renderer).join('|');
     expect(joined).not.toMatch(/\bLQ\b/);
     expect(joined).not.toMatch(/Link Quality/i);
-    expect(joined).not.toContain('جودة الاتصال');
-    expect(joined).not.toContain('جودة الإشارة');
+    expect(joined).not.toContain("Verbindingskwaliteit");
+    expect(joined).not.toContain("Signaalkwaliteit");
     expect(joined).not.toMatch(/dBm/);
     await teardown(id, renderer);
   });
@@ -506,8 +506,8 @@ describe('SETUP P2 - GPS summary', () => {
     const joined = allText(renderer).join('|');
     expect(joined).not.toMatch(/PDOP/i);
     expect(joined).not.toMatch(/HDOP/i);
-    expect(joined).not.toContain('خط الطول');
-    expect(joined).not.toContain('خط العرض');
+    expect(joined).not.toContain("Lengtegraad");
+    expect(joined).not.toContain("Breedtegraad");
     // No decimal-degree shaped value anywhere.
     expect(joined).not.toMatch(/\d+\.\d{4,}/);
     await teardown(id, renderer);
@@ -573,8 +573,8 @@ describe('SETUP P2 - Battery summary', () => {
     const {renderer} = await mount(id);
     const joined = allText(renderer).join(' ');
     expect(joined).not.toContain(i18n.t('batteryCard.percentageUnavailable'));
-    expect(joined).not.toMatch(/\d+\s*%\s*(شحن|بطارية)/);
-    expect(joined).not.toContain('الشحن التقديري');
+    expect(joined).not.toMatch(/\d+\s*%\s*(lading|accu)/i);
+    expect(joined).not.toContain("Geschatte lading");
     await teardown(id, renderer);
   });
 
@@ -647,8 +647,8 @@ describe('SETUP P2 - Sensors summary', () => {
     const id = 'p2-sensors-no-health';
     const {renderer} = await mount(id);
     const joined = allText(renderer).join('|');
-    expect(joined).not.toContain('سليم');
-    expect(joined).not.toContain('صحي');
+    expect(joined).not.toContain("in orde");
+    expect(joined).not.toContain("gezond");
     expect(joined).not.toMatch(/healthy/i);
     await teardown(id, renderer);
   });

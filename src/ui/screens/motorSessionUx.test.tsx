@@ -203,7 +203,7 @@ describe('PART Y: the toggle represents REAL persistent session state', () => {
     // touched nothing on this screen.
     operator.publish(snapshotFor({phase: 'CLOSED', teardownComplete: true}));
     expect(r.checked('motor-session-toggle')).toBe(false);
-    expect(stateText(r)).toContain('متوقفة');
+    expect(stateText(r)).toContain("Uit");
   });
 
   it('an incomplete teardown looks like NEITHER on nor a proven off', () => {
@@ -212,15 +212,15 @@ describe('PART Y: the toggle represents REAL persistent session state', () => {
     operator.publish(snapshotFor({phase: 'CLOSED', teardownComplete: false}));
     expect(r.checked('motor-session-toggle')).toBe(false);
     // ...and it says so, in text, not only in a colour.
-    expect(stateText(r)).toContain('غير مؤكدة');
+    expect(stateText(r)).toContain("Onbevestigde toestand");
     expect(r.query('motor-session-error-detail')).toBeDefined();
   });
 
   it('announces its state to a screen reader, not just its name', () => {
     const r = render(new Operator(snapshotFor({phase: 'ACTIVE'})));
     const label = r.label('motor-session-toggle');
-    expect(label).toContain('جلسة المحركات');
-    expect(label).toContain('مفتوحة');
+    expect(label).toContain("motoren sessie");
+    expect(label).toContain("Gereed");
   });
 
   it('refuses a new instruction while a transition owns the session', () => {
@@ -292,7 +292,7 @@ describe('PART Y: motor control is separate from the session', () => {
   it('is not operational without a session', () => {
     const r = render(new Operator(snapshotFor({phase: 'IDLE'})));
     expect(r.disabled('motor-workspace-enable')).toBe(true);
-    expect(r.text()).toContain('افتح جلسة المحركات أولًا');
+    expect(r.text()).toContain("motoren openen eerst.");
   });
 
   it('turning motor control ON never implies a value above stop', () => {
@@ -337,7 +337,7 @@ describe('PART Y: motor control is separate from the session', () => {
 describe('PART Y: an unbound screen says UNKNOWN, not OFF', () => {
   it('distinguishes "no session" from "cannot see one"', () => {
     const r = render(undefined);
-    expect(stateText(r)).toContain('غير معروفة');
+    expect(stateText(r)).toContain("Onbekend.");
     expect(r.query('motor-session-unknown-detail')).toBeDefined();
     expect(r.checked('motor-session-toggle')).toBe(false);
   });
@@ -367,14 +367,14 @@ describe('PART AE: everything states itself, without relying on colour', () => {
 
   it('the master control announces itself distinctly from a motor', () => {
     const r = render(new Operator(snapshotFor({phase: 'ACTIVE'})));
-    expect(r.text()).toContain('الكل — جميع المحركات');
+    expect(r.text()).toContain("Alle  —  alle motoren");
   });
 
   it('every session state carries TEXT, so greyscale loses nothing', () => {
     for (const [phase, word] of [
-      ['IDLE', 'متوقفة'],
-      ['ACTIVE', 'مفتوحة'],
-      ['CLOSING', 'جارٍ الإغلاق'],
+      ['IDLE', "Uit"],
+      ['ACTIVE', "Gereed"],
+      ['CLOSING', "Sluiten"],
     ] as const) {
       const r = render(new Operator(snapshotFor({phase})));
       expect(stateText(r)).toContain(word);
@@ -383,7 +383,7 @@ describe('PART AE: everything states itself, without relying on colour', () => {
 
   it('STOP is reachable and labelled whenever the screen is rendered', () => {
     const r = render(new Operator(snapshotFor({phase: 'ACTIVE'})));
-    expect(r.label('motor-workspace-stop')).toContain('إيقاف المحركات');
+    expect(r.label('motor-workspace-stop')).toContain("Stop motoren.");
   });
 });
 

@@ -1,99 +1,55 @@
-This is a new [**React Native**](https://reactnative.dev) project, bootstrapped using [`@react-native-community/cli`](https://github.com/react-native-community/cli).
+# FPV Configurator NL
 
-تم تصميم البنية المعمارية لهذا المشروع لدعم أندرويد أولاً، مع إمكانية دعم الويب وسطح المكتب مستقبلاً دون تغيير جوهري في النواة المشتركة. راجع `docs/ARCHITECTURE.md` للتفاصيل.
+Nederlandstalige editie van FPV-ARBCON. Deze zelfstandige branch `dutch-edition` is gebaseerd op commit `0a40c6b8227d49a608d8a60c3beb39ad2db0e015` van `codex/android-validation-recovery`.
 
-# Getting Started
+De functies, MSP-protocollen, configuratiewaarden en beveiligingen blijven gelijk aan de brontoepassing. De interface, meldingen, toegankelijkheidslabels en 37 handleidingafbeeldingen zijn Nederlandstalig. De weergaverichting is van links naar rechts, ook op een apparaat met een Arabische systeemtaal.
 
-> **Note**: Make sure you have completed the [Set Up Your Environment](https://reactnative.dev/docs/set-up-your-environment) guide before proceeding.
+De Android-app heet **FPV Configurator NL** en krijgt applicatie-ID `com.fpvarbcon.nl`, zodat beide edities naast elkaar kunnen worden geïnstalleerd. De interne Kotlin-namespace en React Native-registratienaam blijven behouden.
 
-## Step 1: Start Metro
-
-First, you will need to run **Metro**, the JavaScript build tool for React Native.
-
-To start the Metro dev server, run the following command from the root of your React Native project:
+## Lokaal controleren
 
 ```sh
-# Using npm
-npm start
-
-# OR using Yarn
-yarn start
+npm ci
+npm run typecheck
+npm run typecheck:web
+npm test -- --maxWorkers=2
+npm run build:web
+npm run scan:web-bundle
 ```
 
-## Step 2: Build and run your app
+Het Arabische referentiebestand blijft in `src/i18n/locales/ar.json` voor de sleutel- en interpolatiecontrole. Alleen `nl.json` wordt door deze editie geladen.
 
-With Metro running, open a new terminal window/pane from the root of your React Native project, and use one of the following commands to build and run your Android or iOS app:
+## Android
 
-### Android
+Een Nederlandse APK wordt in een volgende stap gebouwd. Deze wijziging publiceert alleen de broncode. De Android-controles voor een eerste start, herstart en oude RTL-voorkeuren zijn aangepast voor deze editie; uitvoering op een Android-apparaat blijft onderdeel van die volgende stap.
+
+Verwijder de propellers vóór motortests. Ontvangstbevestigingen van de vluchtcontroller bewijzen geen mechanische beweging of veilige vlucht. Het oorspronkelijke beeldmerk is behouden.
+
+## Handleidingafbeeldingen opnieuw maken
+
+De browserfixture in `e2e/flight-guides` gebruikt echte schermcomponenten met expliciete voorbeeldgegevens. De 76 controles in `docs/flight-guides/_tools/validate.mjs` lezen de waarden en selecties van de echte bedieningselementen.
+
+Installeer voor deze ontwikkeltools `playwright-core` lokaal en gebruik een geïnstalleerde Chromium-browser:
 
 ```sh
-# Using npm
-npm run android
-
-# OR using Yarn
-yarn android
+npm install --no-save --package-lock=false playwright-core@1.62.1
 ```
 
-### iOS
-
-For iOS, remember to install CocoaPods dependencies (this only needs to be run on first clone or after updating native deps).
-
-The first time you create a new project, run the Ruby bundler to install CocoaPods itself:
+Dit is alleen nodig voor de ontwikkeltools. Bouw en serveer de fixture op poort 4182:
 
 ```sh
-bundle install
+npx vite build --config e2e/flight-guides/vite.config.mts
+npx vite preview --config e2e/flight-guides/vite.config.mts
 ```
 
-Then, and every time you update your native dependencies, run:
+Voer vanuit een tweede terminal de controles en opnamen uit. Stel zo nodig `CHROME_PATH` in op uw Chromium-uitvoerbaar bestand:
 
 ```sh
-bundle exec pod install
+node docs/flight-guides/_tools/validate.mjs
+node docs/flight-guides/_tools/capture.mjs
+node docs/flight-guides/_tools/write-app-content.mjs
 ```
 
-For more information, please visit [CocoaPods Getting Started guide](https://guides.cocoapods.org/using/getting-started.html).
+Met `GUIDE_STYLE=firmware` maakt u alleen de drie firmwareafbeeldingen opnieuw. Een mislukte opname vervangt de bestaande afbeeldingen niet. Voorbeeldgegevens zijn geen waarnemingen van aangesloten hardware.
 
-```sh
-# Using npm
-npm run ios
-
-# OR using Yarn
-yarn ios
-```
-
-If everything is set up correctly, you should see your new app running in the Android Emulator, iOS Simulator, or your connected device.
-
-This is one way to run your app — you can also build it directly from Android Studio or Xcode.
-
-## Step 3: Modify your app
-
-Now that you have successfully run the app, let's make changes!
-
-Open `App.tsx` in your text editor of choice and make some changes. When you save, your app will automatically update and reflect these changes — this is powered by [Fast Refresh](https://reactnative.dev/docs/fast-refresh).
-
-When you want to forcefully reload, for example to reset the state of your app, you can perform a full reload:
-
-- **Android**: Press the <kbd>R</kbd> key twice or select **"Reload"** from the **Dev Menu**, accessed via <kbd>Ctrl</kbd> + <kbd>M</kbd> (Windows/Linux) or <kbd>Cmd ⌘</kbd> + <kbd>M</kbd> (macOS).
-- **iOS**: Press <kbd>R</kbd> in iOS Simulator.
-
-## Congratulations! :tada:
-
-You've successfully run and modified your React Native App. :partying_face:
-
-### Now what?
-
-- If you want to add this new React Native code to an existing application, check out the [Integration guide](https://reactnative.dev/docs/integration-with-existing-apps).
-- If you're curious to learn more about React Native, check out the [docs](https://reactnative.dev/docs/getting-started).
-
-# Troubleshooting
-
-If you're having issues getting the above steps to work, see the [Troubleshooting](https://reactnative.dev/docs/troubleshooting) page.
-
-# Learn More
-
-To learn more about React Native, take a look at the following resources:
-
-- [React Native Website](https://reactnative.dev) - learn more about React Native.
-- [Getting Started](https://reactnative.dev/docs/environment-setup) - an **overview** of React Native and how setup your environment.
-- [Learn the Basics](https://reactnative.dev/docs/getting-started) - a **guided tour** of the React Native **basics**.
-- [Blog](https://reactnative.dev/blog) - read the latest official React Native **Blog** posts.
-- [`@facebook/react-native`](https://github.com/facebook/react-native) - the Open Source; GitHub **repository** for React Native.
+[Oorspronkelijke projectdocumentatie](README.original.md).

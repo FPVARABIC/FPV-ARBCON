@@ -674,7 +674,7 @@ describe('a CLI save declares the reboot before it causes it', () => {
     expect(rejected.error).toBe(true);
 
     // The controller refuses to send `save` at all after an error.
-    await expect(cli.saveAndClose()).rejects.toThrow(/لن يُرسل save/);
+    await expect(cli.saveAndClose()).rejects.toThrow(new RegExp("save zal niet worden verzonden nadat CLI-fouten verschijnen; Ga zonder te bewaren en check het pakket\\."));
     expect(recovery.getPhase().kind).toBe('IDLE');
     expect(board.cliCommands).not.toContain('save');
     await cli.exitWithoutSave();

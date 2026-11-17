@@ -150,9 +150,9 @@ describe('MotorConfigurationPanel', () => {
     const text = JSON.stringify(tree.toJSON());
 
     expect(controller.load).toHaveBeenCalledWith({sessionId: 'fc-1', generation: 1});
-    expect(text).toContain('بروتوكول خرج ESC');
-    expect(text).toContain('ميزات ESC وسلوك الخمول');
-    expect(text).toContain('وضع 3D');
+    expect(text).toContain("ESC-uitgangsprotocol");
+    expect(text).toContain("ESC-functies en stationair gedrag");
+    expect(text).toContain("3D-modus");
     expect(
       tree.root.findByProps({ testID: 'motor-config-protocol-7' }).props
         .accessibilityState.selected,
@@ -196,7 +196,7 @@ describe('MotorConfigurationPanel', () => {
       expect.any(Object),
       expect.objectContaining({ motorIdleRaw: 600, motorProtocolRaw: 7 }),
     );
-    expect(JSON.stringify(tree.toJSON())).toContain('تم حفظ الإعدادات');
+    expect(JSON.stringify(tree.toJSON())).toContain("Instellingen opgeslagen en door teruglezen geverifieerd. Start opnieuw op voor instellingen die dat vereisen.");
     act(() => tree.unmount());
   });
 
@@ -256,9 +256,9 @@ describe('MotorConfigurationPanel', () => {
     // change exists to remove. It must say "stop the motors", and it must
     // say that the session can stay open.
     const rendered = JSON.stringify(tree.toJSON());
-    expect(rendered).toContain('أوقف المحركات');
-    expect(rendered).toContain('دون إنهاء الجلسة');
-    expect(rendered).not.toContain('جلسة المحركات» في وضع الإيقاف');
+    expect(rendered).toContain("Stop eerst de motoren. Daarna kunt u instellingen wijzigen zonder de sessie te beëindigen.");
+    expect(rendered).toContain("Stop eerst de motoren. Daarna kunt u instellingen wijzigen zonder de sessie te beëindigen.");
+    expect(rendered).not.toContain("motorsessie uitgeschakeld");
     expect(
       tree.root.findAllByProps({ testID: 'motor-config-review-save' }),
     ).toHaveLength(0);
@@ -274,7 +274,7 @@ describe('MotorConfigurationPanel', () => {
     };
     const tree = await render(controller);
     const text = JSON.stringify(tree.toJSON());
-    expect(text).toContain('تعذّرت قراءة الإعدادات');
+    expect(text).toContain("Instellingen konden niet worden uitgelezen. Geen wijziging verzonden.");
     expect(
       tree.root.findAllByProps({ testID: 'motor-config-loading' }),
     ).toHaveLength(0);

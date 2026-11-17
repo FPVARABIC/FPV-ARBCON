@@ -137,7 +137,7 @@ function buildTopBarNoticeCandidates(
       priority: CONNECTION_NOTICE_PRIORITY.DISCONNECTED,
       activatedAtMs: 0,
       updatedAtMs: 0,
-      title: 'تم فقدان الاتصال بمتحكم الطيران',
+      title: "Verbinding met de vluchtcontroller verloren",
     });
   } else if (ownership === 'CLOSING') {
     candidates.push({
@@ -148,7 +148,7 @@ function buildTopBarNoticeCandidates(
       priority: CONNECTION_NOTICE_PRIORITY.CLOSING,
       activatedAtMs: 0,
       updatedAtMs: 0,
-      title: 'جارٍ قطع الاتصال',
+      title: "Verbinding verbreken…",
     });
   } else if (indicator === 'RECOVERY_FAILED') {
     candidates.push({
@@ -159,8 +159,8 @@ function buildTopBarNoticeCandidates(
       priority: CONNECTION_NOTICE_PRIORITY.RECOVERY_FAILED,
       activatedAtMs: 0,
       updatedAtMs: 0,
-      title: 'تعذّرت استعادة الاتصال',
-      message: 'أعد توصيل متحكم الطيران للمتابعة.',
+      title: "Verbinding herstellen mislukt",
+      message: "Verbind de vluchtcontroller opnieuw om door te gaan.",
     });
   } else if (indicator === 'RECOVERING') {
     candidates.push({
@@ -171,7 +171,7 @@ function buildTopBarNoticeCandidates(
       priority: CONNECTION_NOTICE_PRIORITY.RECOVERING,
       activatedAtMs: 0,
       updatedAtMs: 0,
-      title: 'جارٍ استعادة الاتصال تلقائيًا',
+      title: "Verbinding automatisch herstellen…",
     });
   }
 
@@ -184,8 +184,8 @@ function buildTopBarNoticeCandidates(
       priority: IDENTIFICATION_WARNING_PRIORITY,
       activatedAtMs: 0,
       updatedAtMs: 0,
-      title: 'تعذّر التعرف على متحكم الطيران',
-      message: 'قد تكون بعض المعلومات غير متاحة.',
+      title: "Vluchtcontroller kon niet worden geïdentificeerd",
+      message: "Sommige informatie is mogelijk niet beschikbaar.",
     });
   }
 

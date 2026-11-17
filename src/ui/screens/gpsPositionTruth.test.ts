@@ -25,7 +25,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
-import ar from '../../i18n/locales/ar.json';
+import ar from '../../i18n/locales/nl.json';
 
 const SCREEN = fs.readFileSync(path.join(__dirname, 'GpsScreen.tsx'), 'utf8');
 
@@ -37,12 +37,12 @@ const EXECUTABLE = SCREEN.replace(/\{\/\*[\s\S]*?\*\/\}/g, '')
 describe('the position card does not name itself like a button', () => {
   it('no longer titles itself with an action-shaped phrase', () => {
     // «مركز ...» reads as "centre the ...", which is why it was pressed.
-    expect(ar.gpsSystem.positionTitle).not.toMatch(/^مركز\b/);
+    expect(ar.gpsSystem.positionTitle).not.toMatch(/^centreren\b/i);
   });
 
   it('describes what it shows', () => {
-    expect(ar.gpsSystem.positionTitle).toContain('الإحداثيات');
-    expect(ar.gpsSystem.positionTitle).toContain('المنزل');
+    expect(ar.gpsSystem.positionTitle).toContain("Coördinaten en richting naar thuispositie");
+    expect(ar.gpsSystem.positionTitle).toContain("Coördinaten en richting naar thuispositie");
   });
 });
 
@@ -69,7 +69,7 @@ describe('no fabricated bearing', () => {
 
   it('explains the absence in words too', () => {
     expect(EXECUTABLE).toContain("t('gpsSystem.positionWaiting')");
-    expect(ar.gpsSystem.positionWaiting).toContain('تثبيت');
+    expect(ar.gpsSystem.positionWaiting).toContain("Coördinaten en thuisrichting verschijnen na een geldige positiebepaling.");
   });
 });
 
@@ -121,8 +121,8 @@ describe('a stale position is never presented as a live one', () => {
     expect(EXECUTABLE).toContain("t('gpsSystem.positionWaiting')");
     expect(EXECUTABLE).toContain("t('gpsSystem.positionReady')");
     // The stale wording must name the actual risk, not just say "old".
-    expect(ar.gpsSystem.positionStale).toContain('متأخرة');
-    expect(ar.gpsSystem.positionStale).toContain('موقع الطائرة');
+    expect(ar.gpsSystem.positionStale).toContain("verouderd");
+    expect(ar.gpsSystem.positionStale).toContain("positie van het toestel");
   });
 });
 

@@ -49,7 +49,7 @@ for (const md of markdown) {
   text.split('\n').forEach((line, i) => {
     if (/\bTODO\b|\bTBD\b|\bFIXME\b|XXX|LOREM|final2|new-final/.test(line)) note(`PLACEHOLDER ${md}:${i + 1}`);
   });
-  for (const claim of ['FLIGHT VERIFIED', 'HARDWARE VERIFIED', 'RELEASE READY', 'flight tested', 'field verified', 'hardware safe', 'أفضل إعداد']) {
+  for (const claim of ['FLIGHT VERIFIED', 'HARDWARE VERIFIED', 'RELEASE READY', 'flight tested', 'field verified', 'hardware safe', "Beste instelling"]) {
     for (const m of text.matchAll(new RegExp(claim.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'))) {
       const line = text.slice(0, m.index).split('\n').length;
       const ctx = text.split('\n')[line - 1];
@@ -97,7 +97,7 @@ for (const style of STYLES) {
 
   const guide = readFileSync(`${IMAGE_ROOT}/${style.id}/guide.md`, 'utf8');
   for (const step of style.steps) {
-    if (!guide.includes(`### الخطوة ${step.n} — ${step.titleAr}`)) note(`GUIDE ${style.id}: step ${step.n} heading missing`);
+    if (!guide.includes(`Stap ${step.n}  —  ${step.titleAr}`)) note(`GUIDE ${style.id}: step ${step.n} heading missing`);
     if (!guide.includes(`images/${step.n}-${step.shot}.png`)) note(`GUIDE ${style.id}: step ${step.n} image not referenced`);
   }
 }
@@ -298,7 +298,7 @@ u('U3', 'each style has its own images/ folder',
   const NEEDED = [
     {label: 'Rates', rx: /rates/i},
     {label: 'PID', rx: /\bPID\b/},
-    {label: 'الفلاتر', rx: /الفلاتر|Notch|LPF/},
+    {label: "Filters", rx: /الفلاتر|Notch|LPF/},
   ];
   const bad = [];
   for (const s of FLIGHT_STYLES) {
@@ -339,9 +339,9 @@ u('U3', 'each style has its own images/ folder',
   const bad = [];
   for (const s of STYLES) {
     const md = guideOf(s.id);
-    const complete = md.includes('### الخطوة 1 — ')
-      && md.includes(`### الخطوة ${s.steps.length} — `)
-      && md.includes('## بقية الإعدادات — قرار لكل واحد')
+    const complete = md.includes("Stap 1")
+      && md.includes(`Stap ${s.steps.length}`)
+      && md.includes("De rest van de instellingen is een keuze voor iedereen.")
       && existsSync(`${reviewDir(s.id)}/contact-sheet.png`);
     if (!complete) bad.push(s.id);
   }

@@ -141,38 +141,38 @@ const REQUIRED_TOKENS = [
  */
 
 /**
- * CATEGORY B, second half - THE ARABIC SAFETY COPY, in the shipped bytes.
+ * CATEGORY B, second half - THE DUTCH SAFETY COPY, in the shipped bytes.
  *
  * Bundlers may emit non-ASCII literally or as `\uXXXX` escapes, so each
  * string is looked for in BOTH forms and a match in either is a pass.
  * Guessing one form would make this check fail for the wrong reason, or
  * silently stop testing anything if the emitted form changed.
  */
-const REQUIRED_ARABIC_STRINGS = [
+const REQUIRED_SAFETY_STRINGS = [
   // The propeller warning - the single most important string in the app.
   // P3: the propeller warning became one concise sentence - the same
   // safety intent, stated once instead of as a checklist ritual.
-  'أزل المراوح قبل اختبار المحركات.',
+  "Verwijder de propellers voordat u de motoren test.",
   // The emergency instruction after an unconfirmed stop.
-  'تعذّر تأكيد توقف المحرك — افصل بطارية LiPo فورًا',
+  "Het stoppen van de motor is niet bevestigd — koppel de LiPo-accu onmiddellijk los",
   // Configuration transaction truthfulness.
-  'نتيجة الكتابة أو الحفظ غير مؤكدة',
-  'يجب الإبقاء على منفذ MSP واحد على الأقل.',
+  require('../src/i18n/locales/nl.json').motorConfiguration.outcomeUnconfirmed,
+  require('../src/i18n/locales/nl.json').portsConfiguration.validation.NO_MSP_PORT,
   // Firmware erase gates.
-  'أزلت جميع المراوح',
-  'تجاوز عدم تطابق Target',
+  "Ik heb alle propellers verwijderd",
+  "Afwijkend Target toch toestaan",
   // The browser-specific capability messages. These are CAPABILITY
   // statements, not device advice: the previous copy told every
   // visitor to move to a desktop, which reads as a desktop-only
   // product to someone holding a phone.
-  'هذا المتصفح لا يوفّر واجهة Web Serial المطلوبة للاتصال بمتحكم الطيران. جرّب Chrome أو Edge حديثًا عبر HTTPS.',
-  'يتطلب الاتصال بجهاز USB صفحة آمنة عبر HTTPS. افتح التطبيق من عنوان HTTPS ثم أعد المحاولة.',
+  "Deze browser biedt geen Web Serial voor verbinding met de vluchtcontroller. Probeer een recente versie van Chrome of Edge via HTTPS.",
+  "Voor verbinding met een USB-apparaat is een beveiligde HTTPS-pagina vereist. Open de app via HTTPS en probeer het opnieuw.",
   // The hardware-verification titles that replaced the English review
   // token above. Required, not merely permitted: the point of removing
   // an internal phrase is to say the same true thing in the operator's
   // language, NOT to delete the warning. Both must ship.
-  'يتطلب التحقق على جهاز فعلي',
-  'يتطلب اختبارًا على جهاز فعلي',
+  "Verificatie op echte hardware vereist",
+  "Test op echte hardware vereist",
 ];
 
 /** CATEGORY C - unrelated sentinels. Without these the scan is vacuous. */
@@ -280,6 +280,8 @@ function escapeNonAscii(text) {
 
 /** True when `text` appears either literally or fully escaped. */
 function containsEitherForm(haystack, text) {
+  // Metro emits Latin-1 accents such as é as \xHH in production.
+  haystack = haystack.replace(/\\x([0-9a-f]{2})/gi, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
   return haystack.includes(text) || haystack.includes(escapeNonAscii(text));
 }
 
@@ -306,7 +308,7 @@ function analyzeWebBundle(combined, entry) {
   const missingRequired = REQUIRED_TOKENS.filter(
     token => countOccurrences(combined, token) === 0,
   );
-  const missingArabic = REQUIRED_ARABIC_STRINGS.filter(
+  const missingArabic = REQUIRED_SAFETY_STRINGS.filter(
     text => !containsEitherForm(combined, text),
   );
   const missingReceiver = REQUIRED_RECEIVER_TOKENS.filter(
@@ -434,14 +436,14 @@ function main() {
 
   console.log('');
   console.log(
-    `B. Required: ${REQUIRED_TOKENS.length} transport/screen tokens, ${REQUIRED_ARABIC_STRINGS.length} Arabic safety strings`,
+    `B. Required: ${REQUIRED_TOKENS.length} transport/screen tokens, ${REQUIRED_SAFETY_STRINGS.length} Dutch safety strings`,
   );
   for (const token of result.missingRequired) {
     console.error(`   MISSING REQUIRED TOKEN: ${JSON.stringify(token)}`);
   }
   for (const text of result.missingArabic) {
     console.error(
-      `   MISSING ARABIC SAFETY STRING: ${JSON.stringify(
+      `   MISSING DUTCH SAFETY STRING: ${JSON.stringify(
         text,
       )} - this ships as a raw i18n key in the browser.`,
     );
@@ -507,7 +509,7 @@ function main() {
   }
   console.log('');
   console.log(
-    'OK - no Android/Node-only code in the browser bundle, Web Serial transport and Arabic safety copy both shipped, the Receiver professional surface present, lazy routes still lazy, shell layout contract intact.',
+    'OK - no Android/Node-only code in the browser bundle, Web Serial transport and Dutch safety copy both shipped, the Receiver professional surface present, lazy routes still lazy, shell layout contract intact.',
   );
   return 0;
 }
@@ -522,7 +524,7 @@ module.exports = {
   FORBIDDEN_TOKENS,
   LAZY_ONLY_TOKENS,
   POSITIVE_CONTROLS,
-  REQUIRED_ARABIC_STRINGS,
+  REQUIRED_SAFETY_STRINGS,
   REQUIRED_TOKENS,
   main,
 };

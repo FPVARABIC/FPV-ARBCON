@@ -342,10 +342,10 @@ describe('THE KAKUTE F7 REPRODUCTION - expected MSP disappearance must never abo
     expect(client.flashDfuFirmware.mock.calls[0][0]).toBe(DFU_B.deviceId);
 
     const text = screenText(renderer);
-    expect(text).toContain('تمت كتابة Firmware والتحقق منه بنجاح');
+    expect(text).toContain("Firmware geschreven en geverifieerd");
     // The trap messages must never have become the terminal state.
-    expect(text).not.toContain('لم يُعثر على Flight Controller');
-    expect(text).not.toContain('وصّل اللوحة عبر USB');
+    expect(text).not.toContain("Geen vluchtcontroller gevonden");
+    expect(text).not.toContain("Sluit de printplaat via USB aan");
   });
 
   it('the firmware stays prepared while the transport changes underneath it - and a NETWORK build succeeds with NO device attached at all', async () => {
@@ -390,7 +390,7 @@ describe('the board is ALREADY in DFU - the second legitimate entry path', () =>
 
     // The presence watcher found it without any serial detection.
     expect(has(renderer, 'simple-dfu-ready')).toBe(true);
-    expect(screenText(renderer)).toContain('اللوحة في وضع DFU');
+    expect(screenText(renderer)).toContain("De printplaat staat in DFU-modus. De identiteit kan in deze modus niet worden uitgelezen. Controleer of het gekozen Target klopt.");
 
     await selectKakuteTarget(renderer);
     await prepareFirmware(renderer);
@@ -399,14 +399,14 @@ describe('the board is ALREADY in DFU - the second legitimate entry path', () =>
     // a property of the bootloader, not a reason to refuse. The screen
     // WARNS and the flash proceeds on the first press; there is no
     // acknowledgement checkbox and no hidden post-confirmation gate.
-    expect(screenText(renderer)).toContain('لا يمكن قراءة هويتها');
+    expect(screenText(renderer)).toContain("De printplaat staat in DFU-modus. De identiteit kan in deze modus niet worden uitgelezen. Controleer of het gekozen Target klopt.");
     expect(has(renderer, 'simple-accept-unverified-dfu')).toBe(false);
 
     await press(renderer, 'simple-flash-firmware');
     await flush(24);
     expect(client.flashDfuFirmware).toHaveBeenCalledTimes(1);
-    expect(screenText(renderer)).toContain('تمت كتابة Firmware والتحقق منه بنجاح');
-    expect(screenText(renderer)).not.toContain('وصّل اللوحة عبر USB');
+    expect(screenText(renderer)).toContain("Firmware geschreven en geverifieerd");
+    expect(screenText(renderer)).not.toContain("Sluit de printplaat via USB aan");
   });
 
   it('«الدخول إلى وضع DFU» with the board already in DFU reports ready instead of failing over the missing serial device', async () => {
@@ -422,7 +422,7 @@ describe('the board is ALREADY in DFU - the second legitimate entry path', () =>
     // operator races the watcher, the action itself must short-circuit.
     expect(has(renderer, 'simple-dfu-ready')).toBe(true);
     const text = screenText(renderer);
-    expect(text).not.toContain('لم يُعثر');
+    expect(text).not.toContain("niet gevonden");
   });
 });
 
@@ -440,7 +440,7 @@ describe('target identity is frozen across the re-enumeration', () => {
     // Enter DFU through the software path: verify → freeze → reboot.
     await press(renderer, 'simple-enter-dfu');
     await flush(24);
-    expect(screenText(renderer)).toContain('هويتها مطابقة');
+    expect(screenText(renderer)).toContain("De printplaat staat in DFU-modus en de identiteit komt overeen met het gekozen Target.");
 
     // Switching the selection to a DIFFERENT board keeps the transport
     // (the board is still physically in DFU) but the frozen identity no
@@ -449,15 +449,15 @@ describe('target identity is frozen across the re-enumeration', () => {
     await press(renderer, 'simple-target-MATEKF405');
     await flush();
     expect(has(renderer, 'simple-dfu-ready')).toBe(true);
-    expect(screenText(renderer)).not.toContain('هويتها مطابقة');
+    expect(screenText(renderer)).not.toContain("de identiteit komt overeen");
     // Downgraded to a warning, never a gate.
-    expect(screenText(renderer)).toContain('لا يمكن قراءة هويتها');
+    expect(screenText(renderer)).toContain("De printplaat staat in DFU-modus. De identiteit kan in deze modus niet worden uitgelezen. Controleer of het gekozen Target klopt.");
     expect(has(renderer, 'simple-accept-unverified-dfu')).toBe(false);
 
     // Returning to the verified target restores the derived match - the
     // identity was never erased by USB churn or selection churn.
     await selectKakuteTarget(renderer);
-    expect(screenText(renderer)).toContain('هويتها مطابقة');
+    expect(screenText(renderer)).toContain("de identiteit komt overeen");
   });
 
   it('a normal-mode identity that does not match the selection BLOCKS before the destructive phase - reboot is never sent', async () => {
@@ -487,7 +487,7 @@ describe('target identity is frozen across the re-enumeration', () => {
 
     expect(pipeline.rebootToBootloader).not.toHaveBeenCalled();
     expect(client.flashDfuFirmware).not.toHaveBeenCalled();
-    expect(screenText(renderer)).toContain('لا يطابق');
+    expect(screenText(renderer)).toContain("komt niet overeen");
   });
 });
 
@@ -513,7 +513,7 @@ describe('WebUSB permission is a one-press continuation, never a restart', () =>
     });
     await flush();
 
-    expect(screenText(renderer)).toContain('اختر جهاز DFU للمتابعة');
+    expect(screenText(renderer)).toContain("De firmware is gereed en de printplaat staat in DFU. Schrijven is nog niet gestart. Kies het DFU-apparaat om dezelfde bewerking voort te zetten.");
     expect(has(renderer, 'simple-choose-dfu')).toBe(true);
     expect(client.flashDfuFirmware).not.toHaveBeenCalled();
 
@@ -526,7 +526,7 @@ describe('WebUSB permission is a one-press continuation, never a restart', () =>
     expect(pipeline.rebootToBootloader).toHaveBeenCalledTimes(1);
     expect(build).toHaveBeenCalledTimes(1);
     expect(client.flashDfuFirmware).toHaveBeenCalledTimes(1);
-    expect(screenText(renderer)).toContain('تمت كتابة Firmware والتحقق منه بنجاح');
+    expect(screenText(renderer)).toContain("Firmware geschreven en geverifieerd");
   });
 
   it('a cancelled chooser changes nothing: firmware stays prepared, the hold remains, no failure is declared', async () => {
@@ -553,7 +553,7 @@ describe('WebUSB permission is a one-press continuation, never a restart', () =>
 
     const text = screenText(renderer);
     expect(has(renderer, 'simple-choose-dfu')).toBe(true);
-    expect(text).not.toContain('فشل التفليش');
+    expect(text).not.toContain("Flashen mislukt");
     expect(client.flashDfuFirmware).not.toHaveBeenCalled();
   });
 
@@ -585,7 +585,7 @@ describe('bounded waits, late appearance and genuine absence', () => {
     });
     await flush();
     // The wait elapsed without a device - guidance, not failure.
-    expect(screenText(renderer)).not.toContain('فشل');
+    expect(screenText(renderer)).not.toContain("mislukt");
 
     // The board finally re-enumerates; the watcher adopts it.
     client.dfu = [DFU_B];
@@ -612,7 +612,7 @@ describe('bounded waits, late appearance and genuine absence', () => {
 
     const text = screenText(renderer);
     expect(text).toContain('DFU');
-    expect(text).toContain('اختيار جهاز USB');
+    expect(text).toContain("USB-apparaat kiezen");
   });
 });
 
@@ -650,7 +650,7 @@ describe('the completion engine keeps its P0 contract through the new phases', (
       {code: 'DFU_TRANSFER_OVERRUN_WRITE', nativeMessage: 'انقطع جهاز DFU أثناء الكتابة.'},
       'writing',
     );
-    expect(screenText(renderer)).toContain('فشل التفليش');
+    expect(screenText(renderer)).toContain("Flashen mislukt");
     expect(client.flashDfuFirmware).toHaveBeenCalledTimes(1);
   });
 
@@ -659,7 +659,7 @@ describe('the completion engine keeps its P0 contract through the new phases', (
       {code: 'DFU_COMPLETION_UNCONFIRMED_MANIFEST', nativeMessage: 'GETSTATUS never settled.'},
       'manifesting',
     );
-    expect(screenText(renderer)).toContain('تعذر تأكيد اكتمال العملية');
+    expect(screenText(renderer)).toContain("Voltooiing niet bevestigd");
   });
 
   it('a poisoned DFU session refuses to start again without reacquisition - stated failure, exactly one engine call', async () => {
@@ -667,7 +667,7 @@ describe('the completion engine keeps its P0 contract through the new phases', (
       code: 'DFU_SESSION_POISONED',
       nativeMessage: 'pending transfer against this session',
     });
-    expect(screenText(renderer)).toContain('فشل التفليش');
+    expect(screenText(renderer)).toContain("Flashen mislukt");
     expect(client.flashDfuFirmware).toHaveBeenCalledTimes(1);
   });
 
@@ -695,13 +695,13 @@ describe('the completion engine keeps its P0 contract through the new phases', (
       await Promise.resolve();
     });
 
-    expect(screenText(renderer)).not.toContain('تمت كتابة Firmware والتحقق منه بنجاح');
+    expect(screenText(renderer)).not.toContain("Firmware geschreven en geverifieerd");
 
     await act(async () => {
       resolveFlash();
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(screenText(renderer)).toContain('تمت كتابة Firmware والتحقق منه بنجاح');
+    expect(screenText(renderer)).toContain("Firmware geschreven en geverifieerd");
   });
 });

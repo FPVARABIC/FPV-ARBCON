@@ -117,6 +117,6 @@ const styles = StyleSheet.create({
   tagline: {
     ...typography.body,
     color: colors.textSecondary,
-    writingDirection: 'rtl',
-    textAlign: 'right', maxWidth: PROSE_MEASURE},
+    writingDirection: 'ltr',
+    textAlign: 'left', maxWidth: PROSE_MEASURE},
 });

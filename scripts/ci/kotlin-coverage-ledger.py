@@ -124,13 +124,13 @@ CLASSIFICATION: dict[str, tuple[str, str]] = {
         ANDROID_ONLY,
         "Application.onCreate runs only when the platform starts the process. Its one "
         "decision - applying the Arabic layout direction before React Native loads - is "
-        "asserted by ArabicLayoutDirectionTest and by verify-rtl-cold-launch.sh on a "
+        "asserted by DutchLayoutDirectionTest and by verify-rtl-cold-launch.sh on a "
         "genuinely fresh install.",
     ),
     "com/fpvarbcon/RtlBootstrap.kt": (
         ANDROID_ONLY,
         "Writes React Native's own SharedPreferences through I18nUtil, which needs a real "
-        "Context. Executed by ArabicLayoutDirectionTest, LocalDataSurvivalTest, "
+        "Context. Executed by DutchLayoutDirectionTest, LocalDataSurvivalTest, "
         "LifecycleCampaignTest and ResourceGrowthCampaignTest.",
     ),
     "com/fpvarbcon/transport/DfuControlChannel.kt": (

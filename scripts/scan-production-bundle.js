@@ -27,7 +27,7 @@
  *    remain at exactly zero: `com.fpvarbcon.debug` exists only in the
  *    debug source set, and the release DEX must contain none of it.
  *
- * B. REQUIRED IN THE BUNDLE. The motor engine and the Arabic safety copy.
+ * B. REQUIRED IN THE BUNDLE. The motor engine and the Dutch safety copy.
  *    Absence is a failure. This is the direct guard against a silent
  *    re-containment: if a future change puts the engine or the catalogue
  *    back behind a build conditional, the app ships raw i18n keys and a
@@ -273,7 +273,7 @@ const REQUIRED_ENGINE_TOKENS = [
 ];
 
 /**
- * CATEGORY B, second half - THE ARABIC SAFETY COPY, in the shipped bytes.
+ * CATEGORY B, second half - THE DUTCH SAFETY COPY, in the shipped bytes.
  *
  * This is the check that would have caught the on-device defect. Metro may
  * emit non-ASCII either literally or as `\uXXXX` escapes depending on the
@@ -282,47 +282,47 @@ const REQUIRED_ENGINE_TOKENS = [
  * this check fail for the wrong reason - or, worse, silently stop testing
  * anything if the emitted form changed.
  */
-const REQUIRED_ARABIC_STRINGS = [
+const REQUIRED_SAFETY_STRINGS = [
   // The propeller warning - the single most important string in the app.
   // P3: the propeller warning became one concise sentence - the same
   // safety intent, stated once instead of as a checklist ritual.
-  'أزل المراوح قبل اختبار المحركات.',
+  "Verwijder de propellers voordat u de motoren test.",
   // The honest manual battery-suitability boundary. This build does not
   // read cell count inside the motor-test controller.
-  'لا يقرأ هذا الإصدار عدد خلايا البطارية آليًا',
+  "Deze versie leest het aantal accucellen niet automatisch uit",
   // The emergency instruction after an unconfirmed stop.
-  'تعذّر تأكيد توقف المحرك — افصل بطارية LiPo فورًا',
+  "Het stoppen van de motor is niet bevestigd — koppel de LiPo-accu onmiddellijk los",
   // A block reason, proving the whole blockReason subtree shipped.
-  'تعذّرت قراءة حالة التسليح أو أصبحت القراءة قديمة.',
+  "De armstatus kon niet worden gelezen of is verouderd.",
   // Configuration transaction truthfulness.
-  'نتيجة الكتابة أو الحفظ غير مؤكدة',
-  'المحركات وESC',
-  'إعادة ترتيب مخارج المحركات',
-  'اتجاه دوران DShot',
-  'لم يثبت التطبيق الاتجاه ميكانيكيًا',
-  'حفظ وإعادة تشغيل المتحكم',
-  'يجب الإبقاء على منفذ MSP واحد على الأقل.',
+  require('../src/i18n/locales/nl.json').motorConfiguration.outcomeUnconfirmed,
+  "Motoren en ESC",
+  "Motoruitgangen opnieuw toewijzen",
+  "Draairichting via DShot",
+  "De app heeft de werkelijke draairichting niet gemeten",
+  "Opslaan en de vluchtcontroller opnieuw opstarten",
+  require('../src/i18n/locales/nl.json').portsConfiguration.validation.NO_MSP_PORT,
   // Firmware erase gates: absence would turn a present flasher into an
   // untranslated or unsafe release surface.
-  'أزلت جميع المراوح',
-  'فصلت البطارية والطاقة من USB فقط',
-  'تجاوز عدم تطابق Target',
-  'إزالة DFU Read Protection',
+  "Ik heb alle propellers verwijderd",
+  "Ik heb de accu losgekoppeld; alleen USB levert voeding",
+  "Afwijkend Target toch toestaan",
+  "DFU Read Protection verwijderen",
   'Unified Config / Custom Defaults',
-  'نظام GPS / GNSS',
-  'لا يوجد منفذ GPS معيّن',
-  'تهيئة GPS',
-  'نتيجة إحدى الكتابات غير مؤكدة',
-  'التكوينات',
-  'حفظ جراحي موثّق',
-  'لا توجد روابط أو واجهات خارجية',
+  "GPS / GNSS-systeem",
+  "Er is geen GPS-poort toegewezen",
+  "GPS configureren",
+  require('../src/i18n/locales/nl.json').gpsSystem.outcome.unconfirmed,
+  "Configuraties",
+  "Gerichte, geverifieerde opslag",
+  require('../src/i18n/locales/nl.json').configurationsSystem.integratedDetail,
   // The hardware-verification titles that replaced the English review
   // token above. Required, not merely permitted: removing an internal
   // phrase must not quietly remove the warning with it. A software ACK
   // still proves storage, never physical behaviour, and these two lines
   // are how the operator is told so.
-  'يتطلب التحقق على جهاز فعلي',
-  'يتطلب اختبارًا على جهاز فعلي',
+  "Verificatie op echte hardware vereist",
+  "Test op echte hardware vereist",
 ];
 
 /** CATEGORY C - unrelated sentinels. Without these the scan is vacuous.
@@ -927,6 +927,8 @@ function withoutBidiMarks(text) {
 }
 
 function containsEitherForm(haystack, text) {
+  // Metro emits Latin-1 accents such as é as \xHH in production.
+  haystack = haystack.replace(/\\x([0-9a-f]{2})/gi, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
   if (haystack.includes(text)) {
     return true;
   }
@@ -956,7 +958,7 @@ function analyzeBundle(bundleText) {
     token => countOccurrences(bundleText, token) === 0,
   );
 
-  const missingArabic = REQUIRED_ARABIC_STRINGS.filter(
+  const missingArabic = REQUIRED_SAFETY_STRINGS.filter(
     text => !containsEitherForm(bundleText, text),
   );
 
@@ -1282,7 +1284,7 @@ function main() {
 
   console.log('');
   console.log(
-    `B. Required in the shipped bundle: ${REQUIRED_ENGINE_TOKENS.length} engine tokens, ${REQUIRED_ARABIC_STRINGS.length} Arabic safety strings`,
+    `B. Required in the shipped bundle: ${REQUIRED_ENGINE_TOKENS.length} engine tokens, ${REQUIRED_SAFETY_STRINGS.length} Dutch safety strings`,
   );
   for (const token of bundle.missingEngine) {
     console.error(
@@ -1293,7 +1295,7 @@ function main() {
   }
   for (const text of bundle.missingArabic) {
     console.error(
-      `   MISSING ARABIC SAFETY STRING: ${JSON.stringify(
+      `   MISSING DUTCH SAFETY STRING: ${JSON.stringify(
         text,
       )} - this ships as a raw i18n key on device.`,
     );
@@ -1374,7 +1376,7 @@ function main() {
   }
   console.log('');
   console.log(
-    'OK - no forbidden token present, engine and Arabic safety copy both shipped, positive controls present, engine and Receiver boundaries intact.',
+    'OK - no forbidden token present, engine and Dutch safety copy both shipped, positive controls present, engine and Receiver boundaries intact.',
   );
   return 0;
 }
@@ -1392,7 +1394,7 @@ module.exports = {
   FORBIDDEN_TOKENS,
   LEASE_GUARDED_DISPATCH,
   POSITIVE_CONTROLS,
-  REQUIRED_ARABIC_STRINGS,
+  REQUIRED_SAFETY_STRINGS,
   REQUIRED_ENGINE_TOKENS,
   main,
 };

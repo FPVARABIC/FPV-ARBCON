@@ -58,7 +58,7 @@ describe('ReactNativeSerialPort', () => {
     await port.connect();
     const read = port.readExactly(1, 10_000);
     h.detach();
-    await expect(read).rejects.toThrow(/فصل/);
+    await expect(read).rejects.toThrow(new RegExp("Het USB is ontkoppeld tijdens Firmware\\.\\."));
   });
 
   it('rejects an in-flight bootloader read immediately when the operation is cancelled', async () => {
@@ -70,7 +70,7 @@ describe('ReactNativeSerialPort', () => {
 
     controller.abort();
 
-    await expect(read).rejects.toThrow(/أُلغي/);
+    await expect(read).rejects.toThrow(new RegExp("Operatie Firmware\\. is geannuleerd\\."));
     await port.disconnect();
     expect(h.client.closeSession).toHaveBeenCalledWith('session-1');
   });
@@ -90,7 +90,7 @@ describe('ReactNativeSerialPort', () => {
     controller.abort();
     finishOpening('late-session');
 
-    await expect(connect).rejects.toThrow(/أُلغي/);
+    await expect(connect).rejects.toThrow(new RegExp("Operatie Firmware\\. is geannuleerd\\."));
     expect(h.client.closeSession).toHaveBeenCalledWith('late-session');
     expect(h.client.startReading).not.toHaveBeenCalled();
   });

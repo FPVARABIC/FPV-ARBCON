@@ -65,7 +65,7 @@ function tuning(options: {
 
 describe('simplifiedModeCopy', () => {
   it('names the three modes the firmware defines', () => {
-    expect(simplifiedModeCopy(classifySimplifiedPidsMode(0))).toEqual({label: 'موقوف', known: true});
+    expect(simplifiedModeCopy(classifySimplifiedPidsMode(0))).toEqual({label: "Uit", known: true});
     expect(simplifiedModeCopy(classifySimplifiedPidsMode(1)).known).toBe(true);
     expect(simplifiedModeCopy(classifySimplifiedPidsMode(2)).known).toBe(true);
   });
@@ -82,35 +82,35 @@ describe('simplifiedModeCopy', () => {
 
 describe('the sentences that must not soften', () => {
   it('says the flight controller RECALCULATES from the base values, not from the current tune', () => {
-    expect(SIMPLIFIED_EXPLANATION).toContain('يعيد');
-    expect(SIMPLIFIED_EXPLANATION).toContain('لا من ضبطك الحالي');
+    expect(SIMPLIFIED_EXPLANATION).toContain("Bij opslaan berekent de vluchtcontroller de PID-waarden en bijbehorende filters opnieuw vanuit de ingebouwde firmwarestandaarden, niet vanuit uw huidige afstelling. Later uitschakelen voorkomt nieuwe berekeningen, maar herstelt uw vorige waarden niet.");
+    expect(SIMPLIFIED_EXPLANATION).toContain("Bij opslaan berekent de vluchtcontroller de PID-waarden en bijbehorende filters opnieuw vanuit de ingebouwde firmwarestandaarden, niet vanuit uw huidige afstelling. Later uitschakelen voorkomt nieuwe berekeningen, maar herstelt uw vorige waarden niet.");
     // Neutral by policy, and more accurate: the generator reads the
     // firmware's own compile-time defaults, whatever project built it.
-    expect(SIMPLIFIED_SUMMARY).toContain('القيم الافتراضية للبرنامج الثابت');
+    expect(SIMPLIFIED_SUMMARY).toContain("standaardwaarden");
   });
 
   it('says switching the feature off does not bring the old values back', () => {
-    expect(SIMPLIFIED_EXPLANATION).toContain('لا يعيد قيمك السابقة');
-    expect(SIMPLIFIED_OFF_CONSEQUENCE).toContain('لا تعود');
+    expect(SIMPLIFIED_EXPLANATION).toContain("Bij opslaan berekent de vluchtcontroller de PID-waarden en bijbehorende filters opnieuw vanuit de ingebouwde firmwarestandaarden, niet vanuit uw huidige afstelling. Later uitschakelen voorkomt nieuwe berekeningen, maar herstelt uw vorige waarden niet.");
+    expect(SIMPLIFIED_OFF_CONSEQUENCE).toContain("Uitschakelen stopt alleen het opnieuw berekenen bij toekomstige wijzigingen. De huidige waarden blijven zoals de vluchtcontroller ze heeft berekend. De waarden van vóór het inschakelen worden niet hersteld.");
     // "استعادة" / "استرجاع" would describe something the firmware simply
     // does not do: `disableSimplifiedTuning` clears three flags and stops.
-    expect(SIMPLIFIED_OFF_CONSEQUENCE).not.toContain('استعادة');
-    expect(SIMPLIFIED_OFF_CONSEQUENCE).not.toContain('استرجاع');
+    expect(SIMPLIFIED_OFF_CONSEQUENCE).not.toContain("Herstellen");
+    expect(SIMPLIFIED_OFF_CONSEQUENCE).not.toContain("herstellen");
   });
 
   it('tells the pilot a filter already at zero will not be switched on by the multiplier', () => {
-    expect(SIMPLIFIED_ZERO_FILTER_NOTE).toContain('معطّل');
-    expect(SIMPLIFIED_ZERO_FILTER_NOTE).toContain('لن');
+    expect(SIMPLIFIED_ZERO_FILTER_NOTE).toContain("uitgeschakeld");
+    expect(SIMPLIFIED_ZERO_FILTER_NOTE).toContain("schakelt het niet in");
   });
 
   it('keeps the gyro block marked global and the D-term block marked profile-scoped', () => {
-    expect(SIMPLIFIED_GYRO_FILTER.help).toContain('لا يخص ملف الضبط');
-    expect(SIMPLIFIED_DTERM_FILTER.help).toContain('ملف الضبط الحالي');
+    expect(SIMPLIFIED_GYRO_FILTER.help).toContain("Vermenigvuldigingsfactor voor de gyrofilterfrequenties. Geldt voor de hele controller en hoort niet bij één afstelprofiel.");
+    expect(SIMPLIFIED_DTERM_FILTER.help).toContain("Vermenigvuldigingsfactor voor de D-term-filterfrequenties. Geldt voor het huidige afstelprofiel.");
     expect(SIMPLIFIED_GYRO_FILTER.title).not.toBe(SIMPLIFIED_DTERM_FILTER.title);
   });
 
   it('explains a disabled direct field by naming the generator, not the firmware', () => {
-    expect(GENERATOR_OWNED_NOTE).toContain('الضبط المبسّط');
+    expect(GENERATOR_OWNED_NOTE).toContain("eenvoudige afstelling");
   });
 });
 
@@ -191,7 +191,7 @@ describe('overwriteSummary', () => {
     expect(categories).toContain('PID');
     expect(categories).toContain('Feedforward');
     expect(categories).toContain('D Max');
-    expect(categories).not.toContain('الفلاتر');
+    expect(categories).not.toContain("Filters");
   });
 });
 

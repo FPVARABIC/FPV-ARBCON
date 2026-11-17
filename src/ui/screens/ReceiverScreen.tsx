@@ -838,8 +838,8 @@ const styles = StyleSheet.create({
   root: {flex: 1, backgroundColor: colors.background},
   content: {width: '100%', alignSelf: 'center', padding: spacing.lg, gap: spacing.md},
   header: {gap: 2},
-  title: {...typography.title, color: colors.textPrimary, textAlign: 'right'},
-  subtitle: {...typography.caption, color: colors.textSecondary, textAlign: 'right', writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+  title: {...typography.title, color: colors.textPrimary, textAlign: 'left'},
+  subtitle: {...typography.caption, color: colors.textSecondary, textAlign: 'left', writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
 
   workspace: {gap: spacing.sm},
   statusStrip: {flexDirection: 'row', alignItems: 'center', gap: spacing.md, flexWrap: 'wrap', backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.borderSoft, borderRadius: radii.lg, paddingVertical: spacing.sm, paddingHorizontal: spacing.md},
@@ -869,8 +869,8 @@ const styles = StyleSheet.create({
   channelsCardWide: {flex: 3},
   sticksCardWide: {flex: 2},
   sectionHead: {flexDirection: 'row', alignItems: 'center', gap: spacing.sm},
-  sectionTitle: {...typography.heading, color: colors.textPrimary, textAlign: 'right'},
-  sectionHint: {...typography.caption, color: colors.textMuted, textAlign: 'right', writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+  sectionTitle: {...typography.heading, color: colors.textPrimary, textAlign: 'left'},
+  sectionHint: {...typography.caption, color: colors.textMuted, textAlign: 'left', writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   alertHead: {flexDirection: 'row', alignItems: 'center', gap: spacing.sm},
 
   channelRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.sm},
@@ -879,8 +879,8 @@ const styles = StyleSheet.create({
   auxGrid: {gap: 2, marginTop: spacing.sm, borderTopWidth: 1, borderTopColor: colors.borderSoft, paddingTop: spacing.sm},
   auxGridWide: {flexDirection: 'row', flexWrap: 'wrap', columnGap: spacing.lg},
   // P3-M: labels follow the page's RTL flow rather than being pinned left.
-  channelName: {...typography.caption, color: colors.textSecondary, width: 62, textAlign: 'right'},
-  channelNamePrimary: {...typography.label, color: colors.textPrimary, fontWeight: '700', width: 62, textAlign: 'right'},
+  channelName: {...typography.caption, color: colors.textSecondary, width: 62, textAlign: 'left'},
+  channelNamePrimary: {...typography.label, color: colors.textPrimary, fontWeight: '700', width: 62, textAlign: 'left'},
   channelTrack: {height: 14, flex: 1, minWidth: 80, borderRadius: 7, backgroundColor: colors.backgroundRaised, overflow: 'hidden', borderWidth: 1, borderColor: colors.borderSoft},
   /* Full width, scaled on X. See ChannelRow: `width` is a layout
      property and cannot be native-driven, `scaleX` can. */
@@ -889,9 +889,9 @@ const styles = StyleSheet.create({
   channelCenter: {position: 'absolute', top: 0, bottom: 0, left: '50%', width: 1, backgroundColor: colors.accentStrong},
   // P3-E: the delivered value is a prominent, tabular figure - never the
   // smallest text on the screen.
-  channelValue: {...typography.label, color: colors.textPrimary, width: 52, textAlign: 'right', fontVariant: ['tabular-nums']},
-  channelValuePrimary: {...typography.heading, color: colors.textPrimary, width: 52, textAlign: 'right', fontVariant: ['tabular-nums']},
-  emptyText: {...typography.body, color: colors.textMuted, textAlign: 'right', maxWidth: PROSE_MEASURE},
+  channelValue: {...typography.label, color: colors.textPrimary, width: 52, textAlign: 'left', fontVariant: ['tabular-nums']},
+  channelValuePrimary: {...typography.heading, color: colors.textPrimary, width: 52, textAlign: 'left', fontVariant: ['tabular-nums']},
+  emptyText: {...typography.body, color: colors.textMuted, textAlign: 'left', maxWidth: PROSE_MEASURE},
 
   sticksRow: {flexDirection: 'row', justifyContent: 'center', gap: spacing.md, flexWrap: 'wrap'},
   stickWrap: {alignItems: 'center', gap: 5},
@@ -925,7 +925,7 @@ const styles = StyleSheet.create({
 
   row: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.md, flexWrap: 'wrap'},
   rowValue: {...typography.heading, color: colors.accentStrong, fontVariant: ['tabular-nums']},
-  fieldLabel: {...typography.label, color: colors.textPrimary, textAlign: 'right'},
+  fieldLabel: {...typography.label, color: colors.textPrimary, textAlign: 'left'},
   mapInput: {minHeight: 48, borderWidth: 1, borderColor: colors.border, borderRadius: radii.md, backgroundColor: colors.backgroundRaised, color: colors.textPrimary, paddingHorizontal: spacing.md, textAlign: 'center', fontWeight: '700', letterSpacing: 3},
   invalidInput: {borderColor: colors.error, borderWidth: 2},
   presetRow: {flexDirection: 'row', gap: spacing.sm, flexWrap: 'wrap'},
@@ -938,17 +938,17 @@ const styles = StyleSheet.create({
      with the numeric span. That made the browser lay the sentence out
      left-to-right-first, so "صفر للتعطيل، أو قناة AUX." painted its
      Latin word ahead of the Arabic that introduces it. */
-  rangeHint: {...typography.caption, color: colors.textMuted, textAlign: 'center', writingDirection: 'rtl'},
+  rangeHint: {...typography.caption, color: colors.textMuted, textAlign: 'center', writingDirection: 'ltr'},
   toggleRow: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.md},
   flexOne: {flex: 1},
 
   warning: {...noticeSurface, borderColor: colors.warning, backgroundColor: colors.warningSoft, gap: spacing.sm},
-  warningText: {...typography.caption, color: colors.warning, textAlign: 'right', writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+  warningText: {...typography.caption, color: colors.warning, textAlign: 'left', writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   danger: {...noticeSurface, borderColor: colors.error, backgroundColor: colors.errorSoft, gap: 3},
-  dangerTitle: {...typography.caption, fontWeight: '700', color: colors.error, textAlign: 'right', maxWidth: PROSE_MEASURE},
-  dangerText: {...typography.caption, color: colors.error, textAlign: 'right', writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+  dangerTitle: {...typography.caption, fontWeight: '700', color: colors.error, textAlign: 'left', maxWidth: PROSE_MEASURE},
+  dangerText: {...typography.caption, color: colors.error, textAlign: 'left', writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   success: {...noticeSurface, borderColor: colors.success, backgroundColor: colors.successSoft},
-  successText: {...typography.caption, color: colors.success, textAlign: 'right', maxWidth: PROSE_MEASURE},
+  successText: {...typography.caption, color: colors.success, textAlign: 'left', maxWidth: PROSE_MEASURE},
   inlineAction: {alignSelf: 'flex-start'},
   loading: {...typography.body, color: colors.textSecondary, textAlign: 'center', padding: spacing.xl},
   bottomSpace: {height: spacing.xl},

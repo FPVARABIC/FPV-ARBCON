@@ -66,13 +66,13 @@ describe('SafetyStrip', () => {
     it('renders the blocked heading and every reason when there are 3 or fewer', () => {
       const readiness: ArmingReadiness = {
         status: 'BLOCKED',
-        reasons: [reason('a', 'CRITICAL_DANGER', 'خطر حرج'), reason('b', 'WARNING', 'تحذير')],
+        reasons: [reason('a', 'CRITICAL_DANGER', 'خطر حرج'), reason('b', 'WARNING', "Waarschuwing")],
       };
       const renderer = render(readiness);
       const text = allText(renderer);
       expect(text).toContain(i18n.t('safetyStrip.blockedHeading'));
       expect(text).toContain('خطر حرج');
-      expect(text).toContain('تحذير');
+      expect(text).toContain("Waarschuwing");
       // Fits within the top-3 cap - no "show all" link.
       expect(findByTestID(renderer, 'safety-strip-show-all')).toBeNull();
     });
@@ -95,8 +95,8 @@ describe('SafetyStrip', () => {
       expect(text).toContain('خطر حرج 2');
       expect(text).toContain('مانع تسليح');
       // Not shown yet (rank 4 and 5).
-      expect(text).not.toContain('تحذير 1');
-      expect(text).not.toContain('معلومة');
+      expect(text).not.toContain("Waarschuwing 1");
+      expect(text).not.toContain("Informatie");
 
       expect(findByTestID(renderer, 'safety-strip-show-all')).not.toBeNull();
     });
@@ -112,7 +112,7 @@ describe('SafetyStrip', () => {
         ],
       };
       const renderer = render(readiness);
-      expect(allText(renderer)).not.toContain('معلومة');
+      expect(allText(renderer)).not.toContain("Informatie");
 
       const showAll = findByTestID(renderer, 'safety-strip-show-all');
       await act(async () => {

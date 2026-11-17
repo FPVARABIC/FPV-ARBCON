@@ -587,26 +587,26 @@ const styles = StyleSheet.create({
   sectionTitle: {
     ...typography.sectionTitle,
     color: colors.textPrimary,
-    writingDirection: 'rtl'},
+    writingDirection: 'ltr'},
   body: {
     ...typography.body,
     color: colors.textPrimary,
-    writingDirection: 'rtl',
+    writingDirection: 'ltr',
     flexShrink: 1, maxWidth: PROSE_MEASURE},
   caption: {
     ...typography.caption,
     color: colors.textSecondary,
-    writingDirection: 'rtl',
+    writingDirection: 'ltr',
     flexShrink: 1, maxWidth: PROSE_MEASURE},
   disclaimer: {
     ...typography.body,
     color: colors.warning,
-    writingDirection: 'rtl',
+    writingDirection: 'ltr',
     flexShrink: 1, maxWidth: PROSE_MEASURE},
   caveat: {
     ...typography.body,
     color: colors.warning,
-    writingDirection: 'rtl',
+    writingDirection: 'ltr',
     flexShrink: 1, maxWidth: PROSE_MEASURE},
   /* THE ACTIVE PANEL. No border and no fill of its own: it already sits
      inside the identification card, and a frame inside a frame inside a
@@ -616,7 +616,7 @@ const styles = StyleSheet.create({
   panelTitle: {
     ...typography.bodyStrong,
     color: colors.textPrimary,
-    writingDirection: 'rtl',
+    writingDirection: 'ltr',
   },
   /* One rule, where the reading genuinely changes from "what this is" to
      "what to answer". */
@@ -637,7 +637,7 @@ const styles = StyleSheet.create({
   evidenceHeading: {
     ...typography.caption,
     color: colors.accentStrong,
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   row: {flexDirection: 'row', alignItems: 'center', gap: spacing.sm},
   optionRow: {flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs},
   option: {
@@ -679,17 +679,17 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.accentStrong,
     fontWeight: '700',
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   linkButton: {minHeight: 44, justifyContent: 'center'},
   linkText: {
     ...typography.caption,
     color: colors.accentStrong,
     fontWeight: '700',
-    writingDirection: 'rtl'},
+    writingDirection: 'ltr'},
   optionLabel: {
     ...typography.body,
     color: colors.textPrimary,
-    writingDirection: 'rtl',
+    writingDirection: 'ltr',
     flexShrink: 1},
   confirmButton: {
     minHeight: 44,
@@ -704,15 +704,15 @@ const styles = StyleSheet.create({
   confirmLabel: {
     ...typography.sectionTitle,
     color: colors.textPrimary,
-    writingDirection: 'rtl'},
+    writingDirection: 'ltr'},
   lockedText: {
     ...typography.body,
     color: colors.success,
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   overall: {
     ...typography.title,
     color: colors.textPrimary,
-    writingDirection: 'rtl',
+    writingDirection: 'ltr',
     flexShrink: 1},
   reportRow: {
     flexDirection: 'row',

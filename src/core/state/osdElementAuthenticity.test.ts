@@ -228,7 +228,7 @@ describe('the OSD element table matches the firmware enum', () => {
        so the honest answer is a neutral placeholder that cannot be
        mistaken for a named element. */
     expect(osdElementToken(OSD_ITEMS_E.length)).toBe(`EL${OSD_ITEMS_E.length + 1}`);
-    expect(osdElementName(OSD_ITEMS_E.length)).toContain('عنصر OSD');
+    expect(osdElementName(OSD_ITEMS_E.length)).toContain("OSD-element");
   });
 
   /**

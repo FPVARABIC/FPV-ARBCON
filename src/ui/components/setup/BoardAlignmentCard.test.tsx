@@ -160,7 +160,7 @@ describe('BoardAlignmentCard', () => {
     const text = textOf(renderer);
     expect(text).toContain('2°');
     expect(text).toContain('90°');
-    expect(text).toContain('مضبوطة');
+    expect(text).toContain("Ingesteld");
   });
 
   it('says the alignment is unknown - and shows no values - when the read is refused', async () => {
@@ -171,18 +171,18 @@ describe('BoardAlignmentCard', () => {
     expect(node(renderer, 'board-alignment-values')).toBeUndefined();
     expect(node(renderer, 'board-alignment-edit')).toBeUndefined();
     const text = textOf(renderer);
-    expect(text).toContain('غير معروفة');
+    expect(text).toContain("Onbekend.");
     // The sentence that stops the live 3D model from reading as proof.
-    expect(text).toContain('ليس دليلًا على أن اتجاه اللوحة مضبوط');
-    expect(text).toContain('لا يوجد اتصال بمتحكم الطيران');
+    expect(text).toContain("De montagehoeken van deze controller zijn nog niet uitgelezen. Het 3D-model hierboven toont de huidige houding van het toestel; het bewijst niet dat de montageoriëntatie is ingesteld.");
+    expect(text).toContain("Geen verbinding met de vluchtcontroller");
   });
 
   it('separates "standard" from "unknown" - 0/0/0 is a reading, not an absence', async () => {
     const controller = makeController([{kind: 'LOADED', snapshot: NEUTRAL}]);
     const renderer = await render(controller);
     const text = textOf(renderer);
-    expect(text).toContain('قياسية');
-    expect(text).not.toContain('غير معروفة');
+    expect(text).toContain("Standaard");
+    expect(text).not.toContain("Onbekend.");
   });
 
   it('keeps save disabled until a value actually changes', async () => {
@@ -232,7 +232,7 @@ describe('BoardAlignmentCard', () => {
        must name the ACKNOWLEDGEMENT of the restart command, because this
        is the branch where `rebootAcknowledged` is true. A sentence that
        merely mentioned a restart would no longer be enough. */
-    expect(text).toContain('أقرّ المتحكم أمر إعادة التشغيل');
+    expect(text).toContain("Opgeslagen en door teruglezen geverifieerd. De herstartopdracht is bevestigd. Verbind opnieuw nadat de controller is opgestart.");
   });
 
   it('tells the operator the alignment is unknown again after an unverified save', async () => {
@@ -254,8 +254,8 @@ describe('BoardAlignmentCard', () => {
     });
     expect(node(renderer, 'board-alignment-values')).toBeUndefined();
     const text = textOf(renderer);
-    expect(text).toContain('غير معروفة');
-    expect(text).toContain('تعذّر إثبات القراءة الراجعة');
+    expect(text).toContain("Onbekend.");
+    expect(text).toContain("Opslaan en de herstartopdracht zijn bevestigd, maar teruglezen ter verificatie is mislukt. Verbind opnieuw en lees de montageoriëntatie uit vóór de vlucht.");
   });
 
   it('stops claiming to know the values after an unconfirmed write', async () => {
@@ -270,7 +270,7 @@ describe('BoardAlignmentCard', () => {
       press(renderer, 'board-alignment-save');
     });
     expect(node(renderer, 'board-alignment-values')).toBeUndefined();
-    expect(textOf(renderer)).toContain('لم يصل رد المتحكم');
+    expect(textOf(renderer)).toContain("De controller heeft het schrijven van de montageoriëntatie niet bevestigd. De uitkomst is onbekend en de opdracht is niet herhaald. Verbind opnieuw en lees de huidige waarden uit.");
   });
 
   it('reports an ARMED refusal in words, keeps the draft, and loses nothing', async () => {
@@ -289,12 +289,12 @@ describe('BoardAlignmentCard', () => {
     // disarming and pressing save again is the whole recovery.
     expect(node(renderer, 'board-alignment-editor')).toBeDefined();
     expect(disabled(renderer, 'board-alignment-save')).toBe(false);
-    expect(textOf(renderer)).toContain('انزع التسليح');
+    expect(textOf(renderer)).toContain("De vluchtcontroller is ARMED. Schakel ARM uit voordat u instellingen opslaat.");
     // And the board's own values are still known - cancelling returns
     // to them rather than to "unknown".
     press(renderer, 'board-alignment-cancel');
     expect(node(renderer, 'board-alignment-values')).toBeDefined();
-    expect(textOf(renderer)).toContain('قياسية');
+    expect(textOf(renderer)).toContain("Standaard");
   });
 
   it('restores the board’s values when an edit is cancelled', async () => {

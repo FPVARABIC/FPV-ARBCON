@@ -17,7 +17,7 @@ import {StyleSheet} from 'react-native';
 import ReactTestRenderer, {act} from 'react-test-renderer';
 
 import '../../i18n';
-import ar from '../../i18n/locales/ar.json';
+import ar from '../../i18n/locales/nl.json';
 import {
   MotorAirframeDiagram,
   computeMotorGlyphLayout,
@@ -327,7 +327,7 @@ describe('M-D: a frame this project has not authored is not drawn', () => {
       mixerModeRaw: HEX6H,
       motorNumbers: [1, 2, 3, 4, 5, 6],
     }).text();
-    for (const phrase of ['أمامي يمين', 'أمامي يسار', 'خلفي يمين', 'خلفي يسار']) {
+    for (const phrase of ["Rechtsvoor", "Linksvoor", "Rechtsachter", "Linksachter"]) {
       expect(body).not.toContain(phrase);
     }
   });

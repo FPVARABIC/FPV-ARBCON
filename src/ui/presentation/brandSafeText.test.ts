@@ -10,7 +10,7 @@ import {
 describe('brand-safe operator copy', () => {
   it('keeps USB identity useful while removing an external product brand', () => {
     expect(usbProductLabel('Betaflight STM32F405', 'وحدة USB')).toBe(
-      'متحكم طيران STM32F405',
+      "Vluchtcontroller STM32F405",
     );
     expect(usbManufacturerLabel('Betaflight')).toBeNull();
   });
@@ -28,21 +28,21 @@ describe('brand-safe operator copy', () => {
 
   it('reports a firmware family as the capability it implies, never as a project name', () => {
     // The dialect this application verifies against.
-    expect(firmwareFamilyLabel('BETAFLIGHT')).toBe('MSP متوافق');
+    expect(firmwareFamilyLabel('BETAFLIGHT')).toBe("Compatibel met MSP");
     // Case and stray whitespace are the wire's business, not the label's.
-    expect(firmwareFamilyLabel('  betaflight ')).toBe('MSP متوافق');
+    expect(firmwareFamilyLabel('  betaflight ')).toBe("Compatibel met MSP");
 
     // Any OTHER named project is a real answer, and a different one: the
     // board speaks MSP, but not a dialect this application has verified.
     // It must not be flattened into "unknown" - the operator can read the
     // difference between "not checked" and "nothing identified".
-    expect(firmwareFamilyLabel('INAV')).toBe('MSP غير متحقَّق منه');
-    expect(firmwareFamilyLabel('EMUFLIGHT')).toBe('MSP غير متحقَّق منه');
+    expect(firmwareFamilyLabel('INAV')).toBe("MSP niet geverifieerd");
+    expect(firmwareFamilyLabel('EMUFLIGHT')).toBe("MSP niet geverifieerd");
 
     // Nothing identified at all.
-    expect(firmwareFamilyLabel('UNKNOWN')).toBe('غير معروف');
-    expect(firmwareFamilyLabel('')).toBe('غير معروف');
-    expect(firmwareFamilyLabel('   ')).toBe('غير معروف');
+    expect(firmwareFamilyLabel('UNKNOWN')).toBe("Onbekend");
+    expect(firmwareFamilyLabel('')).toBe("Onbekend");
+    expect(firmwareFamilyLabel('   ')).toBe("Onbekend");
   });
 
   it('never returns a label that still carries the brand', () => {

@@ -45,16 +45,16 @@ export interface SimplifiedModeCopy {
  */
 export function simplifiedModeCopy(mode: SimplifiedPidsMode): SimplifiedModeCopy {
   switch (mode.kind) {
-    case 'OFF': return Object.freeze({label: 'موقوف', known: true});
+    case 'OFF': return Object.freeze({label: "Uit", known: true});
     case 'RP': return Object.freeze({label: 'Roll + Pitch', known: true});
     case 'RPY': return Object.freeze({label: 'Roll + Pitch + Yaw', known: true});
-    case 'UNKNOWN': return Object.freeze({label: `وضع غير معروف (${mode.raw})`, known: false});
+    case 'UNKNOWN': return Object.freeze({label: `Onbekende modus (${mode.raw})`, known: false});
   }
 }
 
 /** The one-line description under the section title. */
 export const SIMPLIFIED_SUMMARY =
-  'يضبط عدة قيم في ملف الضبط الحالي دفعة واحدة، انطلاقًا من القيم الافتراضية للبرنامج الثابت.';
+  "Stelt meerdere waarden in het huidige afstelprofiel tegelijk in, op basis van de standaardwaarden van de firmware.";
 
 /**
  * The expandable explanation. Two facts, both proven, both load-bearing.
@@ -64,7 +64,7 @@ export const SIMPLIFIED_SUMMARY =
  * season on.
  */
 export const SIMPLIFIED_EXPLANATION =
-  'عند الحفظ، يعيد متحكم الطيران حساب قيم PID والفلاتر المرتبطة من القيم الافتراضية المدمجة في برنامجه الثابت، لا من ضبطك الحالي. وإيقاف الضبط المبسّط لاحقًا يمنع إعادة الحساب في المرات القادمة، لكنه لا يعيد قيمك السابقة.';
+  "Bij opslaan berekent de vluchtcontroller de PID-waarden en bijbehorende filters opnieuw vanuit de ingebouwde firmwarestandaarden, niet vanuit uw huidige afstelling. Later uitschakelen voorkomt nieuwe berekeningen, maar herstelt uw vorige waarden niet.";
 
 /**
  * What the user is told when they choose OFF.
@@ -73,7 +73,7 @@ export const SIMPLIFIED_EXPLANATION =
  * firmware does neither.
  */
 export const SIMPLIFIED_OFF_CONSEQUENCE =
-  'إيقاف الضبط المبسّط يوقف إعادة الحساب في التعديلات القادمة فقط. القيم الحالية تبقى كما ولّدها المتحكم، ولا تعود القيم التي كانت قبل تفعيله.';
+  "Uitschakelen stopt alleen het opnieuw berekenen bij toekomstige wijzigingen. De huidige waarden blijven zoals de vluchtcontroller ze heeft berekend. De waarden van vóór het inschakelen worden niet hersteld.";
 
 /* ------------------------------------------------------------------ */
 /* The master multiplier                                               */
@@ -123,43 +123,43 @@ export interface SimplifiedSliderCopy {
 export const SIMPLIFIED_SLIDERS: readonly SimplifiedSliderCopy[] = Object.freeze([
   Object.freeze({
     key: 'masterMultiplier', primary: true,
-    label: 'القوة العامة',
-    help: 'يرفع أو يخفض قيم PID المولّدة كلها معًا.',
+    label: "Algemene sterkte",
+    help: "Verhoogt of verlaagt alle berekende PID-waarden samen.",
   }),
   Object.freeze({
     key: 'piGain', primary: true,
-    label: 'قوة P و I معًا',
-    help: 'يحرّك قيمتي P وI في نفس الاتجاه.',
+    label: "P- en I-sterkte samen",
+    help: "Past P en I in dezelfde richting aan.",
   }),
   Object.freeze({
     key: 'dGain', primary: true,
-    label: 'قوة D',
-    help: 'يغيّر قيمة D المولّدة على المحاور المشمولة.',
+    label: "D-sterkte",
+    help: "Wijzigt de berekende D-waarde op de betrokken assen.",
   }),
   Object.freeze({
     key: 'feedforwardGain', primary: true,
-    label: 'قوة Feedforward',
-    help: 'يغيّر مقدار تتبّع المتحكم لحركة العصا مباشرة.',
+    label: "Feedforward-sterkte",
+    help: "Wijzigt hoe direct de controller de stickbeweging volgt.",
   }),
   Object.freeze({
     key: 'iGain', primary: false,
-    label: 'قوة I',
-    help: 'يعدّل قيمة I وحدها فوق التعديل العام.',
+    label: "I-sterkte",
+    help: "Past alleen I aan, boven op de algemene instelling.",
   }),
   Object.freeze({
     key: 'dMaxGain', primary: false,
-    label: 'قوة D القصوى',
-    help: 'يغيّر الحد الأعلى الذي ترتفع إليه D عند الحاجة.',
+    label: "Maximale D-sterkte",
+    help: "Wijzigt de bovengrens waarnaar D zo nodig stijgt.",
   }),
   Object.freeze({
     key: 'rollPitchRatio', primary: false,
-    label: 'توازن Roll / Pitch',
-    help: 'يغيّر نسبة القيم المولّدة بين المحورين.',
+    label: "Roll/Pitch-balans",
+    help: "Wijzigt de verhouding tussen de berekende waarden voor beide assen.",
   }),
   Object.freeze({
     key: 'pitchPiGain', primary: false,
-    label: 'P و I للمحور الطولي',
-    help: 'يعدّل P وI على Pitch وحده فوق التوازن أعلاه.',
+    label: "P en I voor de pitchas",
+    help: "Past P en I alleen op Pitch aan, boven op de bovenstaande balans.",
   }),
 ]);
 
@@ -186,12 +186,12 @@ export interface SimplifiedFilterCopy {
  * standing for two independent truths.
  */
 export const SIMPLIFIED_GYRO_FILTER: SimplifiedFilterCopy = Object.freeze({
-  title: 'فلتر Gyro',
-  help: 'مضاعف يُطبَّق على ترددات فلتر الجيروسكوب. إعداد عام للمتحكم، لا يخص ملف الضبط.',
+  title: "Gyrofilter",
+  help: "Vermenigvuldigingsfactor voor de gyrofilterfrequenties. Geldt voor de hele controller en hoort niet bij één afstelprofiel.",
 });
 export const SIMPLIFIED_DTERM_FILTER: SimplifiedFilterCopy = Object.freeze({
-  title: 'فلتر D-term',
-  help: 'مضاعف يُطبَّق على ترددات فلتر D. يخص ملف الضبط الحالي.',
+  title: "D-term-filter",
+  help: "Vermenigvuldigingsfactor voor de D-term-filterfrequenties. Geldt voor het huidige afstelprofiel.",
 });
 
 /**
@@ -213,7 +213,7 @@ export function formatEffectiveRange(minHz: number, maxHz: number): string {
  * the multiplier - and the UI must not imply that it would.
  */
 export const SIMPLIFIED_ZERO_FILTER_NOTE =
-  'هذا الفلتر معطّل حاليًا، ولن يُشغّله رفع المضاعف.';
+  "Dit filter is uitgeschakeld. Een hogere vermenigvuldigingsfactor schakelt het niet in.";
 
 /* ------------------------------------------------------------------ */
 /* Overwrite summary                                                   */
@@ -241,7 +241,7 @@ export function overwriteSummary(simplified: MspSimplifiedTuning): OverwriteSumm
   if (owned.some(field => field.endsWith('.F'))) categories.push('Feedforward');
   if (owned.some(field => field.endsWith('.D_MAX'))) categories.push('D Max');
   const touchesFilters = simplified.gyro.enabled || simplified.dterm.enabled;
-  if (touchesFilters) categories.push('الفلاتر');
+  if (touchesFilters) categories.push("Filters");
   return Object.freeze({
     categories: Object.freeze(categories),
     fields: Object.freeze([...owned]),
@@ -261,6 +261,6 @@ export function generatorOwnedDirectFields(simplified: MspSimplifiedTuning | und
   return simplified === undefined ? new Set<string>() : simplifiedOwnedNames(simplified);
 }
 
-export const GENERATOR_OWNED_NOTE = 'تتحكم به إعدادات الضبط المبسّط حاليًا.';
+export const GENERATOR_OWNED_NOTE = "Dit veld wordt momenteel door de eenvoudige afstelling beheerd.";
 
 export {classifySimplifiedPidsMode};

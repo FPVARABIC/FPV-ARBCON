@@ -182,7 +182,7 @@ describe('P-E2 §16: the RPM filter card across the version matrix', () => {
     const renderer = await render(h.port);
     press(renderer, 'pid-advanced-toggle');
     expect(exists(renderer, 'pid-rpm-filter-tail-absent')).toBe(true);
-    expect(screenText(renderer)).toContain('الإعدادات الإضافية لمرشّح RPM تتوفر عبر MSP في الإصدارات الأحدث.');
+    expect(screenText(renderer)).toContain("Bijkomende instellingen voor de RPM-candidaten zijn beschikbaar via MSP in de nieuwste versies.");
     act(() => renderer.unmount());
   });
 

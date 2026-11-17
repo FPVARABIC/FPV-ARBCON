@@ -322,7 +322,7 @@ describe('no external firmware brand reaches the operator', () => {
 
   it('has no brand in any translated value', () => {
     const catalogue = JSON.parse(
-      fs.readFileSync(path.join(REPO_ROOT, 'src/i18n/locales/ar.json'), 'utf8'),
+      fs.readFileSync(path.join(REPO_ROOT, 'src/i18n/locales/nl.json'), 'utf8'),
     ) as unknown;
     const values: { path: string; value: string }[] = [];
     collectTranslationValues(catalogue, '', values);

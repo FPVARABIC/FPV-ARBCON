@@ -38,7 +38,7 @@ import FirmwareFlasherSimpleScreen, {PROBLEM_TITLES} from './FirmwareFlasherSimp
 const VALID_HEX = ':020000040800F2\n:0400000001020304F2\n:00000001FF\n';
 const HEX_BYTES = Uint8Array.from(VALID_HEX, character => character.charCodeAt(0));
 const F4_LAYOUT = '@Internal Flash  /0x08000000/04*016Kg,01*064Kg,07*128Kg';
-const FLASH_FAILED_TITLE = 'فشل التفليش';
+const FLASH_FAILED_TITLE = "Flashen mislukt";
 
 const SERIAL_A: UsbSerialDeviceDescriptor = {
   deviceId: 41,
@@ -362,7 +362,7 @@ describe('a failure before any destructive command is never «فشل التفل�
     const text = screenText(renderer);
     expect(text).toContain(FLASH_FAILED_TITLE);
     // And in Arabic, not the engine's raw English sentence.
-    expect(text).toContain('انقطع نقل البيانات مع جهاز DFU');
+    expect(text).toContain("De DFU-overdracht is onderbroken. Sluit de printplaat opnieuw in DFU-modus aan en flash opnieuw.");
     expect(text).not.toContain('DFU download transfer failed');
   });
 });
@@ -387,7 +387,7 @@ describe('target verification', () => {
 
     // The gate the product owner rejected must not exist in any form.
     expect(has(renderer, 'simple-accept-unverified-dfu')).toBe(false);
-    expect(screenText(renderer)).toContain('لا يمكن قراءة هويتها');
+    expect(screenText(renderer)).toContain("De printplaat staat in DFU-modus. De identiteit kan in deze modus niet worden uitgelezen. Controleer of het gekozen Target klopt.");
     expect(isDisabled(renderer, 'simple-flash-firmware')).toBe(false);
 
     await press(renderer, 'simple-flash-firmware');
@@ -412,7 +412,7 @@ describe('target verification', () => {
     await flush();
     await prepareFirmware(renderer);
 
-    expect(screenText(renderer)).toContain('هويتها مطابقة');
+    expect(screenText(renderer)).toContain("De printplaat staat in DFU-modus en de identiteit komt overeen met het gekozen Target.");
     await press(renderer, 'simple-flash-firmware');
     await flush(24);
     expect(client.flashDfuFirmware).toHaveBeenCalledTimes(1);
@@ -436,7 +436,7 @@ describe('target verification', () => {
     await flush(24);
 
     expect(client.flashDfuFirmware).not.toHaveBeenCalled();
-    expect(screenText(renderer)).toContain('لا يطابق اللوحة');
+    expect(screenText(renderer)).toContain("komt niet overeen met printplaat");
   });
 });
 
@@ -473,17 +473,17 @@ describe('the reset observation is a second, separate truth', () => {
   it('an OBSERVED reset says the board reconnected', async () => {
     const {renderer} = await flashWith(true);
     const text = screenText(renderer);
-    expect(text).toContain('تمت كتابة Firmware والتحقق منه بنجاح');
-    expect(text).toContain('أعادت اللوحة الاتصال بنجاح');
+    expect(text).toContain("Firmware geschreven en geverifieerd");
+    expect(text).toContain("De printplaat heeft opnieuw verbinding gemaakt.");
     expect(text).not.toContain(FLASH_FAILED_TITLE);
   });
 
   it('an UNOBSERVED reset is still a success - it never claims the board came back', async () => {
     const {renderer} = await flashWith(false);
     const text = screenText(renderer);
-    expect(text).toContain('تمت كتابة Firmware والتحقق منه بنجاح');
-    expect(text).toContain('لم نتمكن من تأكيد عودة اللوحة');
-    expect(text).not.toContain('أعادت اللوحة الاتصال بنجاح');
+    expect(text).toContain("Firmware geschreven en geverifieerd");
+    expect(text).toContain("Automatisch opnieuw verbinden kon niet worden bevestigd. Als de printplaat niet snel verschijnt, koppelt u USB los en sluit u opnieuw aan.");
+    expect(text).not.toContain("De printplaat is succesvol opnieuw verbonden");
     expect(text).not.toContain(FLASH_FAILED_TITLE);
     expect(has(renderer, 'simple-flash-success')).toBe(true);
   });
@@ -491,15 +491,15 @@ describe('the reset observation is a second, separate truth', () => {
   it('a silent engine (no reset field at all) still reports the verified success', async () => {
     const {renderer} = await flashWith(undefined);
     const text = screenText(renderer);
-    expect(text).toContain('تمت كتابة Firmware والتحقق منه بنجاح');
+    expect(text).toContain("Firmware geschreven en geverifieerd");
     expect(text).not.toContain(FLASH_FAILED_TITLE);
   });
 
   it('the normal success path never instructs an unplug/replug', async () => {
     const {renderer} = await flashWith(true);
     const text = screenText(renderer);
-    expect(text).not.toContain('افصل USB وأعد توصيله');
-    expect(text).not.toContain('افصل اللوحة وأعد توصيلها');
+    expect(text).not.toContain("Koppel USB los en sluit opnieuw aan");
+    expect(text).not.toContain("Koppel de printplaat los en sluit opnieuw aan");
   });
 });
 

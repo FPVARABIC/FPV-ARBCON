@@ -2494,8 +2494,7 @@ export function MotorsScreenView({
             poles and 3D were reachable only after the tools bench, the
             diagnostics panel and 3,900px of scrolling. */}
           <Text style={styles.toolsHeading} testID="motors-settings-heading">
-            إعدادات المحركات
-          </Text>
+            {"motoren instellingen"}</Text>
           <MotorConfigurationSummary scope={snapshot?.motorScope} />
         {/* Persistent configuration is a separate transaction from bench
             testing. It owns no motor pulse path and is deliberately bound to
@@ -2552,8 +2551,7 @@ export function MotorsScreenView({
               workspace comes first, because a collapsed section would
               simply have no position at all. */}
           <Text style={styles.disclosureTitle} testID="motors-tools-heading">
-            التحقق والأدوات
-          </Text>
+            {"Verificatie en instrumenten"}</Text>
           <Text style={styles.disclosureHint}>
             {t('motorsScreen.advancedVerificationHint')}
           </Text>
@@ -2927,7 +2925,7 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.textSecondary,
     flexShrink: 1,
-    writingDirection: 'rtl',
+    writingDirection: 'ltr',
     maxWidth: PROSE_MEASURE,
   },
 
@@ -2976,15 +2974,15 @@ const styles = StyleSheet.create({
   eyebrow: {
     ...typography.eyebrow,
     color: colors.accentStrong,
-    writingDirection: 'rtl'},
+    writingDirection: 'ltr'},
   title: {
     ...typography.display,
     color: colors.textPrimary,
-    writingDirection: 'rtl'},
+    writingDirection: 'ltr'},
   screenSubtitle: {
     ...typography.body,
     color: colors.textSecondary,
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   dangerBanner: {...noticeSurface, flexDirection: 'row',
     gap: spacing.sm,
     backgroundColor: colors.errorSoft,
@@ -2993,12 +2991,12 @@ const styles = StyleSheet.create({
   dangerTitle: {
     ...typography.sectionTitle,
     color: colors.error,
-    writingDirection: 'rtl',
+    writingDirection: 'ltr',
     flexShrink: 1},
   dangerBody: {
     ...typography.body,
     color: colors.textPrimary,
-    writingDirection: 'rtl',
+    writingDirection: 'ltr',
     flexShrink: 1, maxWidth: PROSE_MEASURE},
   safetyNoticeCopy: { gap: spacing.xs },
   faultBanner: {...noticeSurface, flexDirection: 'row',
@@ -3009,7 +3007,7 @@ const styles = StyleSheet.create({
   faultText: {
     ...typography.title,
     color: colors.error,
-    writingDirection: 'rtl',
+    writingDirection: 'ltr',
     flexShrink: 1},
   /* A COLLAPSED SECTION IS A ROW YOU PRESS, not a page-width panel.
      Both disclosures used the full card style - shadow, 18px padding,
@@ -3033,12 +3031,12 @@ const styles = StyleSheet.create({
   disclosureTitle: {
     ...typography.bodyStrong,
     color: colors.textPrimary,
-    writingDirection: 'rtl',
+    writingDirection: 'ltr',
   },
   disclosureHint: {
     ...typography.caption,
     color: colors.textSecondary,
-    writingDirection: 'rtl',
+    writingDirection: 'ltr',
     flexShrink: 1,
     maxWidth: PROSE_MEASURE,
   },
@@ -3093,7 +3091,7 @@ const styles = StyleSheet.create({
   statusHeading: {
     ...typography.caption,
     color: colors.textMuted,
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   benchCard: {
     gap: spacing.lg,
     backgroundColor: colors.surface,
@@ -3118,16 +3116,16 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.textPrimary,
     fontWeight: '700',
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   sectionTitle: {
     ...typography.sectionTitle,
     color: colors.textPrimary,
-    writingDirection: 'rtl'},
-  statusText: { ...typography.body, writingDirection: 'rtl', flexShrink: 1, maxWidth: PROSE_MEASURE},
+    writingDirection: 'ltr'},
+  statusText: { ...typography.body, writingDirection: 'ltr', flexShrink: 1, maxWidth: PROSE_MEASURE},
   caption: {
     ...typography.caption,
     color: colors.textSecondary,
-    writingDirection: 'rtl',
+    writingDirection: 'ltr',
     flexShrink: 1, maxWidth: PROSE_MEASURE},
   blockList: { gap: spacing.xs },
   diagnosticsToggle: {
@@ -3137,11 +3135,11 @@ const styles = StyleSheet.create({
   blockHeading: {
     ...typography.caption,
     color: colors.warning,
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   blockReason: {
     ...typography.body,
     color: colors.warning,
-    writingDirection: 'rtl',
+    writingDirection: 'ltr',
     flexShrink: 1, maxWidth: PROSE_MEASURE},
   /* Rendered INSIDE the hold control, so the reason a locked button is
      locked is read where the operator is already pressing. */
@@ -3160,13 +3158,13 @@ const styles = StyleSheet.create({
     ...typography.body,
     color: colors.textPrimary,
     textAlign: 'center',
-    writingDirection: 'rtl',
+    writingDirection: 'ltr',
   },
   holdBlockedSafety: {
     ...typography.caption,
     color: colors.textSecondary,
     textAlign: 'center',
-    writingDirection: 'rtl',
+    writingDirection: 'ltr',
   },
   /* The draft preview block - a dashed frame so the drawing inside can
      never be mistaken for the active aircraft, with the label above and
@@ -3183,12 +3181,12 @@ const styles = StyleSheet.create({
     ...typography.label,
     color: colors.textPrimary,
     fontWeight: '700',
-    writingDirection: 'rtl',
+    writingDirection: 'ltr',
   },
   topologyPreviewNote: {
     ...typography.caption,
     color: colors.textSecondary,
-    writingDirection: 'rtl',
+    writingDirection: 'ltr',
     maxWidth: PROSE_MEASURE,
   },
   advancedEmpty: {
@@ -3202,7 +3200,7 @@ const styles = StyleSheet.create({
   advancedEmptyTitle: {
     ...typography.sectionTitle,
     color: colors.textPrimary,
-    writingDirection: 'rtl'},
+    writingDirection: 'ltr'},
   checkRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -3217,7 +3215,7 @@ const styles = StyleSheet.create({
   checkLabel: {
     ...typography.body,
     color: colors.textPrimary,
-    writingDirection: 'rtl',
+    writingDirection: 'ltr',
     flexShrink: 1},
   slotRow: { flexDirection: 'row', gap: spacing.sm },
   slotCard: {
@@ -3259,7 +3257,7 @@ const styles = StyleSheet.create({
   referenceNotice: {
     ...typography.caption,
     color: colors.warning,
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   selectedMotorPanel: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -3288,7 +3286,7 @@ const styles = StyleSheet.create({
   batteryWarning: {
     ...typography.body,
     color: colors.warning,
-    writingDirection: 'rtl',
+    writingDirection: 'ltr',
     flexShrink: 1, maxWidth: PROSE_MEASURE},
   directionNotice: {
     flexDirection: 'row',
@@ -3328,7 +3326,7 @@ const styles = StyleSheet.create({
   beginLabel: {
     ...typography.sectionTitle,
     color: colors.accentStrong,
-    writingDirection: 'rtl'},
+    writingDirection: 'ltr'},
   /* The control and the two captions that belong to it. Left-aligned as
      a group so the button's own width reads as deliberate rather than as
      a column that failed to fill. */
@@ -3389,7 +3387,7 @@ const styles = StyleSheet.create({
   holdLabel: {
     ...typography.sectionTitle,
     color: colors.accentText,
-    writingDirection: 'rtl',
+    writingDirection: 'ltr',
     flexShrink: 1},
   holdLabelOff: {
     color: colors.textPrimary,
@@ -3402,14 +3400,14 @@ const styles = StyleSheet.create({
   holdHint: {
     ...typography.caption,
     color: colors.textSecondary,
-    writingDirection: 'rtl',
+    writingDirection: 'ltr',
     maxWidth: PROSE_MEASURE,
   },
   readinessBlock: {...noticeSurface, gap: spacing.xs,
     borderColor: colors.warning,
     backgroundColor: colors.warningSoft},
   prepareButton: { minHeight: MIN_TOUCH_TARGET + spacing.md, alignItems: 'center', justifyContent: 'center', borderColor: colors.accent, borderWidth: 2, borderRadius: radii.md, padding: spacing.md, gap: spacing.xs },
-  prepareLabel: { ...typography.sectionTitle, color: colors.accentStrong, writingDirection: 'rtl'},
+  prepareLabel: { ...typography.sectionTitle, color: colors.accentStrong, writingDirection: 'ltr'},
   /* THE QUIET STATE, AS A STRIP. Same words, same colour meaning, one
      line. The full accessibility sentence is on the container, so a
      screen reader still hears which motor is addressed. */
@@ -3435,7 +3433,7 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.success,
     fontWeight: '700',
-    writingDirection: 'rtl',
+    writingDirection: 'ltr',
   },
   readyStripMotor: {
     ...typography.mono,
@@ -3447,14 +3445,14 @@ const styles = StyleSheet.create({
     color: colors.error,
     fontWeight: '700',
     textAlign: 'center',
-    writingDirection: 'rtl',
+    writingDirection: 'ltr',
   },
-  inlineError: { ...typography.caption, color: colors.error, writingDirection: 'rtl', textAlign: 'center' },
+  inlineError: { ...typography.caption, color: colors.error, writingDirection: 'ltr', textAlign: 'center' },
   leaveButton: { minHeight: MIN_TOUCH_TARGET, justifyContent: 'center' },
   leaveLabel: {
     ...typography.caption,
     color: colors.textSecondary,
-    writingDirection: 'rtl'},
+    writingDirection: 'ltr'},
   /**
    * The pinned stop bar. A SIBLING of the scroll view, never an overlay -
    * see the ScrollView's note for why nothing reserves space for it.
@@ -3516,16 +3514,16 @@ const styles = StyleSheet.create({
   stopLabelCalm: {
     ...typography.label,
     color: colors.white,
-    writingDirection: 'rtl',
+    writingDirection: 'ltr',
   },
   stopIcon: { fontSize: 22, color: colors.white },
   stopLabel: {
     ...typography.title,
     color: colors.white,
-    writingDirection: 'rtl'},
+    writingDirection: 'ltr'},
   endSessionButton: { minHeight: MIN_TOUCH_TARGET, alignItems: 'center', justifyContent: 'center', borderColor: colors.warning, borderWidth: 2, borderRadius: radii.md, padding: spacing.sm },
-  endSessionLabel: { ...typography.body, color: colors.warning, fontWeight: '700', writingDirection: 'rtl'},
-  sessionEndedText: { ...typography.caption, color: colors.success, textAlign: 'center', writingDirection: 'rtl' },
+  endSessionLabel: { ...typography.body, color: colors.warning, fontWeight: '700', writingDirection: 'ltr'},
+  sessionEndedText: { ...typography.caption, color: colors.success, textAlign: 'center', writingDirection: 'ltr' },
   liveStrip: { height: 3, backgroundColor: colors.warning },
 });
 

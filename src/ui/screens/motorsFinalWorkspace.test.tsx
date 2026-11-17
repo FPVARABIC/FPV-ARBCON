@@ -57,7 +57,7 @@ import {Text} from 'react-native';
 import ReactTestRenderer from 'react-test-renderer';
 
 import '../../i18n';
-import ar from '../../i18n/locales/ar.json';
+import ar from '../../i18n/locales/nl.json';
 import {presentConnectedBoard} from '../session/__testUtils__/connectedBoard';
 import MainTabsScreen from './MainTabsScreen';
 import {MotorsScreenView} from './MotorsScreen';
@@ -240,7 +240,7 @@ describe('M-F2 - expected rotation, from the yaw column and the stored flag', ()
       `${ar.motorsScreen.expectedRotationLabel}: ${ar.motorsScreen.expectedRotationCw}`,
     );
     // The one phrase the three-truths model exists to prevent.
-    expect(rendered).not.toContain('الاتجاه الحالي هو');
+    expect(rendered).not.toContain("De huidige richting is");
   });
 
   it('the props-out build flips the words for the same motor', async () => {
@@ -805,7 +805,7 @@ describe('M-F2 §40 - the display fallback never leaks into command identity', (
     expect(rendered).toContain(ar.motorsScreen.holdToTestNoScope);
     expect(rendered).toContain(ar.motorsScreen.holdBlockedCountUnread);
     // And no readiness line names M1 ready.
-    expect(rendered).not.toContain('جاهزة M1');
+    expect(rendered).not.toContain("M1 gereed");
     expect(operator.pulseCalls).toEqual([]);
   });
 });

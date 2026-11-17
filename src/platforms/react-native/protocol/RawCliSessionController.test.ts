@@ -110,7 +110,7 @@ describe('RawCliSessionController', () => {
     await expect(controller.execute('bad')).resolves.toMatchObject({
       error: true,
     });
-    await expect(controller.saveAndClose()).rejects.toThrow(/لن يُرسل save/);
+    await expect(controller.saveAndClose()).rejects.toThrow(new RegExp("save zal niet worden verzonden nadat CLI-fouten verschijnen; Ga zonder te bewaren en check het pakket\\."));
     expect(raw.writes).not.toContain('save\r');
     await controller.exitWithoutSave();
   });
@@ -142,12 +142,12 @@ describe('RawCliSessionController', () => {
   it('fails before touching the link while backgrounded or motor testing', async () => {
     const background = harness({ background: true });
     await expect(background.controller.begin(SESSION_KEY)).rejects.toThrow(
-      /الواجهة/,
+      new RegExp("Maak de applicatie klaar voor de start van CLI\\.\\."),
     );
     expect(background.raw.writes).toEqual([]);
     const motors = harness({ motors: true });
     await expect(motors.controller.begin(SESSION_KEY)).rejects.toThrow(
-      /المحركات/,
+      new RegExp("Het is de motortest sessie voor de opening van de CLI\\.\\."),
     );
     expect(motors.raw.writes).toEqual([]);
   });
@@ -162,7 +162,7 @@ describe('RawCliSessionController', () => {
     await expect(controller.saveTextFile('backup.txt', '# diff')).resolves.toBe(
       true,
     );
-    await expect(controller.execute('save')).rejects.toThrow(/save وexit/);
+    await expect(controller.execute('save')).rejects.toThrow(new RegExp("save en exit worden van de sessieknoppen afgesloten en worden niet binnen de bestellijst geaccepteerd\\."));
     expect(controller.getOutput()).toContain('diff all');
     controller.clearOutput();
     expect(controller.getOutput()).toBe('');
@@ -288,7 +288,7 @@ describe('a CLI command whose output is long, or arrives in awkward chunks', () 
     // itself waits out the exit settle before the rejection surfaces.
     await jest.advanceTimersByTimeAsync(5_001);
     await jest.advanceTimersByTimeAsync(500);
-    await expect(outcome).resolves.toMatch(/مهلة/);
+    await expect(outcome).resolves.toMatch(new RegExp("CLI prompt\\. is uit\\."));
     expect(controller.getPhase()).toBe('IDLE');
   });
 });

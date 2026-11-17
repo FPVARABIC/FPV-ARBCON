@@ -303,19 +303,19 @@ describe('no sensor surface may grow a health verdict', () => {
 
   it('the Arabic vocabulary a sensor state may use is the closed list, and nothing else', () => {
     const ar = JSON.parse(
-      fs.readFileSync(path.join(ROOT, 'src/i18n/locales/ar.json'), 'utf8'),
+      fs.readFileSync(path.join(ROOT, 'src/i18n/locales/nl.json'), 'utf8'),
     ) as {sensorsScreen: {headline: Record<string, string>; present: Record<string, string>}};
     const allowed = [
       'مضبوط',
-      'مكتشف',
-      'حاضر',
-      'غير موجود',
-      'معطّل',
-      'غير معروف',
-      'لا توجد قراءة',
-      'اكتُشف عند الإقلاع، لكنه غير حاضر الآن',
-      'المستشعر حاضر، لكن نوع العتاد غير معروف لهذا الإصدار',
-      'معطّل من الإعدادات',
+      "Gedetecteerd",
+      "Aanwezig",
+      "Niet aanwezig",
+      "Uitgeschakeld",
+      "Onbekend",
+      "Niet uitgelezen",
+      "Bij opstarten gedetecteerd, nu niet aanwezig",
+      "Sensor aanwezig, hardwaretype onbekend voor deze versie",
+      "Uitgeschakeld in instellingen",
     ];
     for (const sentence of Object.values(ar.sensorsScreen.headline)) {
       expect([sentence, allowed.some(word => sentence.includes(word))]).toEqual([

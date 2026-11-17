@@ -64,12 +64,12 @@ describe('telemetry report - required evidence', () => {
       scheduler: scheduler(),
     });
 
-    expect(report).toContain('البنية: dev');
+    expect(report).toContain("Build: dev");
     expect(report).toContain('sessionId: usb-1');
-    expect(report).toContain('الجيل: 3');
-    expect(report).toContain('حالة الملكية: ACTIVE');
-    expect(report).toContain('حالة التعريف: SUCCEEDED');
-    expect(report).toContain('تبويب Setup نشط: نعم');
+    expect(report).toContain("Gen: 3");
+    expect(report).toContain("Eigendomsstatus: ACTIVE");
+    expect(report).toContain("Identificatiestatus: SUCCEEDED");
+    expect(report).toContain("Setup actief: Ja");
   });
 
   it('carries per-poll registration, counts, status, sampleSeq and sample age', () => {
@@ -78,21 +78,21 @@ describe('telemetry report - required evidence', () => {
       wallClockMs: 1_000_320,
     });
 
-    expect(report).toContain('attitude: cmd=108 حالة=FRESH مسجَّل=نعم');
-    expect(report).toContain('طلبات=205 استجابات=205 أخطاء=0');
+    expect(report).toContain("attitude: cmd=108 status=FRESH geregistreerd=ja");
+    expect(report).toContain("verzoeken=205 antwoorden=205 fouten=0");
     expect(report).toContain('sampleSeq=205');
-    expect(report).toContain('عمر العيّنة=320ms');
+    expect(report).toContain("meetleeftijd=320ms");
   });
 
   it('states that a poll is MISSING rather than printing zeros for it', () => {
     const report = buildTelemetryReport({scheduler: scheduler()});
     // The fixture registers attitude only.
-    expect(report).toContain('battery: غير مُسجَّل (MISSING)');
+    expect(report).toContain("battery: niet geregistreerd (MISSING)");
   });
 
   it('distinguishes "no scheduler at all" from "a scheduler that sent nothing"', () => {
     const none = buildTelemetryReport({});
-    expect(none).toContain('لا يوجد مجدول تليمترية لهذه الجلسة');
+    expect(none).toContain("Er is geen telemetrieplanner voor deze sessie.");
 
     const silent = buildTelemetryReport({
       scheduler: scheduler({
@@ -113,16 +113,16 @@ describe('telemetry report - required evidence', () => {
         ],
       }),
     });
-    expect(silent).toContain('عدد النبضات (tick): 0');
-    expect(silent).toContain('طلبات=0 استجابات=0');
-    expect(silent).not.toContain('لا يوجد مجدول تليمترية لهذه الجلسة (لم يبدأ');
+    expect(silent).toContain("tick: 0");
+    expect(silent).toContain("verzoeken=0 antwoorden=0");
+    expect(silent).not.toContain("Er is geen telemetrieplanner voor deze sessie");
   });
 
   it('names the reason polling is held off, so a pause is never read as a dead link', () => {
     const report = buildTelemetryReport({
       scheduler: scheduler({pauseReasons: ['MOTOR_TEST', 'APP_BACKGROUND']}),
     });
-    expect(report).toContain('أسباب الإيقاف المؤقت النشطة: MOTOR_TEST، APP_BACKGROUND');
+    expect(report).toContain("Oorzaken van de actieve tijdelijke stop: MOTOR_TEST, APP_BACKGROUND");
   });
 
   it('carries the enumerated scheduler, MSP and transport error codes', () => {
@@ -147,9 +147,9 @@ describe('telemetry report - required evidence', () => {
         ],
       }),
     });
-    expect(report).toContain('آخر كود خطأ للمجدول=MSP_RECOVERING');
-    expect(report).toContain('آخر كود خطأ MSP: MSP_TIMEOUT');
-    expect(report).toContain('آخر كود خطأ ناقل: SESSION_DETACHED');
+    expect(report).toContain("laatsteSchedulerfout=MSP_RECOVERING");
+    expect(report).toContain("Laatste MSP-foutcode: MSP_TIMEOUT.");
+    expect(report).toContain("Laatste transportfoutcode: SESSION_DETACHED.");
   });
 
   it('carries the byte counters the transport already recorded, not a second set of its own', () => {
@@ -175,17 +175,17 @@ describe('telemetry report - required evidence', () => {
         lastPoseChangeAtMs: 812,
       },
     });
-    expect(report).toContain('حالة العرض: LIVE');
-    expect(report).toContain('آخر sampleSeq وصل إلى الواجهة: 205');
+    expect(report).toContain("Weergavestatus: LIVE");
+    expect(report).toContain("Laatste sampleSeq op de interface: 205.");
     expect(report).toContain('roll=12.5 pitch=-7 yaw=214');
-    expect(report).toContain('عيّنات hero=205 عيّنات الراسم=205 أوضاع مختلفة=1');
+    expect(report).toContain("hero-metingen=205 renderer-metingen=205 verschillendeHoudingen=1");
   });
 
   it('prints an unavailable fact as unavailable, never as a plausible zero', () => {
     const report = buildTelemetryReport({});
-    expect(report).toContain('sessionId: غير متاح');
-    expect(report).toContain('تبويب Setup نشط: غير متاح');
-    expect(report).toContain('آخر كود خطأ MSP: غير متاح');
+    expect(report).toContain("sessionId: Niet beschikbaar");
+    expect(report).toContain("Setup actief: Niet beschikbaar");
+    expect(report).toContain("Laatste MSP-foutcode: Niet beschikbaar.");
     expect(report).not.toContain('sessionId: 0');
   });
 });

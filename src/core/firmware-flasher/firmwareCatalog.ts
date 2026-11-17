@@ -77,14 +77,14 @@ export type FirmwareBuildStatus = {
 
 function record(value: unknown, context: string): Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new Error(`${context} غير صالح.`);
+    throw new Error(`${context} is niet geldig.`);
   }
   return value as Record<string, unknown>;
 }
 
 function nonEmptyString(value: unknown, context: string): string {
   if (typeof value !== 'string' || value.trim().length === 0) {
-    throw new Error(`${context} غير موجود أو غير صالح.`);
+    throw new Error(`${context} bestaat niet of is niet geldig.`);
   }
   return value.trim();
 }
@@ -101,7 +101,7 @@ function releaseChannel(value: unknown): FirmwareReleaseChannel {
     case 'development':
       return 'development';
     default:
-      throw new Error(`نوع إصدار Firmware غير معروف: ${String(value)}.`);
+      throw new Error(`Firmware versie type onbekend: ${String(value)}.`);
   }
 }
 
@@ -122,13 +122,13 @@ function compareVersionsDescending(left: string, right: string): number {
 }
 
 export function parseTargetReleases(input: unknown): readonly FirmwareRelease[] {
-  const releases = record(input, 'استجابة إصدارات Target').releases;
+  const releases = record(input, "Reactie op Target versies").releases;
   if (!Array.isArray(releases)) {
-    throw new Error('قائمة إصدارات Target غير صالحة.');
+    throw new Error("Target versielijst is niet geldig.");
   }
   return releases.map((item, index) => {
-    const candidate = record(item, `الإصدار رقم ${index + 1}`);
-    const release = nonEmptyString(candidate.release, 'رقم الإصدار');
+    const candidate = record(item, `Versie nummer ${index + 1}`);
+    const release = nonEmptyString(candidate.release, "Uitgavenummer.");
     return {
       release,
       label: typeof candidate.label === 'string' && candidate.label.trim().length > 0
@@ -142,12 +142,12 @@ export function parseTargetReleases(input: unknown): readonly FirmwareRelease[] 
 function parseOptionArray(value: unknown, context: string): readonly FirmwareBuildOption[] {
   if (!Array.isArray(value)) return [];
   return value.map((item, index) => {
-    const option = record(item, `${context} رقم ${index + 1}`);
+    const option = record(item, `${context} nummer ${index + 1}`);
     // The official Build API deliberately represents its safe "[None]"
     // choice with an empty string. Empty therefore means "do not add a
     // build define"; it is data, not a malformed response.
     if (typeof option.value !== 'string') {
-      throw new Error(`قيمة ${context} غير موجودة أو غير صالحة.`);
+      throw new Error(`De waarde van ${context} bestaat niet of is niet geldig.`);
     }
     const optionValue = option.value.trim();
     const group = typeof option.group === 'string' && option.group.trim().length > 0
@@ -169,13 +169,13 @@ function parseOptionArray(value: unknown, context: string): readonly FirmwareBui
 }
 
 export function parseBuildOptions(input: unknown): FirmwareBuildOptions {
-  const data = record(input, 'خيارات بناء Firmware');
-  const general = parseOptionArray(data.generalOptions, 'الخيار العام');
+  const data = record(input, "Firmwarebouwopties");
+  const general = parseOptionArray(data.generalOptions, "Algemene optie");
   return {
-    radioProtocols: parseOptionArray(data.radioProtocols, 'بروتوكول الراديو'),
-    telemetryProtocols: parseOptionArray(data.telemetryProtocols, 'بروتوكول Telemetry'),
+    radioProtocols: parseOptionArray(data.radioProtocols, "Radioprotocol"),
+    telemetryProtocols: parseOptionArray(data.telemetryProtocols, "Telemetrieprotocol"),
     osdProtocols: general.filter(option => option.group === 'OSD'),
-    motorProtocols: parseOptionArray(data.motorProtocols, 'بروتوكول المحركات'),
+    motorProtocols: parseOptionArray(data.motorProtocols, "Motorprotocol"),
     generalOptions: general.filter(option => option.group === undefined),
   };
 }
@@ -185,14 +185,14 @@ export function parseTargetDetail(
   expectedTarget: string,
   expectedRelease: string,
 ): FirmwareTargetDetail {
-  const data = record(input, 'تفاصيل Target');
+  const data = record(input, "Target-gegevens");
   const target = typeof data.target === 'string' ? data.target.trim() : expectedTarget.trim();
   const release = typeof data.release === 'string' ? data.release.trim() : expectedRelease.trim();
   if (target.toUpperCase() !== expectedTarget.trim().toUpperCase()) {
-    throw new Error(`الخادم أعاد Target مختلفاً (${target}).`);
+    throw new Error(`De dienaar is terug. Target Anders. ${target} ).`);
   }
   if (release !== expectedRelease.trim()) {
-    throw new Error(`الخادم أعاد إصداراً مختلفاً (${release}).`);
+    throw new Error(`De server heeft een andere versie van ${release} hersteld.`);
   }
   const configuration = normalizeConfigurationLines(data.configuration);
   return {
@@ -211,12 +211,12 @@ export function parseTargetDetail(
 }
 
 export function parseCommits(input: unknown): readonly FirmwareCommit[] {
-  if (!Array.isArray(input)) throw new Error('قائمة Commits غير صالحة.');
+  if (!Array.isArray(input)) throw new Error("De Commits lijst is niet geldig.");
   return input.slice(0, 500).map((item, index) => {
-    const commit = record(item, `Commit رقم ${index + 1}`);
+    const commit = record(item, `Commit nummer ${index + 1}`);
     return {
       sha: nonEmptyString(commit.sha, 'Commit SHA'),
-      message: nonEmptyString(commit.message, 'رسالة Commit').split('\n')[0],
+      message: nonEmptyString(commit.message, "Commit bericht.").split('\n')[0],
     };
   });
 }
@@ -229,10 +229,10 @@ function optionalOption(value: string | undefined): string[] {
 const CUSTOM_DEFINE_PATTERN = /^[A-Z][A-Z0-9_]*(?:=[A-Za-z0-9_.+\-/]+)?$/;
 
 export function normalizeCustomDefines(values: readonly string[] = []): readonly string[] {
-  if (values.length > 64) throw new Error('عدد Custom Defines يتجاوز الحد الآمن (64).');
+  if (values.length > 64) throw new Error("Custom Defines overschrijdt de beveiligingsgrens (64).");
   return values.map(value => value.trim()).filter(value => value.length > 0).map(value => {
     if (value.length > 96 || !CUSTOM_DEFINE_PATTERN.test(value)) {
-      throw new Error(`Custom Define غير صالح: ${value}.`);
+      throw new Error(`Custom Define niet geldig: ${value}.`);
     }
     return value;
   });
@@ -265,17 +265,17 @@ export function createBuildRequest(
 }
 
 export function parseBuildResponse(input: unknown): FirmwareBuildResponse {
-  const data = record(input, 'استجابة طلب البناء');
+  const data = record(input, "Reactie op de bouwvraag");
   return {
-    file: nonEmptyString(data.file, 'اسم ملف Firmware'),
-    url: nonEmptyString(data.url, 'عنوان ملف Firmware'),
+    file: nonEmptyString(data.file, "Firmware-lêernaam"),
+    url: nonEmptyString(data.url, "Firmware-bestandsadres"),
     ...(typeof data.key === 'string' && data.key.trim().length > 0 ? {key: data.key.trim()} : {}),
   };
 }
 
 export function parseBuildStatus(input: unknown): FirmwareBuildStatus {
-  const data = record(input, 'حالة بناء Firmware');
-  const rawStatus = nonEmptyString(data.status, 'حالة البناء').toLowerCase();
+  const data = record(input, "Firmware bouwstatus");
+  const rawStatus = nonEmptyString(data.status, "De bouw staat.").toLowerCase();
   const status: FirmwareBuildStatus['status'] = rawStatus === 'success'
     ? 'success'
     : rawStatus === 'queued' && data.timeOut === undefined

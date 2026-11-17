@@ -244,13 +244,13 @@ function ToggleRow({
  * would be as wrong as reporting it as a good one.
  */
 const GPS_QUALITY_TEXT: Readonly<Record<GpsPositionQuality, string>> = {
-  IDEAL: 'مثالية',
-  EXCELLENT: 'ممتازة',
-  GOOD: 'جيدة',
-  MODERATE: 'متوسطة',
-  FAIR: 'ضعيفة',
-  POOR: 'رديئة',
-  UNKNOWN: 'غير معروفة',
+  IDEAL: "Perfect.",
+  EXCELLENT: "Uitstekend.",
+  GOOD: "Goed.",
+  MODERATE: "Gemiddeld.",
+  FAIR: "Zwak.",
+  POOR: "Slecht.",
+  UNKNOWN: "Onbekend.",
 };
 
 export default function GpsScreen({
@@ -587,7 +587,7 @@ export default function GpsScreen({
                             SERIAL_BAUD_RATES[port.gpsBaudIndex] ?? '?'
                           }`,
                       )
-                      .join('، ')}
+                      .join(", ")}
               </Text>
             </View>
             <Button
@@ -639,7 +639,7 @@ export default function GpsScreen({
                   because this is the one metric on the screen where
                   LOWER is better. */}
               <Metric
-                label="دقة تحديد الموقع"
+                label={"Precision locatie."}
                 value={
                   raw?.pdopHundredths === undefined
                     ? '—'

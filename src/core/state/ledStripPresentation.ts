@@ -325,7 +325,7 @@ export function ledUnknownSpecialSlotsDetail(
   const unnamed = slots.filter(slot => slot >= LED_SPECIAL_SLOT_NAMED_COUNT);
   return unnamed.length === 0
     ? undefined
-    : phrase(`${NS}.technical.unknownSpecialSlots`, {slots: unnamed.join('، ')});
+    : phrase(`${NS}.technical.unknownSpecialSlots`, {slots: unnamed.join(", ")});
 }
 
 /** Mode 5: stored, transmitted, validated on write, and never read. */

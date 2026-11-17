@@ -33,7 +33,7 @@ import React from 'react';
 import ReactTestRenderer from 'react-test-renderer';
 
 import '../../i18n';
-import ar from '../../i18n/locales/ar.json';
+import ar from '../../i18n/locales/nl.json';
 
 import CliScreen from './CliScreen';
 import FailsafeScreen from './FailsafeScreen';
@@ -85,7 +85,7 @@ const SCREENS: readonly {
     name: 'CliScreen',
     render: () => <CliScreen active={false} onCliBusyChange={noop} />,
     expected: BEHAVIOUR_TITLE,
-    evidence: 'اختبر على الطاولة بلا مراوح',
+    evidence: 'test op de werkbank zonder propellers',
   },
   {
     name: 'FailsafeScreen',
@@ -93,65 +93,65 @@ const SCREENS: readonly {
       <FailsafeScreen active={false} onOpenReceiver={noop} onOpenMotors={noop} />
     ),
     expected: BEHAVIOUR_TITLE,
-    evidence: 'بقطع الإشارة فعليًا',
+    evidence: 'het signaal daadwerkelijk te onderbreken',
   },
   {
     name: 'ModesScreen',
     render: () => <ModesScreen active={false} onOpenMotors={noop} />,
     expected: BEHAVIOUR_TITLE,
-    evidence: 'تحريك مفاتيح جهاز الإرسال',
+    evidence: 'de zenderschakelaars',
   },
   {
     name: 'OsdScreen',
     render: () => <OsdScreen active={false} onOpenMotors={noop} />,
     expected: VERIFICATION_TITLE,
-    evidence: 'في النظارة أو شاشة الفيديو',
+    evidence: 'in de videobril of op het videoscherm',
   },
   {
     name: 'PidTuningScreen',
     render: () => <PidTuningScreen active={false} onOpenMotors={noop} />,
     expected: BEHAVIOUR_TITLE,
-    evidence: 'اختبار متدرج آمن',
+    evidence: 'veilige, stapsgewijze praktijktest',
   },
   {
     name: 'PowerBatteryScreen',
     render: () => <PowerBatteryScreen active={false} onOpenMotors={noop} />,
     expected: VERIFICATION_TITLE,
-    evidence: 'مقارنة بأداة قياس خارجية',
+    evidence: 'met een extern meetinstrument',
   },
   {
     name: 'PresetsScreen',
     render: () => <PresetsScreen active={false} onCliBusyChange={noop} />,
     expected: BEHAVIOUR_TITLE,
-    evidence: 'اختبر على الطاولة بلا مراوح',
+    evidence: 'test op de werkbank zonder propellers',
   },
   {
     name: 'SensorsScreen',
     render: () => <SensorsScreen active={false} onOpenSetup={noop} />,
     expected: BEHAVIOUR_TITLE,
-    evidence: 'حرّك كل محور منفردًا',
+    evidence: 'beweeg elke as afzonderlijk',
   },
   {
     name: 'VideoTransmitterScreen',
     render: () => <VideoTransmitterScreen active={false} />,
     expected: VERIFICATION_TITLE,
-    evidence: 'تحتاج قياس VTX/نظارة',
+    evidence: 'met de VTX en videobril',
   },
 ];
 
 describe('the two hardware-verification titles', () => {
-  it('are Arabic, and carry no English review vocabulary', () => {
+  it('are Dutch, and carry no English review vocabulary', () => {
     for (const title of [VERIFICATION_TITLE, BEHAVIOUR_TITLE]) {
       expect(title).not.toContain('REQUIRES');
       expect(title).not.toContain('HARDWARE');
-      expect(title).toContain('جهاز فعلي');
+      expect(title).toContain("op echte hardware vereist");
     }
   });
 
   it('remain two distinct statements, not one string used twice', () => {
     expect(VERIFICATION_TITLE).not.toBe(BEHAVIOUR_TITLE);
-    expect(VERIFICATION_TITLE).toContain('التحقق');
-    expect(BEHAVIOUR_TITLE).toContain('اختبارًا');
+    expect(VERIFICATION_TITLE).toContain("Verificatie op echte hardware vereist");
+    expect(BEHAVIOUR_TITLE).toContain("Test op echte hardware vereist");
   });
 });
 

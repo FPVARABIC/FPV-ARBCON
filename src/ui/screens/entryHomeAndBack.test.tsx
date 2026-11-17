@@ -155,8 +155,8 @@ describe('Home offers exactly three doors', () => {
       .findAllByProps({testID: 'start-route-group'})[0]
       .findAllByType(Text)
       .map(node => String(node.props.children));
-    expect(primaries).toContain('فتح إعداد الدرون');
-    expect(primaries).toContain('فتح تحديث Firmware');
+    expect(primaries).toContain("Open de drone.");
+    expect(primaries).toContain("Open de Firmware-update.");
   });
 
   /**
@@ -177,9 +177,9 @@ describe('Home offers exactly three doors', () => {
     ).toBeGreaterThan(0);
 
     const order = textOrder(renderer);
-    const configure = order.indexOf('فتح إعداد الدرون');
-    const firmware = order.indexOf('فتح تحديث Firmware');
-    const guide = order.indexOf('فتح دليل أنماط الطيران');
+    const configure = order.indexOf("Open de drone.");
+    const firmware = order.indexOf("Open de Firmware-update.");
+    const guide = order.indexOf("Maak een vluchtregister open.");
     expect(configure).toBeGreaterThanOrEqual(0);
     expect(firmware).toBeGreaterThanOrEqual(0);
     expect(guide).toBeGreaterThan(configure);
@@ -191,8 +191,8 @@ describe('Home offers exactly three doors', () => {
     renderers.push(renderer);
     const order = textOrder(renderer);
     // The first card title on the page is the configurator's.
-    const configure = order.indexOf('إعداد الدرون');
-    const guideTitle = order.indexOf('دليل أنماط الطيران');
+    const configure = order.indexOf("Maak de drone klaar.");
+    const guideTitle = order.indexOf("Vliegpatroon handleiding.");
     expect(configure).toBeGreaterThanOrEqual(0);
     expect(guideTitle).toBeGreaterThan(configure);
   });
@@ -202,8 +202,8 @@ describe('Home offers exactly three doors', () => {
     renderers.push(renderer);
     const text = screenText(renderer);
 
-    expect(text).toContain('إعداد الدرون');
-    expect(text).toContain('الاتصال باللوحة');
+    expect(text).toContain("Maak de drone klaar.");
+    expect(text).toContain("Contact met de plaat.");
     expect(text).toContain('Motors');
     expect(text).toContain('OSD');
     expect(text).toContain('CLI');
@@ -214,11 +214,11 @@ describe('Home offers exactly three doors', () => {
     renderers.push(renderer);
     const text = screenText(renderer);
 
-    expect(text).toContain('دليل أنماط الطيران');
+    expect(text).toContain("Vliegpatroon handleiding.");
     // Names the styles it holds - and no number, because choosing an
     // aircraft comes before any value applies to it.
-    expect(text).toContain('سينمائي');
-    expect(text).toContain('مدى طويل');
+    expect(text).toContain("Film · vrije · wedstrijd · interne web · lange termijn");
+    expect(text).toContain("Film · vrije · wedstrijd · interne web · lange termijn");
   });
 
   it('the firmware card is direct and not overloaded', () => {
@@ -226,8 +226,8 @@ describe('Home offers exactly three doors', () => {
     renderers.push(renderer);
     const text = screenText(renderer);
 
-    expect(text).toContain('تحديث Firmware');
-    expect(text).toContain('تثبيت أو تحديث Firmware واختيار Target وإعدادات البناء.');
+    expect(text).toContain("Firmware bijwerken");
+    expect(text).toContain("Firmware installeren of bijwerken en Target en bouwinstellingen kiezen.");
   });
 
   it('the awkward slogan is gone, and no marketing language replaced it', () => {
@@ -235,9 +235,9 @@ describe('Home offers exactly three doors', () => {
     renderers.push(renderer);
     const text = screenText(renderer);
 
-    expect(text).not.toContain('مهمتان، بابان مباشران');
-    expect(text).not.toContain('بابان');
-    expect(text).toContain('اختر ما تريد تنفيذه');
+    expect(text).not.toContain("Twee taken, twee ingangen");
+    expect(text).not.toContain("Twee ingangen");
+    expect(text).toContain("Kies wat je wilt uitvoeren.");
   });
 
   it('each door navigates straight to its destination - no intermediate choice', () => {
@@ -354,7 +354,7 @@ describe('Home offers exactly three doors', () => {
     // kept saying it through a failed connection.
     const renderer = renderStart(jest.fn());
     renderers.push(renderer);
-    expect(screenText(renderer)).not.toContain('جاهز');
+    expect(screenText(renderer)).not.toContain("Gereed");
   });
 });/**
  * THE WORKSPACE THAT WAS NOT A DEAD END NO LONGER EXISTS, and that is

@@ -32,7 +32,7 @@ describe('MotorConfigurationSummary', () => {
   it('keeps unavailable values honest before the session reads them', () => {
     const tree = render(undefined);
     const text = JSON.stringify(tree.toJSON());
-    expect(text).toContain('ستظهر القيم بعد الضغط على زر تهيئة جلسة الاختبار');
+    expect(text).toContain("De waarden verschijnen nadat u de testsessie hebt voorbereid.");
     // M-D §46 - THIS USED TO COUNT THREE EM DASHES.
     //
     // The test's name is right and its intent is unchanged: before the
@@ -54,8 +54,8 @@ describe('MotorConfigurationSummary', () => {
     });
     const text = JSON.stringify(tree.toJSON());
     expect(text).toContain('DSHOT600');
-    expect(text).toContain('معطّل');
-    expect(text).toContain('قراءة من متحكم الطيران');
+    expect(text).toContain("Uitgeschakeld");
+    expect(text).toContain("Uitgelezen uit de vluchtcontroller tijdens de huidige testsessie.");
     expect(
       tree.root.findAll(node => typeof node.props?.onPress === 'function'),
     ).toHaveLength(0);
@@ -68,7 +68,7 @@ describe('MotorConfigurationSummary', () => {
       motorProtocolRaw: 7,
       feature3dEnabled: true,
     });
-    expect(JSON.stringify(tree.toJSON())).toContain('مفعّل');
+    expect(JSON.stringify(tree.toJSON())).toContain("Ingeschakeld");
     act(() => tree.unmount());
   });
 

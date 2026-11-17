@@ -76,9 +76,9 @@ describe('an exact curve', () => {
   it('calls itself a calculation and never a live reading', () => {
     const renderer = render(RATES_TYPE_BETAFLIGHT);
     const text = textOf(renderer);
-    expect(text).toContain('معاينة');
-    expect(text).toContain('ليس قراءة حيّة');
-    expect(text).not.toContain('مباشر');
+    expect(text).toContain("Responsvoorbeeld");
+    expect(text).toContain("Een wiskundige berekening van de dossierswaarden, geen live lezing.");
+    expect(text).not.toContain("Live");
     act(() => renderer.unmount());
   });
 
@@ -117,7 +117,7 @@ describe('an exact curve', () => {
     const chart = renderer.root.findAllByProps({testID: 'pid-rate-preview-chart'})
       .find(node => typeof node.props.accessibilityLabel === 'string');
     expect(chart?.props.accessibilityLabel).toContain('Roll');
-    expect(chart?.props.accessibilityLabel).toContain('درجة/ثانية');
+    expect(chart?.props.accessibilityLabel).toContain("graden per seconde");
     act(() => renderer.unmount());
   });
 });
@@ -134,7 +134,7 @@ describe('when no exact curve exists', () => {
   it('keeps QUICK configurable, and says so', () => {
     // The missing preview is a display limit, not a write limit: a QUICK
     // rate profile saves like any other.
-    expect(textOf(render(RATES_TYPE_QUICK))).toContain('حفظه');
+    expect(textOf(render(RATES_TYPE_QUICK))).toContain("De vorm van de curve is afhankelijk van een interne instelling die de controller niet via MSP stuurt, en we zullen geen curve tekenen op basis van speculatie. Je kunt Quick instellen en als gewoonlijk opslaan.");
   });
 
   it('refuses an unrecognised formula and shows its raw value', () => {

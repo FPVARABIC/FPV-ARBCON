@@ -1,14 +1,14 @@
 {
   "id": "firmware",
   "kind": "PREREQUISITE",
-  "title_ar": "البرنامج الثابت",
+  "title_ar": "Firmware",
   "title_en": "Firmware",
-  "description_ar": "ما يجب أن يكون صحيحًا في متحكم طيرانك قبل أن يعني أي دليل نمط شيئًا.",
+  "description_ar": "Wat in je vluchtbeheer moet waar zijn voordat een patroon aanwijzingen iets betekenen.",
   "description_en": "What must be right on the flight controller before any style guide means anything.",
   "difficulty": "intermediate",
-  "difficulty_ar": "متوسط",
+  "difficulty_ar": "Gemiddeld",
   "intended_aircraft": [
-    "أي طائرة تعمل ببرنامج Betaflight"
+    "Een toestel met compatibele firmware"
   ],
   "required_screens": [
     "FirmwareFlasherScreen",
@@ -21,9 +21,9 @@
     "CliScreen"
   ],
   "hardware_requirements": [
-    "متحكم طيران Betaflight بواجهة MSP API 1.47 فأعلى",
-    "كابل USB موثوق",
-    "المراوح مفكوكة"
+    "Betaflight vliegbeheerder met MSP API 1.47 boven.",
+    "USB kabel is betrouwbaar.",
+    "propellers ontkoppeld."
   ],
   "hardware_verification_status": "NOT VERIFIED — DEFERRED",
   "verification_level": "SOFTWARE VERIFIED",
@@ -37,8 +37,8 @@
   "steps": [
     {
       "n": 1,
-      "title_ar": "اللوحة والإصدار وخيارات البناء",
-      "screen": "تحديث البرنامج الثابت · المرحلة 1: اللوحة والبناء",
+      "title_ar": "Printplaat, versie en bouwopties",
+      "screen": "firmware update · fase 1: printplaat en bouw",
       "screenshot": "images/1-flasher-board.png",
       "targets": [
         {
@@ -56,7 +56,7 @@
         {
           "control": "build-configuration",
           "kind": "contains",
-          "expected": "بروتوكول الراديو",
+          "expected": "Radioprotocol",
           "source": "C"
         },
         {
@@ -69,8 +69,8 @@
     },
     {
       "n": 2,
-      "title_ar": "بوابة الأمان قبل التفليش",
-      "screen": "تحديث البرنامج الثابت · المرحلة 2 · بطاقة بوابة الأمان",
+      "title_ar": "Veiligheidscontrole vóór het flashen",
+      "screen": "firmware update · fase 2 · beveiligingspoortkaart",
       "screenshot": "images/2-flasher-safety.png",
       "targets": [
         {
@@ -89,14 +89,14 @@
     },
     {
       "n": 3,
-      "title_ar": "الحزم الجاهزة",
-      "screen": "الحزم الجاهزة · المكتبة الرسمية",
+      "title_ar": "Presets",
+      "screen": "Presets · Officiële bibliotheek",
       "screenshot": "images/3-presets.png",
       "targets": [
         {
           "control": "presets-screen",
           "kind": "contains",
-          "expected": "الحزم المتوافقة (5)",
+          "expected": "Compatibele presets (5)",
           "source": "S1"
         }
       ]
@@ -105,21 +105,21 @@
   "step_count": 3,
   "decisions": [
     {
-      "requirement": "إعدادات الطيران",
+      "requirement": "Vlieginstellingen",
       "decision": "NOT_APPLICABLE",
-      "detail": "هذه ليست بطاقة نمط طيران. بعد التحديث، افتح ركن نمطك واتبعه من خطوته الأولى.",
+      "detail": "Dit is geen vluchtkaart. Na het updaten, maak een hoek van je patroon open en volg hem bij zijn eerste stappen.",
       "source": null
     },
     {
-      "requirement": "النسخة الاحتياطية قبل التحديث",
+      "requirement": "Back-up vóór het bijwerken",
       "decision": "ACTION",
-      "detail": "فعّل خيار النسخ الاحتياطي قبل بدء التفليش. التحديث يمسح كل إعداداتك، بما فيها Failsafe و GPS Rescue والمعايرة.",
+      "detail": "Zet de back-up optie in voordat flashen wordt gestart. De update verwijdert al uw instellingen, inclusief Failsafe, GPS, Rescue en standaard.",
       "source": null
     },
     {
-      "requirement": "ترتيب ما بعد التحديث",
+      "requirement": "Stappen na het bijwerken",
       "decision": "ACTION",
-      "detail": "المنافذ ← المستقبل ← المحركات ← الأوضاع (مفتاح ARM أولًا) ← Failsafe ← ثم دليل نمطك.",
+      "detail": "poorten ← ontvanger ← motoren ← Mode (ARM sleutel eerst) ← Failsafe ← dan uw stijl handleiding.",
       "source": null
     }
   ]

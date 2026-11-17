@@ -81,25 +81,25 @@ interface OsdScreenProps {
   readonly controller?: OsdControllerPort;
 }
 
-const VIDEO_SYSTEMS = ['تلقائي', 'PAL', 'NTSC', 'HD'] as const;
-const UNITS = ['إمبراطوري', 'متري', 'بريطاني'] as const;
+const VIDEO_SYSTEMS = ["Zelf.", 'PAL', 'NTSC', 'HD'] as const;
+const UNITS = ["Een keizer.", "Mijn meter.", "Een Brit."] as const;
 
 function blockMessage(reason: OsdBlockReason): string {
   return (
     {
-      DISCONNECTED: 'لا توجد جلسة متصلة.',
-      IDENTIFYING: 'بانتظار التحقق من المتحكم.',
-      UNSUPPORTED_FIRMWARE: 'إصدار البرنامج الثابت في هذه اللوحة غير مدعوم لهذه الشاشة. حدّث البرنامج الثابت.',
-      APP_BACKGROUNDED: 'أعد التطبيق إلى الواجهة.',
-      LINK_RECOVERING: 'الرابط يتعافى؛ انتظر ثم أعد القراءة.',
-      FC_ARMED: 'رُفض الحفظ لأن المتحكم ARMED.',
-      ARMED_STATE_UNKNOWN: 'تعذر إثبات DISARMED؛ لم يُرسل شيء.',
+      DISCONNECTED: "Er is geen aansluiting.",
+      IDENTIFYING: "Wachtend op controle.",
+      UNSUPPORTED_FIRMWARE: "Deze firmwareversie wordt niet ondersteund voor dit scherm. Werk de firmware bij.",
+      APP_BACKGROUNDED: "Maak de app weer aan de koppel.",
+      LINK_RECOVERING: "De verbinding herstelt. Wacht en lees weer.",
+      FC_ARMED: "Opslaan geweigerd: de vluchtcontroller is ARMED.",
+      ARMED_STATE_UNKNOWN: "DISARMED niet bewezen; Hij stuurde niets.",
       MOTOR_TEST_ACTIVE:
-        'جلسة المحركات نشطة. افتح شاشة المحركات واضغط إنهاء جلسة الاختبار.',
-      CONFIGURATION_BUSY: 'توجد معاملة إعدادات أخرى قيد التنفيذ.',
-      STALE_BASE: 'تغير OSD في المتحكم. أعد القراءة.',
-      INVALID_CONFIGURATION: 'توجد قيمة OSD غير صالحة.',
-      SESSION_CHANGED: 'تغيّرت جلسة المتحكم منذ إنشاء هذه التعديلات. أعد تحميل الإعدادات قبل الحفظ.',
+        "De motoren sessie is actief. Maak het motoren-scherm open en druk op het einde van de test.",
+      CONFIGURATION_BUSY: "Er loopt al een andere configuratietransactie.",
+      STALE_BASE: "OSD verandert in de controller. Lees het weer.",
+      INVALID_CONFIGURATION: "Er is een ongeldige OSD-waarde.",
+      SESSION_CHANGED: "De controllersessie is gewijzigd sinds deze aanpassingen zijn gemaakt. Lees de instellingen opnieuw uit voordat u opslaat.",
     } as const
   )[reason];
 }
@@ -107,12 +107,12 @@ function blockMessage(reason: OsdBlockReason): string {
 function saveMessage(outcome: OsdSaveOutcome): {text: string; warning: boolean} {
   switch (outcome.kind) {
     case 'NO_CHANGES':
-      return {text: 'لا توجد تغييرات.', warning: false};
+      return {text: "Er is geen verandering.", warning: false};
     case 'SAVED_VERIFIED':
-      return {text: 'حُفظ OSD وتطابقت القراءة الراجعة.', warning: false};
+      return {text: "OSD is opgeslagen en teruggelezen.", warning: false};
     case 'SAVED_UNVERIFIED':
       return {
-        text: 'أقر المتحكم الحفظ لكن تعذرت القراءة الراجعة؛ أعد الاتصال ولا تكرر الحفظ.',
+        text: "De vluchtcontroller bevestigde het opslaan, maar teruglezen is mislukt; Verbind opnieuw en sla niet opnieuw op.",
         warning: true,
       };
     case 'UNCONFIRMED':
@@ -127,9 +127,9 @@ function saveMessage(outcome: OsdSaveOutcome): {text: string; warning: boolean} 
         warning: true,
       };
     case 'SESSION_ENDED':
-      return {text: 'انتهت الجلسة أثناء العملية.', warning: true};
+      return {text: "De sessie eindigde tijdens de operatie.", warning: true};
     case 'FAILED':
-      return {text: 'فشلت العملية قبل التحقق.', warning: true};
+      return {text: "De operatie is mislukt voor de controle.", warning: true};
     case 'REJECTED':
       return {text: blockMessage(outcome.reason), warning: true};
   }
@@ -347,9 +347,9 @@ export default function OsdScreen({
   const reload = useCallback(() => {
     const perform = () => setReloadToken(value => value + 1);
     if (!dirty) return perform();
-    Alert.alert('تجاهل تغييرات OSD؟', 'ستُستبدل المسودة بقراءة جديدة من المتحكم.', [
-      {text: 'إلغاء', style: 'cancel'},
-      {text: 'إعادة القراءة', style: 'destructive', onPress: perform},
+    Alert.alert("OSD veranderingen negeren?", "De ontwerp wordt vervangen door een nieuwe lezing van de controller.", [
+      {text: "Annuleren", style: 'cancel'},
+      {text: "Opnieuw uitlezen", style: 'destructive', onPress: perform},
     ]);
   }, [dirty]);
 
@@ -385,9 +385,9 @@ export default function OsdScreen({
     loadOutcome?.kind === 'REJECTED'
       ? blockMessage(loadOutcome.reason)
       : loadOutcome?.kind === 'FAILED'
-        ? 'تعذرت قراءة OSD؛ قد لا يكون OSD موجودًا في بناء البرنامج الثابت.'
+        ? "OSD kon niet worden uitgelezen; OSD is mogelijk niet in de firmware-constructie."
         : loadOutcome?.kind === 'SESSION_ENDED'
-          ? 'انتهت الجلسة.'
+          ? "De vergadering is voorbij."
           : undefined;
 
   const editable = phase === 'READY';
@@ -437,10 +437,9 @@ export default function OsdScreen({
         scrollEnabled={!dragging}
         contentContainerStyle={[styles.content, {maxWidth}]}>
         <View style={styles.hero}>
-          <Text style={styles.title}>العرض على الشاشة</Text>
+          <Text style={styles.title}>{"Het is op het scherm."}</Text>
           <Text style={styles.subtitle}>
-            اسحب أي عنصر داخل المعاينة لتغيير موضعه، ثم احفظ ليُكتب في متحكم الطيران.
-          </Text>
+            {"Trek elk element in de preview om de positie te veranderen, en sla het dan op voor vluchtcontroller."}</Text>
         </View>
 
         {loadingMessage !== undefined ? (
@@ -448,7 +447,7 @@ export default function OsdScreen({
             <Text style={styles.warningText}>{loadingMessage}</Text>
             {loadOutcome?.kind === 'REJECTED' && loadOutcome.reason === 'MOTOR_TEST_ACTIVE' ? (
               <Button
-                label="فتح المحركات"
+                label={"Motoren openen"}
                 onPress={() => onOpenMotors?.()}
                 variant="secondary"
                 icon="fan"
@@ -456,7 +455,7 @@ export default function OsdScreen({
               />
             ) : (
               <Button
-                label="إعادة القراءة"
+                label={"Opnieuw uitlezen"}
                 onPress={reload}
                 variant="secondary"
                 icon="refresh-cw"
@@ -478,15 +477,12 @@ export default function OsdScreen({
               onDragStateChange={setDragging}
             />
             <Text style={styles.canvasCaption} testID="osd-canvas-caption">
-              {activeCanvas.columns}×{activeCanvas.rows} · الملف {draft.selectedProfile} ·
-              العناصر الظاهرة {previewElements.length}
+              {activeCanvas.columns}×{activeCanvas.rows} {"· Het dossier"}{draft.selectedProfile} {"· Zichtbare elementen "}{previewElements.length}
             </Text>
             {outsideCanvas > 0 ? (
               <View style={styles.warning} testID="osd-outside-canvas">
                 <Text style={styles.warningText}>
-                  {outsideCanvas} عنصرًا خارج حدود اللوحة الحالية؛ اسحبها إلى الداخل أو غيّر نظام
-                  الفيديو. لم يُغيَّر أي موضع تلقائيًا.
-                </Text>
+                  {outsideCanvas} {"Een element buiten de grenzen van het huidige printplaat; Trek haar naar binnen of verander het systeem. De video. Geen enkele locatie is automatisch veranderd."}</Text>
               </View>
             ) : null}
 
@@ -496,14 +492,14 @@ export default function OsdScreen({
                   <View style={styles.flexOne}>
                     <Text style={styles.sectionTitle}>{osdElementName(selectedElement)}</Text>
                     <Text style={styles.sectionHint}>
-                      {osdElementToken(selectedElement)} · الموضع{' '}
+                      {osdElementToken(selectedElement)} {"De positie."}{' '}
                       <Text style={styles.positionValue} testID="osd-selected-position">
                         {osdPositionX(selectedValue)},{osdPositionY(selectedValue)}
                       </Text>
                     </Text>
                   </View>
                   <View style={styles.visibilityRow}>
-                    <Text style={styles.fieldLabel}>{selectedVisible ? 'ظاهر' : 'مخفي'}</Text>
+                    <Text style={styles.fieldLabel}>{selectedVisible ? "Lijkbaar." : "Verborgen."}</Text>
                     <ToggleSwitch
                       value={selectedVisible}
                       disabled={!editable}
@@ -516,14 +512,14 @@ export default function OsdScreen({
                           ),
                         )
                       }
-                      accessibilityLabel={`إظهار ${osdElementName(selectedElement)}`}
+                      accessibilityLabel={`Toon ${osdElementName(selectedElement)}.`}
                       testID="osd-element-visible"
                     />
                   </View>
                 </View>
                 <View style={styles.fieldsRow}>
                   <Stepper
-                    label="العمود X"
+                    label={"Kolom X"}
                     value={osdPositionX(selectedValue)}
                     min={0}
                     max={activeCanvas.columns - 1}
@@ -536,7 +532,7 @@ export default function OsdScreen({
                     testID="osd-element-x"
                   />
                   <Stepper
-                    label="الصف Y"
+                    label={"Klasse Y"}
                     value={osdPositionY(selectedValue)}
                     min={0}
                     max={activeCanvas.rows - 1}
@@ -553,11 +549,9 @@ export default function OsdScreen({
             ) : null}
 
             <View style={styles.card}>
-              <Text style={styles.sectionTitle}>العناصر</Text>
+              <Text style={styles.sectionTitle}>{"De elementen."}</Text>
               <Text style={styles.sectionHint}>
-                القائمة مشتقة من عدد العناصر الذي أرسله البرنامج الثابت. اضغط عنصرًا لتحديده، أو
-                بدّل الظهور في الملف الحالي.
-              </Text>
+                {"De lijst is afgeleid van het aantal items dat firmware stuurde. Druk op een element om het te identificeren, of Verander de verschijning in het huidige dossier."}</Text>
               <View style={styles.elementGrid}>
                 {draft.elementPositions.map((value, index) => {
                   const visible = osdVisibleInProfile(value, draft.selectedProfile);
@@ -581,7 +575,7 @@ export default function OsdScreen({
                         }
                         accessibilityRole="switch"
                         accessibilityState={{checked: visible, disabled: !editable}}
-                        accessibilityLabel={`إظهار ${osdElementName(index)}`}
+                        accessibilityLabel={`Toon ${osdElementName(index)}.`}
                         /* The DOT stays 22px; the TARGET is 44. The dot
                            was the whole control and measured 22x22 - half
                            the minimum - which is a real miss on a phone.
@@ -611,7 +605,7 @@ export default function OsdScreen({
             </View>
 
             <View style={styles.card}>
-              <Text style={styles.sectionTitle}>الملف ونظام الفيديو</Text>
+              <Text style={styles.sectionTitle}>{"Het bestand en het videostelsel"}</Text>
               <View style={styles.choices}>
                 {Array.from(
                   {length: Math.max(1, snapshot.config.profileCount)},
@@ -633,14 +627,14 @@ export default function OsdScreen({
                         styles.choiceText,
                         draft.selectedProfile === profile && styles.choiceTextSelected,
                       ]}>
-                      ملف {profile}
+                      {"Bestand"}{profile}
                     </Text>
                   </Pressable>
                 ))}
               </View>
               <View style={styles.fieldsRow}>
                 <Choices
-                  label="نظام الفيديو"
+                  label={"Het videostelsel."}
                   value={draft.videoSystem}
                   options={VIDEO_SYSTEMS}
                   disabled={!editable}
@@ -648,7 +642,7 @@ export default function OsdScreen({
                   testID="osd-video"
                 />
                 <Choices
-                  label="الوحدات"
+                  label={"Eenheden."}
                   value={draft.units}
                   options={UNITS}
                   disabled={!editable}
@@ -659,10 +653,10 @@ export default function OsdScreen({
             </View>
 
             <View style={styles.card}>
-              <Text style={styles.sectionTitle}>التنبيهات</Text>
+              <Text style={styles.sectionTitle}>{"Meldingen"}</Text>
               <View style={styles.fieldsRow}>
                 <Stepper
-                  label="إنذار RSSI"
+                  label={"RSSI alarm."}
                   value={draft.rssiAlarmPercent}
                   min={0}
                   max={100}
@@ -672,7 +666,7 @@ export default function OsdScreen({
                   testID="osd-rssi"
                 />
                 <Stepper
-                  label="إنذار جودة الرابط"
+                  label={"Kwaliteit waarschuwing."}
                   value={draft.linkQualityAlarmPercent}
                   min={0}
                   max={100}
@@ -682,7 +676,7 @@ export default function OsdScreen({
                   testID="osd-lq"
                 />
                 <Stepper
-                  label="إنذار RSSI dBm"
+                  label={"Alarm RSSI dBm"}
                   value={draft.rssiDbmAlarm}
                   min={-130}
                   max={0}
@@ -692,7 +686,7 @@ export default function OsdScreen({
                   testID="osd-rssi-dbm"
                 />
                 <Stepper
-                  label="إنذار السعة"
+                  label={"Capaciteitswaarschuwing."}
                   value={draft.capacityAlarmMah}
                   min={0}
                   max={65535}
@@ -703,7 +697,7 @@ export default function OsdScreen({
                   testID="osd-capacity"
                 />
                 <Stepper
-                  label="إنذار الارتفاع"
+                  label={"Een hoogte-alarm."}
                   value={draft.altitudeAlarm}
                   min={0}
                   max={65535}
@@ -716,7 +710,7 @@ export default function OsdScreen({
             </View>
 
             <View style={styles.card}>
-              <Text style={styles.sectionTitle}>إحصاءات ما بعد الرحلة</Text>
+              <Text style={styles.sectionTitle}>{"Statistieken na de vlucht"}</Text>
               <View style={styles.switchGrid}>
                 {draft.statistics.map((enabled, index) => (
                   <Pressable
@@ -727,9 +721,9 @@ export default function OsdScreen({
                     accessibilityRole="switch"
                     accessibilityState={{checked: enabled, disabled: !editable}}
                     testID={`osd-stat-${index}`}>
-                    <Text style={styles.switchLabel}>إحصاء {index + 1}</Text>
+                    <Text style={styles.switchLabel}>{"Statistiek."}{index + 1}</Text>
                     <Text style={[styles.switchState, enabled && styles.switchStateOn]}>
-                      {enabled ? 'مفعّل' : 'معطّل'}
+                      {enabled ? "Ingeschakeld" : "Uitgeschakeld"}
                     </Text>
                   </Pressable>
                 ))}
@@ -737,13 +731,13 @@ export default function OsdScreen({
             </View>
 
             <View style={styles.card}>
-              <Text style={styles.sectionTitle}>المؤقتات</Text>
+              <Text style={styles.sectionTitle}>{"De tijden."}</Text>
               {draft.timers.map((timer, index) => (
                 <View key={index} style={styles.timerRow}>
-                  <Text style={styles.fieldLabel}>المؤقت {index + 1}</Text>
+                  <Text style={styles.fieldLabel}>{"Voorlopig."}{index + 1}</Text>
                   <View style={styles.fieldsRow}>
                     <Stepper
-                      label="المصدر"
+                      label={"De bron."}
                       value={timer & 0x0f}
                       min={0}
                       max={15}
@@ -752,7 +746,7 @@ export default function OsdScreen({
                       testID={`osd-timer-${index}-source`}
                     />
                     <Stepper
-                      label="الدقة"
+                      label={"Precision."}
                       value={(timer >>> 4) & 0x0f}
                       min={0}
                       max={15}
@@ -761,7 +755,7 @@ export default function OsdScreen({
                       testID={`osd-timer-${index}-precision`}
                     />
                     <Stepper
-                      label="الإنذار"
+                      label={"De alarm."}
                       value={(timer >>> 8) & 0xff}
                       min={0}
                       max={255}
@@ -776,7 +770,7 @@ export default function OsdScreen({
             </View>
 
             <View style={styles.card}>
-              <Text style={styles.sectionTitle}>التحذيرات</Text>
+              <Text style={styles.sectionTitle}>{"Waarschuwingen"}</Text>
               <View style={styles.switchGrid}>
                 {Array.from(
                   {length: Math.min(32, snapshot.config.warningCount)},
@@ -794,9 +788,9 @@ export default function OsdScreen({
                       accessibilityRole="switch"
                       accessibilityState={{checked: enabled, disabled: !editable}}
                       testID={`osd-warning-${index}`}>
-                      <Text style={styles.switchLabel}>تحذير {index + 1}</Text>
+                      <Text style={styles.switchLabel}>{"Waarschuwing"}{index + 1}</Text>
                       <Text style={[styles.switchState, enabled && styles.switchStateOn]}>
-                        {enabled ? 'مفعّل' : 'معطّل'}
+                        {enabled ? "Ingeschakeld" : "Uitgeschakeld"}
                       </Text>
                     </Pressable>
                   );
@@ -806,7 +800,7 @@ export default function OsdScreen({
 
             {issues.length > 0 ? (
               <View style={styles.warning}>
-                <Text style={styles.warningText}>لا يمكن الحفظ: {issues.join(' · ')}</Text>
+                <Text style={styles.warningText}>{"Kan niet worden bewaard:"}{issues.join(' · ')}</Text>
               </View>
             ) : null}
             {statusCopy !== undefined ? (
@@ -818,7 +812,7 @@ export default function OsdScreen({
             ) : null}
           </>
         ) : phase === 'LOADING' ? (
-          <Text style={styles.loading}>جارٍ قراءة OSD والـCanvas من المتحكم…</Text>
+          <Text style={styles.loading}>{"Ik lees de OSD en Canvas van de controller."}</Text>
         ) : null}
 
         {/* BELOW the preview, and unconditional. Every screen in the
@@ -827,26 +821,24 @@ export default function OsdScreen({
             contract without stacking a warning card above the working
             surface. */}
         <NoticeBox variant="hardware" title={t('hardwareVerification.title')}>
-          المعاينة تعرض شبكة المحارف والمواضع فوق صورة ثابتة للتقدير البصري فقط؛ الخط النهائي
-          والرموز والقص الفعلي تُتحقق في النظارة أو شاشة الفيديو.
-        </NoticeBox>
+          {"De voorbeeldweergave toont het raster en de posities boven een vaste afbeelding voor visuele beoordeling. Controleer het uiteindelijke lettertype, de symbolen en eventuele afsnijding in de videobril of op het videoscherm."}</NoticeBox>
         <View style={styles.bottomSpace} />
       </ScrollView>
       <StickyActionBar
         visible={dirty}
-        summary="تغيّر تخطيط OSD"
-        details={['تُكتب المجموعات المتغيرة فقط، ثم تُحفظ في ذاكرة المتحكم وتُقرأ للتأكد']}
-        saveLabel="حفظ والتحقق"
-        discardLabel="تجاهل"
+        summary={"OSD is veranderd."}
+        details={["Veranderlijke groepen worden alleen opgeslagen, opgeslagen in het geheugen en gelezen om te controleren."]}
+        saveLabel={"Bewaar en controleren"}
+        discardLabel={"Verwerpen"}
         onSave={save}
         onDiscard={() =>
           snapshot !== undefined && setDraft(createOsdConfigurationDraft(snapshot))
         }
-        disabledReason={saveBlockedBySession ? blockMessage('SESSION_CHANGED') : issues.length > 0 ? 'صحح إعدادات OSD أولًا.' : undefined}
+        disabledReason={saveBlockedBySession ? blockMessage('SESSION_CHANGED') : issues.length > 0 ? "De OSD-instellingen eerst corrigeren." : undefined}
         statusMessage={statusCopy?.text}
         statusTone={statusCopy?.warning ? 'warning' : 'normal'}
         busy={phase === 'SAVING'}
-        busyLabel="جارٍ حفظ OSD…"
+        busyLabel={"OSD opslaan…"}
         testID="osd-save-bar"
       />
     </View>
@@ -889,16 +881,16 @@ const styles = StyleSheet.create({
   content: {width: '100%', alignSelf: 'center', padding: spacing.lg, gap: spacing.md},
   hero: {gap: 4},
   eyebrow: {...typography.eyebrow, color: colors.accentStrong},
-  title: {...typography.title, color: colors.textPrimary, textAlign: 'right'},
-  subtitle: {...typography.body, color: colors.textSecondary, textAlign: 'right', maxWidth: PROSE_MEASURE},
+  title: {...typography.title, color: colors.textPrimary, textAlign: 'left'},
+  subtitle: {...typography.body, color: colors.textSecondary, textAlign: 'left', maxWidth: PROSE_MEASURE},
   flexOne: {flex: 1},
   warning: {...noticeSurface, borderColor: colors.warning,
     backgroundColor: colors.warningSoft,
     gap: spacing.sm},
-  warningText: {...typography.caption, color: colors.warning, textAlign: 'right', maxWidth: PROSE_MEASURE},
+  warningText: {...typography.caption, color: colors.warning, textAlign: 'left', maxWidth: PROSE_MEASURE},
   success: {...noticeSurface, borderColor: colors.success,
     backgroundColor: colors.successSoft},
-  successText: {...typography.caption, color: colors.success, textAlign: 'right', maxWidth: PROSE_MEASURE},
+  successText: {...typography.caption, color: colors.success, textAlign: 'left', maxWidth: PROSE_MEASURE},
   inlineAction: {alignSelf: 'flex-start'},
   card: {
     backgroundColor: colors.surface,
@@ -914,8 +906,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: spacing.md,
   },
-  sectionTitle: {...typography.heading, color: colors.textPrimary, textAlign: 'right'},
-  sectionHint: {...typography.caption, color: colors.textMuted, textAlign: 'right', maxWidth: PROSE_MEASURE},
+  sectionTitle: {...typography.heading, color: colors.textPrimary, textAlign: 'left'},
+  sectionHint: {...typography.caption, color: colors.textMuted, textAlign: 'left', maxWidth: PROSE_MEASURE},
   positionValue: {
     ...typography.caption,
     color: colors.textPrimary,
@@ -940,7 +932,7 @@ const styles = StyleSheet.create({
   fieldsRow: {flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md},
   field: {flexGrow: 1, flexBasis: 156, minWidth: 156, gap: 5},
   fieldWide: {flexGrow: 1, flexBasis: 260, gap: 5},
-  fieldLabel: {...typography.label, color: colors.textPrimary, textAlign: 'right'},
+  fieldLabel: {...typography.label, color: colors.textPrimary, textAlign: 'left'},
   elementGrid: {flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs},
   elementChip: {
     flexBasis: OSD_ELEMENT_CHIP_BASIS,
@@ -987,7 +979,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surfaceAlt,
   },
   elementDotOn: {backgroundColor: colors.success, borderColor: colors.success},
-  elementChipText: {...typography.caption, flex: 1, color: colors.textPrimary, textAlign: 'right', maxWidth: PROSE_MEASURE},
+  elementChipText: {...typography.caption, flex: 1, color: colors.textPrimary, textAlign: 'left', maxWidth: PROSE_MEASURE},
   elementPosition: {...typography.caption, color: colors.textMuted, fontVariant: ['tabular-nums']},
   switchGrid: {flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs},
   switchRow: {

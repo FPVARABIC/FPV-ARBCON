@@ -163,22 +163,25 @@
 
 ---
 
-## تحذيرات
+## Waarschuwingen
+De grootte van het vliegtuig maakt geen sessie. motoren Het is veilig. motoren Het draait echt. propellers is ontkoppeld, zelfs op web.
 
-> **حجم الطائرة لا يجعل جلسة المحركات آمنة.** المحركات تدور فعلًا.
-> المراوح مفكوكة، حتى على وووب.
 
-> **فلترة RPM إلزامية مع هذا الضبط.** الإعداد الرسمي يقول حرفيًا إن
-> تشغيله بدونها **قد يؤدي إلى حريق** (S1.8).
 
-> **سلّح على الأرض واستمع.** صوت نظيف بلا طحن، ثم تحويم وفحص حرارة
-> المحركات. إن كان أي شيء غريبًا، لا تطر (S1.8).
+Het RPM-filter is verplicht met deze instelling. De officiële instelling zegt letterlijk dat het zonder S1.8 een brand kan veroorzaken.
 
-> **4.45V لخلايا 1S الحديثة فقط.** ضبط هذا الرقم على بطارية 4.2V
-> تقليدية يعني أن تحذير الجهد لن يصل في وقته.
 
-> **الطيران الداخلي يعني ناسًا وأشياء على مسافة أمتار.** جرّب أي
-> إعداد جديد في أوسع مساحة متاحة أولًا.
+
+**Arm op de grond en luister.** Het geluid moet schoon zijn, zonder schurend geluid. Ga daarna kort hoveren en controleer de motortemperatuur. Als er iets vreemds is, laat S1.8 niet vallen.
+
+
+
+**4.45V alleen voor moderne 1S cellen.** Het instellen van dit nummer op traditionele accu 4.2V betekent dat de spanningswaarschuwing niet op tijd komt.
+
+
+
+Inlandvliegen betekent mensen en dingen op een afstand van een meter. Probeer eerst een nieuwe setup in de ruimste ruimte die er is.
+
 
 ---
 

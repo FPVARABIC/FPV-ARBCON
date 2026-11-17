@@ -176,7 +176,7 @@ describe('P-E: the expert tier reaches the board', () => {
     await save(renderer);
     expect(h.board.commandCount(MSP_SET_PID_ADVANCED)).toBe(1);
     expect(h.board.pidProfile(h.board.activePidProfile()).advanced[PID_ADVANCED_OFFSETS.dMaxRoll]).toBe(47);
-    expect(screenText(renderer)).toContain('أكدت القراءة الراجعة تطابقها');
+    expect(screenText(renderer)).toContain("De veranderende waarden werden bewaard, en de teruglezing bevestigde dat ze overeenkwamen.");
     act(() => renderer.unmount());
   });
 
@@ -309,8 +309,8 @@ describe('P-E: the expert tier reaches the board', () => {
     openGroup(renderer, 'BATTERY');
     expect(exists(renderer, 'pid-advanced-autoProfileCellCount-choices')).toBe(true);
     const text = screenText(renderer);
-    expect(text).toContain('تبديل تلقائي');
-    expect(text).toContain('بلا تبديل');
+    expect(text).toContain("Automatisch wisselen");
+    expect(text).toContain("Niet wisselen");
     act(() => renderer.unmount());
   });
 
@@ -322,8 +322,8 @@ describe('P-E: the expert tier reaches the board', () => {
       const node = renderer.root.findAllByProps({testID: `pid-advanced-groups-${group}-scope`})[0];
       return String(node.props.children);
     };
-    expect(scopeOf('GYRO_FILTERS')).toContain('مشترك');
-    expect(scopeOf('DTERM_FILTERS')).toContain('ملف PID');
+    expect(scopeOf('GYRO_FILTERS')).toContain("Gedeeld door alle profielen");
+    expect(scopeOf('DTERM_FILTERS')).toContain("PID-profiel");
     expect(scopeOf('GYRO_FILTERS')).not.toBe(scopeOf('DTERM_FILTERS'));
     act(() => renderer.unmount());
   });
@@ -358,7 +358,7 @@ describe('P-E: the expert tier reaches the board', () => {
     openGroup(renderer, 'DTERM_FILTERS');
     typeInto(renderer, 'pid-advanced-dtermNotchHz-value', '200');
     typeInto(renderer, 'pid-advanced-dtermNotchCutoff-value', '200');
-    expect(screenText(renderer)).toContain('حدود Min/Max للفلاتر غير متناسقة');
+    expect(screenText(renderer)).toContain("De Min/Max-grens voor niet-coördinerende filters");
     await save(renderer);
     // Nothing went out: the page refuses before the wire.
     expect(h.board.commandCount(MSP_SET_FILTER_CONFIG)).toBe(0);
@@ -383,7 +383,7 @@ describe('P-E: the expert tier reaches the board', () => {
       expect(exists(renderer, `pid-rpm-filter-${absent}`)).toBe(false);
     }
     expect(exists(renderer, 'pid-rpm-filter-tail-absent')).toBe(true);
-    expect(screenText(renderer)).toContain('مرشّح RPM');
+    expect(screenText(renderer)).toContain("RPM-filter");
     act(() => renderer.unmount());
   });
 });
@@ -406,10 +406,10 @@ describe('P-E: the whole-profile operations', () => {
     press(renderer, 'pid-advanced-toggle');
     press(renderer, 'pid-profile-management-toggle');
     typeInto(renderer, 'pid-profile-management-name-input', 'RACEDAY9');
-    expect(screenText(renderer)).toContain('8 / 8 بايت');
+    expect(screenText(renderer)).toContain("8 / 8 byte");
     expect(exists(renderer, 'pid-profile-management-name-too-long')).toBe(false);
     typeInto(renderer, 'pid-profile-management-name-input', 'RACEDAY99');
-    expect(screenText(renderer)).toContain('9 / 8 بايت');
+    expect(screenText(renderer)).toContain("9 / 8 byte");
     expect(exists(renderer, 'pid-profile-management-name-too-long')).toBe(true);
     // ...and the button is not merely warned about, it is unusable.
     expect(renderer.root.findAllByProps({testID: 'pid-profile-management-name-save'})
@@ -424,10 +424,10 @@ describe('P-E: the whole-profile operations', () => {
     press(renderer, 'pid-profile-management-toggle');
     typeInto(renderer, 'pid-profile-management-name-input', 'سباق');
     expect(exists(renderer, 'pid-profile-management-name-non-ascii')).toBe(true);
-    expect(screenText(renderer)).toContain('سياسة هذا التطبيق');
+    expect(screenText(renderer)).toContain("De applicatie accepteert alleen ASCII in de bestandsnaam. Dat is het beleid van deze app.");
     // FOUR characters, EIGHT bytes. Counting characters would have said
     // 4 / 8 and let a name through that the firmware cannot hold.
-    expect(screenText(renderer)).toContain('8 / 8 بايت');
+    expect(screenText(renderer)).toContain("8 / 8 byte");
     act(() => renderer.unmount());
   });
 
@@ -438,8 +438,8 @@ describe('P-E: the whole-profile operations', () => {
     press(renderer, 'pid-profile-management-toggle');
     typeInto(renderer, 'pid-profile-management-name-input', 'RACE2');
     await pressAsync(renderer, 'pid-profile-management-name-save');
-    expect(screenText(renderer)).toContain('«RACE2»');
-    expect(screenText(renderer)).toContain('طابقته القراءة الراجعة');
+    expect(screenText(renderer)).toContain("«RACE2»");
+    expect(screenText(renderer)).toContain("Teruglezen bevestigt de naam");
     act(() => renderer.unmount());
   });
 
@@ -453,8 +453,8 @@ describe('P-E: the whole-profile operations', () => {
     typeInto(renderer, 'pid-profile-management-name-input', 'RACE2');
     await pressAsync(renderer, 'pid-profile-management-name-save');
     const text = screenText(renderer);
-    expect(text).toContain('لم يُحفظ الاسم كما طُلب');
-    expect(text).not.toContain('طابقته القراءة الراجعة');
+    expect(text).toContain("De naam is niet opgeslagen zoals aangevraagd");
+    expect(text).not.toContain("Teruglezen bevestigt de naam");
     act(() => renderer.unmount());
   });
 
@@ -466,7 +466,7 @@ describe('P-E: the whole-profile operations', () => {
     press(renderer, 'pid-profile-management-copy-source-1');
     press(renderer, `pid-profile-management-copy-destination-${h.board.activePidProfile()}`);
     expect(exists(renderer, 'pid-profile-management-copy-active-refused')).toBe(true);
-    expect(screenText(renderer)).toContain('قاعدة هذا التطبيق');
+    expect(screenText(renderer)).toContain("De opstart. Dat is de basis van deze applicatie.");
     await pressAsync(renderer, 'pid-profile-management-copy-run');
     expect(h.board.commandCount(MSP_COPY_PROFILE)).toBe(0);
     act(() => renderer.unmount());
@@ -494,7 +494,7 @@ describe('P-E: the whole-profile operations', () => {
     press(renderer, 'pid-profile-management-copy-destination-2');
     await pressAsync(renderer, 'pid-profile-management-copy-run');
     expect(h.board.commandCount(MSP_COPY_PROFILE)).toBe(1);
-    expect(screenText(renderer)).toContain('وطابقت القراءة الراجعة المصدر');
+    expect(screenText(renderer)).toContain("Teruglezen bevestigt dat het doel overeenkomt met de bron");
     act(() => renderer.unmount());
   });
 
@@ -520,9 +520,9 @@ describe('P-E: the whole-profile operations', () => {
     await pressAsync(renderer, 'pid-profile-management-reset-run');
     expect(h.board.commandCount(MSP_SET_RESET_CURR_PID)).toBe(1);
     const text = screenText(renderer);
-    expect(text).toContain('في الذاكرة العاملة');
-    expect(text).toContain('تحقّقنا من');
-    expect(text).toContain('لم نقرأها ولا ندّعي صحتها');
+    expect(text).toContain("Het volledige PID-bestand wordt alleen in het werkgeheugen teruggestuurd naar de standaardwaarden;");
+    expect(text).toContain("Geverifieerd:");
+    expect(text).toContain("de juistheid daarvan is niet bevestigd");
     // The reset command itself persists nothing, and the page says so
     // instead of writing EEPROM behind the operator's back.
     expect(h.board.commandCount(MSP_EEPROM_WRITE)).toBe(0);

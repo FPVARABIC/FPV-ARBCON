@@ -358,12 +358,12 @@ describe('M-D §13 / §16 - a custom mixer is not a mismatch', () => {
 });
 
 describe('M-D §20 - RTL does not reverse a motor count', () => {
-  it('renders the same figures under the Arabic locale it was built for', () => {
+  it('renders the same figures under the Dutch locale', () => {
     // The app is Arabic-only and RTL throughout; the point of this test
     // is that the NUMBER six is six, not that a layout mirrors. The
     // per-motor index invariant is proven where indices exist - see
     // motorNumberingAndDiagram and the production-path matrix.
-    expect(i18n.language).toBe('ar');
+    expect(i18n.language).toBe('nl');
     const r = render({
       mixerModeRaw: HEX6X,
       runtimeMotorCount: 6,

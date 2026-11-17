@@ -1,15 +1,15 @@
 {
   "id": "tiny-whoop",
   "kind": "FLIGHT_STYLE",
-  "title_ar": "الوووب والطيران الداخلي",
+  "title_ar": "Whoops en binnen vliegen",
   "title_en": "Tiny Whoop / Indoor",
-  "description_ar": "طائرة صغيرة بمراوح محمية تطير داخل الغرف. أصغر منصة وأكثرها اختلافًا.",
+  "description_ar": "Een kleine propellers beschermde vliegtuig vliegt binnen de kamers. Het kleinste en meest uiteenlopende platform.",
   "description_en": "A small ducted aircraft flown indoors — the smallest platform and the one whose numbers differ most.",
   "difficulty": "beginner",
-  "difficulty_ar": "مبتدئ",
+  "difficulty_ar": "Beginner",
   "intended_aircraft": [
-    "وووب 1S بلا فرش (65 مم)",
-    "وووب 2S"
+    "1S-whoop met borstelloze motoren (65 mm)",
+    "2S-whoop"
   ],
   "required_screens": [
     "MotorsScreen",
@@ -22,9 +22,9 @@
     "OsdScreen"
   ],
   "hardware_requirements": [
-    "محركات بلا فرش — الإعداد الرسمي لا يصلح لوووب بفرش",
-    "ESC يدعم Dshot300 و DShot ثنائي الاتجاه",
-    "بطارية 1S (تحقق من جهدها الأقصى قبل ضبط 4.45V)"
+    "Motoren zonder badjas. De officiële opstelling past niet bij een badjas.",
+    "ESC ondersteunt Dshot300 en DShot bi-directief",
+    "accu 1 S Ze controleert haar best voor ze opslaat. 4.45 V )"
   ],
   "hardware_verification_status": "NOT VERIFIED — DEFERRED",
   "verification_level": "SOFTWARE / REFERENCE VERIFIED",
@@ -35,8 +35,8 @@
   "steps": [
     {
       "n": 1,
-      "title_ar": "المحركات",
-      "screen": "المحركات · إعدادات ESC",
+      "title_ar": "Motoren",
+      "screen": "Motoren · ESC-instellingen",
       "screenshot": "images/1-motors.png",
       "targets": [
         {
@@ -68,7 +68,7 @@
     {
       "n": 2,
       "title_ar": "Dynamic Idle",
-      "screen": "ضبط PID · بطاقة Dynamic Idle",
+      "screen": "PID-afstelling · Dynamic Idle",
       "screenshot": "images/2-dynamic-idle.png",
       "targets": [
         {
@@ -81,8 +81,8 @@
     },
     {
       "n": 3,
-      "title_ar": "إحساس العصا",
-      "screen": "ضبط PID · بطاقة إحساس العصا",
+      "title_ar": "Stickrespons",
+      "screen": "PID-afstelling · Stickrespons",
       "screenshot": "images/3-pid-feel.png",
       "targets": [
         {
@@ -101,8 +101,8 @@
     },
     {
       "n": 4,
-      "title_ar": "الطاقة والبطارية",
-      "screen": "الطاقة · حدود بطارية 1S",
+      "title_ar": "Voeding en accu",
+      "screen": "Voeding · Accugrenzen voor 1S",
       "screenshot": "images/4-power.png",
       "targets": [
         {
@@ -127,8 +127,8 @@
     },
     {
       "n": 5,
-      "title_ar": "منحنى الخانق",
-      "screen": "ضبط PID · منحنى وحدّ الخانق",
+      "title_ar": "Gascurve",
+      "screen": "PID-afstelling · Gascurve en gasbegrenzing",
       "screenshot": "images/5-throttle-curve.png",
       "targets": [
         {
@@ -154,7 +154,7 @@
     {
       "n": 6,
       "title_ar": "Failsafe",
-      "screen": "Failsafe · إجراء المرحلة 2",
+      "screen": "Failsafe · Actie in fase 2",
       "screenshot": "images/6-failsafe.png",
       "targets": [
         {
@@ -169,63 +169,63 @@
   "step_count": 6,
   "decisions": [
     {
-      "requirement": "المستقبل · تنعيم الإشارة",
+      "requirement": "Ontvanger · Signaalfiltering",
       "decision": "KEEP_DEFAULT",
-      "detail": "إعداد الوووب الرسمي **لا يضمّن** ملف الرابط، فالتنعيم يبقى على أصله: معاملان تلقائيان 30/30 وترددا قطع 0. لا تغيّرهما لهذا النمط.",
+      "detail": "De officiële setup van de WOOP ** bevat geen ** linkfile, dus de vergoeding blijft op zijn oorspronkelijke: 30/30 automatische transacties en 0 stukkenfrequentie. Verander ze niet in die stijl.",
       "source": "S1.13"
     },
     {
       "requirement": "Rates",
       "decision": "PILOT_PREFERENCE",
-      "detail": "الإعداد الرسمي يعرض ملف rates كخيار غير معلَّم، لا كقاعدة. الوووب يميل إلى yaw أعلى لأن دورانه بطيء بطبعه — والرقم اختيارك.",
+      "detail": "De formele opstelling toont het rates-bestand als een onopgeleide optie, niet als regel. Waub is geneigd tot een hoger yaw omdat zijn rotatie traag is met een  —  en een getal van uw keuze.",
       "source": null
     },
     {
-      "requirement": "قيم PID (P · I · D)",
+      "requirement": "PID-waarden (P · I · D)",
       "decision": "KEEP_DEFAULT",
-      "detail": "إعداد الوووب الرسمي يضبط PID عبر منزلقات simplified، وهي غير معروضة في التطبيق. لا تعدّل P/I/D يدويًا.",
+      "detail": "PID wordt via de simplified-sliders geconfigureerd door de officiële WOOP-instelling, die niet in de toepassing wordt weergegeven. P/I/D mag niet handmatig worden aangepast.",
       "source": "S1.8"
     },
     {
-      "requirement": "الفلاتر",
+      "requirement": "Filters",
       "decision": "KEEP_DEFAULT",
-      "detail": "الإعداد الرسمي يطفئ Gyro LPF1 و Dynamic Notch ويعتمد على فلتر RPM وحده. لا يسمح التطبيق بتفعيل أو تعطيل Dynamic Notch، وهذا هو السلوك الصحيح هنا.",
+      "detail": "De officiële opstelling schakelt Gyro LPF1 en Dynamic Notch uit en is alleen afhankelijk van de RPM filter. De app laat Dynamic Notch niet activeren of uitschakelen, dat is het juiste gedrag hier.",
       "source": "S1.8"
     },
     {
-      "requirement": "وضع الطيران: Acro · Angle · Horizon",
+      "requirement": "Vliegmodus: Acro · Angle · Horizon",
       "decision": "PILOT_PREFERENCE",
-      "detail": "**Acro صحيح تمامًا للوووب، وليس Angle إلزاميًا.** Angle مساعدة تعلّم مفيدة داخل الغرف؛ ضعها على مفتاح إن أردت الرجوع إليها، أو اتركها.",
+      "detail": "Acro is volledig geldig voor Woop, Angle is niet verplicht. Angle is een nuttig leerhulp binnen de kamer. Zet het op de sleutel als je naar haar terug wilt, of laat het.",
       "source": null
     },
     {
       "requirement": "Airmode",
       "decision": "PILOT_PREFERENCE",
-      "detail": "الإعداد الرسمي يقول إن إطفاءه أفضل أداءً في الطيران الداخلي، ويعرض ذلك كخيار غير معلَّم. للأكروبات في مساحة كبيرة، ضعه على مفتاح.",
+      "detail": "De officiële opstelling zegt dat het uitsteken het beste is in het binnenvliegen, en dat is een ongeletterde optie. Voor acrobaten in een grote ruimte, zet het op een sleutel.",
       "source": "S1.8"
     },
     {
-      "requirement": "تعويض هبوط الجهد (`vbat_sag_compensation`)",
+      "requirement": "`vbat_sag_compensation` compensatie.",
       "decision": "NOT_APPLICABLE",
-      "detail": "موصى به في الإعداد الرسمي (خيار معلَّم، القيمة 100) لأن خلية 1S تهبط بشدة تحت الحمل — لكن **هذا التطبيق لا يعرضه**. يُضبط من سطر الأوامر أو بتطبيق الحزمة الرسمية.",
+      "detail": "Het wordt aanbevolen in de officiële instelling (optie leraar, waarde 100) omdat de 1S-cel zwaar onder de zwangerschap valt  —  maar ** deze applicatie laat het niet zien**. Opgesteld vanaf de opdrachtlijn of via het officiële pakket.",
       "source": "S1.8"
     },
     {
       "requirement": "OSD",
       "decision": "PILOT_PREFERENCE",
-      "detail": "لا يوجد رقم رسمي للوووب. إن كان لديك OSD، ابدأ من إنذار RSSI dBm عند −98 وعدّله بعد رحلة داخل مبناك — الجدران تغيّر الرقم أكثر من النمط.",
+      "detail": "Er is geen officieel nummer voor Woop. Als je een OSD hebt, begin dan met een RSSI dBm alarm bij −98 en verander het na een vlucht in een gebouw.",
       "source": null
     },
     {
-      "requirement": "مرسل الفيديو (VTX)",
+      "requirement": "Videozender (VTX)",
       "decision": "PILOT_PREFERENCE",
-      "detail": "الطيران الداخلي لا يحتاج طاقة عالية؛ ابدأ من أقل مستوى يعطيك صورة نظيفة.",
+      "detail": "Inlandvliegen heeft geen hoge energie nodig; Begin op het laagste niveau dat je een schoon beeld geeft.",
       "source": null
     },
     {
       "requirement": "`cpu_late_limit_permille`",
       "decision": "NOT_APPLICABLE",
-      "detail": "يضبطه الإعداد الرسمي عند 15، ولا يعرضه التطبيق. غيابه لا يمنع الطيران.",
+      "detail": "Het wordt gecontroleerd door de officiële instelling bij 15 en wordt niet getoond door de applicatie. Zijn afwezigheid verhindert de vlucht niet.",
       "source": "S1.8"
     }
   ]

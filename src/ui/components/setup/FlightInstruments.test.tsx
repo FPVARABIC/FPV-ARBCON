@@ -109,7 +109,7 @@ describe('FlightInstruments rendering contract', () => {
 
     expect(
       byTestID(renderer, 'artificial-horizon').props.accessibilityLabel,
-    ).toBe('الأفق الاصطناعي، الدوران 12.5 درجة، الميل -6.5 درجة');
+    ).toBe("Kunstmatige horizon, roll 12.5 graden, pitch -6.5 graden");
     // SETUP P3: the word "بوصلة" (compass) is gone from this label on
     // purpose. Screen-reader users were being told this instrument was a
     // compass; it is the FC's yaw offset from the operator's own reset
@@ -117,7 +117,7 @@ describe('FlightInstruments rendering contract', () => {
     // magnetic one.
     expect(
       byTestID(renderer, 'direction-compass').props.accessibilityLabel,
-    ).toBe('الاتجاه النسبي، 275 درجة من نقطة الضبط الحالية');
+    ).toBe("Relatieve koers, 275 graden vanaf het huidige nulpunt");
     const horizonTransform = StyleSheet.flatten(
       byTestID(renderer, 'artificial-horizon-moving-world').props.style,
     ).transform;
@@ -140,7 +140,7 @@ describe('FlightInstruments rendering contract', () => {
     // dedicated relative-direction suite below for why the cardinal rose
     // was removed rather than restyled.
     expect(allText(renderer)).toEqual(
-      expect.arrayContaining(['الأفق الاصطناعي', 'الاتجاه النسبي', '275°']),
+      expect.arrayContaining(["Kunstmatige horizon", "Relatieve koers", '275°']),
     );
   });
 
@@ -153,7 +153,7 @@ describe('FlightInstruments rendering contract', () => {
     expect(
       byTestID(renderer, 'artificial-horizon-pitch-off-scale'),
     ).toBeDefined();
-    expect(allText(renderer)).toContain('أعلى من +٣٠°');
+    expect(allText(renderer)).toContain("Meer dan +30°");
   });
 
   it('uses a bounded stacked layout on very narrow or large-text screens', () => {
@@ -220,8 +220,8 @@ describe('FlightInstruments rendering contract', () => {
     expect(
       findByTestID(renderer, 'artificial-horizon-overlay'),
     ).toBeUndefined();
-    expect(allText(renderer)).not.toContain('قراءة متأخرة');
-    expect(allText(renderer)).not.toContain('مباشر');
+    expect(allText(renderer)).not.toContain("Meting verouderd");
+    expect(allText(renderer)).not.toContain("Live");
   });
 
   it.each(['WAITING', 'ERROR'] as const)(

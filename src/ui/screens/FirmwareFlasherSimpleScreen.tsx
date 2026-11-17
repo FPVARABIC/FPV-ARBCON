@@ -230,13 +230,13 @@ export function operatorDetail(reason: unknown, category: FlasherProblemCategory
 }
 
 export const PROBLEM_FALLBACKS: Readonly<Record<FlasherProblemCategory, string>> = {
-  CATALOGUE: 'تعذّر الوصول إلى خادم البناء. تحقّق من الاتصال بالإنترنت ثم أعد المحاولة.',
-  RELEASES: 'تعذّر جلب إصدارات هذه اللوحة. تحقّق من الاتصال بالإنترنت ثم أعد المحاولة.',
-  BUILD: 'تعذّر جلب خيارات البناء لهذا الإصدار.',
-  PREPARE: 'تعذّر بناء أو تنزيل Firmware. تحقّق من الاتصال بالإنترنت ثم أعد المحاولة.',
-  SERIAL: 'تعذّر فتح اتصال USB مع اللوحة. أعد توصيل الكابل ثم أعد المحاولة.',
-  DFU_ACCESS: 'تعذّر الوصول إلى جهاز DFU. أعد توصيل اللوحة في وضع DFU ثم اخترها من جديد.',
-  DFU_ENTRY: 'تعذّر تجهيز وضع DFU. أعد توصيل اللوحة ثم أعد المحاولة.',
+  CATALOGUE: "De buildserver is niet bereikbaar. Controleer de internetverbinding en probeer het opnieuw.",
+  RELEASES: "De versies voor deze printplaat konden niet worden opgehaald. Controleer de internetverbinding en probeer het opnieuw.",
+  BUILD: "De buildopties voor deze versie konden niet worden opgehaald.",
+  PREPARE: "Firmware bouwen of downloaden is mislukt. Controleer de internetverbinding en probeer het opnieuw.",
+  SERIAL: "De USB-verbinding met de printplaat kon niet worden geopend. Sluit de kabel opnieuw aan en probeer het opnieuw.",
+  DFU_ACCESS: "Het DFU-apparaat is niet bereikbaar. Sluit de printplaat opnieuw in DFU-modus aan en kies het apparaat opnieuw.",
+  DFU_ENTRY: "DFU-modus kon niet worden voorbereid. Sluit de printplaat opnieuw aan en probeer het opnieuw.",
 };
 
 /**
@@ -250,13 +250,13 @@ export const RETRYABLE_PROBLEM_CATEGORIES: readonly FlasherProblemCategory[] =
   Object.freeze(['CATALOGUE', 'RELEASES', 'BUILD']);
 
 export const PROBLEM_TITLES: Readonly<Record<FlasherProblemCategory, string>> = {
-  CATALOGUE: 'تعذّر تحميل قائمة اللوحات',
-  RELEASES: 'تعذّر تحميل قائمة الإصدارات',
-  BUILD: 'تعذّر تحميل خيارات البناء',
-  PREPARE: 'تعذّر تحضير Firmware',
-  SERIAL: 'تعذّر الاتصال باللوحة',
-  DFU_ACCESS: 'تعذّر الوصول إلى جهاز DFU',
-  DFU_ENTRY: 'تعذّر الدخول إلى وضع DFU',
+  CATALOGUE: "De lijst met printplaten kon niet worden geladen",
+  RELEASES: "De versielijst kon niet worden geladen",
+  BUILD: "De buildopties konden niet worden geladen",
+  PREPARE: "Firmware kon niet worden voorbereid",
+  SERIAL: "Verbinding met de printplaat mislukt",
+  DFU_ACCESS: "Het DFU-apparaat is niet bereikbaar",
+  DFU_ENTRY: "DFU-modus kon niet worden geopend",
 };
 
 /**
@@ -303,17 +303,17 @@ export function simpleFlasherNavigationLocked(phase: SimpleFlasherPhase): boolea
 
 /** The Arabic heading for each official option category. */
 export const BUILD_CATEGORY_TITLES: Readonly<Record<StandardBuildCategory['key'], string>> = {
-  radio: 'بروتوكول الراديو',
-  telemetry: 'بروتوكول Telemetry',
-  osd: 'بروتوكول OSD',
-  motor: 'بروتوكول المحركات',
-  general: 'خيارات أخرى',
+  radio: "Radioprotocol",
+  telemetry: "Telemetrieprotocol",
+  osd: "OSD-protocol",
+  motor: "Motorprotocol",
+  general: "Overige opties",
 };
 
 const CHANNEL_TITLES: Readonly<Record<FirmwareReleaseChannel, string>> = {
-  stable: 'مستقر',
-  candidate: 'مرشح',
-  development: 'تطويري',
+  stable: "Stabiel",
+  candidate: "Releasekandidaat",
+  development: "Ontwikkelversie",
 };
 
 /* ------------------------------------------------------------------ *
@@ -405,7 +405,7 @@ function SingleChoiceGroup({
 }): React.JSX.Element {
   const [open, setOpen] = useState(false);
   const selected = options.find(option => option.value === value);
-  const summary = lockedLabel ?? selected?.name ?? 'بدون';
+  const summary = lockedLabel ?? selected?.name ?? "Geen";
   const locked = lockedLabel !== undefined;
   return (
     <View style={styles.optionGroup} testID={`${testIDPrefix}-group`}>
@@ -433,7 +433,7 @@ function SingleChoiceGroup({
       </Pressable>
       {locked ? (
         <Text style={styles.lockedNote} testID={`${testIDPrefix}-locked-note`}>
-          {lockedReason ?? 'محدد تلقائيًا حسب اختيارك في مجموعة أخرى.'}
+          {lockedReason ?? "Automatisch geselecteerd op basis van uw keuze in een andere groep."}
         </Text>
       ) : null}
       {open && !locked ? (
@@ -494,7 +494,7 @@ function MultiChoiceGroup({
         <View style={styles.optionCopy}>
           <Text style={styles.optionLabel}>{title}</Text>
           <Text style={styles.optionValue}>
-            {values.length === 0 ? 'بدون' : `${values.length} مُفعّل`}
+            {values.length === 0 ? "Geen" : `${values.length} ingeschakeld`}
           </Text>
         </View>
         <Icon
@@ -537,7 +537,7 @@ export default function FirmwareFlasherSimpleScreen({
   /** True while the embedded advanced screen owns a running operation. */
   const [advancedBusy, setAdvancedBusy] = useState(false);
   const [phase, setPhase] = useState<SimpleFlasherPhase>('idle');
-  const [status, setStatus] = useState('اختر اللوحة والإصدار، ثم حضّر Firmware.');
+  const [status, setStatus] = useState("Kies de printplaat en versie en bereid daarna de firmware voor.");
   const [progress, setProgress] = useState(0);
 
   const [targets, setTargets] = useState<readonly BetaflightTarget[]>([]);
@@ -805,7 +805,7 @@ export default function FirmwareFlasherSimpleScreen({
   const retryCatalogue = useCallback(() => {
     setProblem(null);
     setPhase('idle');
-    setStatus('إعادة المحاولة…');
+    setStatus("Opnieuw proberen…");
     setCatalogueAttempt(current => current + 1);
   }, []);
 
@@ -964,16 +964,16 @@ export default function FirmwareFlasherSimpleScreen({
     // is never allowed to visually claim success.
     setProgress(Math.max(0, Math.min(99, update.percent)));
     const label = update.phase === 'erasing'
-      ? 'مسح الذاكرة…'
+      ? "Geheugen wissen…"
       : update.phase === 'writing'
-        ? 'كتابة Firmware…'
+        ? "Firmware schrijven…"
         : update.phase === 'verifying'
-          ? 'التحقق من الكتابة…'
+          ? "Geschreven gegevens verifiëren…"
           : update.phase === 'manifesting' ||
               update.phase === 'resetting' ||
               update.phase === 'finalizing'
-            ? 'إنهاء التفليش وإعادة التشغيل…'
-            : 'تفليش Firmware…';
+            ? "Flashen afronden en opnieuw opstarten…"
+            : "Firmware flashen…";
     setStatus(label);
   }), [client]);
 
@@ -1009,7 +1009,7 @@ export default function FirmwareFlasherSimpleScreen({
     // after entering DFU and the flasher demanded normal USB again.
     setProgress(0);
     setPhase('idle');
-    setStatus('اختر الإصدار ثم راجع إعدادات البناء.');
+    setStatus("Kies de versie en controleer daarna de buildinstellingen.");
   }, [navigationLocked]);
 
   /**
@@ -1029,24 +1029,24 @@ export default function FirmwareFlasherSimpleScreen({
       if (attached.length > 0) {
         throw new OperatorMessageError(
           {key: 'flasherSimple.e08'},
-          'تم العثور على جهاز USB، لكنه لا يعرض منفذًا تسلسليًا يمكن فتحه. تأكد أن الكابل كابل بيانات وأن اللوحة في الوضع العادي وليست في وضع DFU.',
+          "USB-apparaat gevonden, maar zonder seriële poort die kan worden geopend. Controleer de datakabel en de normale modus; gebruik geen DFU-modus.",
         );
       }
       throw supportsSerialPicker
         ? new OperatorMessageError(
             {key: 'flasherSimple.e09'},
-            'لا يوجد منفذ تسلسلي مسموح به. إن كانت اللوحة في الوضع العادي اضغط «اختيار جهاز USB»، وإن كانت في وضع DFU اضغط «اختيار جهاز DFU».',
+            "Geen seriële poort toegestaan. Tik op USB kiezen voor normale modus, of op DFU kiezen voor DFU-modus.",
           )
         : new OperatorMessageError(
             {key: 'flasherSimple.e10'},
-            'لا يوجد أي جهاز USB متصل في الوضع العادي. إن كانت اللوحة في وضع DFU فسيكتشفها التطبيق تلقائياً خلال لحظات.',
+            "Geen USB-apparaat in normale modus gevonden. De app detecteert een printplaat in DFU-modus automatisch.",
           );
     }
     if (devices.length > 1) {
-      throw new OperatorMessageError({key: 'flasherSimple.e01'}, 'يوجد أكثر من Flight Controller. اترك لوحة واحدة متصلة ثم أعد المحاولة.');
+      throw new OperatorMessageError({key: 'flasherSimple.e01'}, "Meerdere vluchtcontrollers gevonden. Laat één printplaat aangesloten en probeer het opnieuw.");
     }
     if (devices[0].portCount !== 1) {
-      throw new OperatorMessageError({key: 'flasherSimple.e02'}, 'للوحة أكثر من منفذ USB serial. استخدم «متقدم» لاختيار المنفذ يدوياً.');
+      throw new OperatorMessageError({key: 'flasherSimple.e02'}, "Meerdere seriële USB-poorten beschikbaar. Kies handmatig een poort onder Geavanceerd.");
     }
     return devices[0];
   }, [client, supportsSerialPicker]);
@@ -1059,7 +1059,7 @@ export default function FirmwareFlasherSimpleScreen({
     setProblem(null);
     setManualDfuReason(null);
     setDetectionNote(null);
-    setStatus('التعرف على Flight Controller…');
+    setStatus("Vluchtcontroller identificeren…");
     try {
       const device = await requireSingleSerialDevice();
       const detected = await bootloader.detectFlightController(controller.signal, {
@@ -1082,16 +1082,16 @@ export default function FirmwareFlasherSimpleScreen({
           setDetectedTarget(hardware);
           setPhase('idle');
           setDetectionNote(
-            `تم التعرف على ${hardware}، لكن اسم اللوحة غير موجود في قائمة Targets الرسمية. اختر Target يدويًا.`,
+            `${hardware} herkend, maar de printplaatnaam staat niet in de officiële Target-lijst. Kies Target handmatig.`,
           );
-          setStatus(`تم التعرف على ${hardware}. اختر Target يدويًا.`);
+          setStatus(`${hardware} herkend. Kies Target handmatig.`);
           return;
         }
         setDetectedTarget(match.target);
         setSelectedTarget(match.target);
         freezeIdentity(detected.identity);
         setPhase('idle');
-        setStatus(`تم التعرف على اللوحة ${match.target}.`);
+        setStatus(`Printplaat ${match.target} herkend.`);
       } finally {
         await detected.release();
       }
@@ -1108,7 +1108,7 @@ export default function FirmwareFlasherSimpleScreen({
     client.requestDevicePermission()
       .then(device => {
         if (device === null) return;
-        setStatus('تم السماح بالوصول إلى USB. جارٍ التعرف على اللوحة…');
+        setStatus("USB-toegang verleend. Printplaat identificeren…");
         autoDetect().catch(() => undefined);
       })
       .catch(reason => failOperation('SERIAL', reason));
@@ -1127,7 +1127,7 @@ export default function FirmwareFlasherSimpleScreen({
     setPhase('loading');
     setProblem(null);
     setProgress(0);
-    setStatus('تحضير Firmware الرسمي…');
+    setStatus("Officiële firmware voorbereiden…");
     try {
       const request = createBuildRequest(targetDetail, toBuildSelection(choices));
       const result = await cloudBuild.buildAndDownload(
@@ -1146,7 +1146,7 @@ export default function FirmwareFlasherSimpleScreen({
       setFirmware(parsed);
       setProgress(0);
       setPhase('ready');
-      setStatus(`Firmware ${selectedRelease} جاهز للتفليش.`);
+      setStatus(`Firmware ${selectedRelease} is gereed om te flashen.`);
     } catch (reason) {
       if (!controller.signal.aborted) failOperation('PREPARE', reason);
     } finally {
@@ -1175,7 +1175,7 @@ export default function FirmwareFlasherSimpleScreen({
     lastFlashPhaseRef.current = undefined;
     resetConfirmedRef.current = undefined;
     setResetConfirmed(undefined);
-    setStatus('بدء تفليش Firmware…');
+    setStatus("Firmware flashen starten…");
     try {
       // Bind to the LIVE enumeration of the device, not a remembered
       // one: a replug between discovery and this press re-enumerates
@@ -1189,10 +1189,10 @@ export default function FirmwareFlasherSimpleScreen({
         if (live.length === 1) {
           bound = live[0];
         } else if (live.length === 0 && supportsSerialPicker) {
-          throw new OperatorMessageError({key: 'flasherSimple.e03'}, 'جهاز DFU لم يعد ظاهراً. أعد توصيل اللوحة في وضع DFU ثم أعد المحاولة.');
+          throw new OperatorMessageError({key: 'flasherSimple.e03'}, "Het DFU-apparaat is niet meer zichtbaar. Sluit de printplaat opnieuw in DFU-modus aan en probeer het opnieuw.");
         }
       } catch (probeError) {
-        if (probeError instanceof Error && probeError.message.startsWith('جهاز DFU')) {
+        if (probeError instanceof OperatorMessageError && probeError.operatorMessage.key === 'flasherSimple.e03') {
           throw probeError;
         }
         // A transient enumeration error must not veto a device we
@@ -1209,8 +1209,8 @@ export default function FirmwareFlasherSimpleScreen({
       setPhase('success');
       setStatus(
         observedReset === true
-          ? 'تمت كتابة Firmware والتحقق منه، وأعادت اللوحة الاتصال.'
-          : 'تمت كتابة Firmware والتحقق منه بنجاح.',
+          ? "Firmware geschreven en geverifieerd. De printplaat heeft opnieuw verbinding gemaakt."
+          : "Firmware geschreven en geverifieerd.",
       );
       setPendingFlash(null);
       setDfuReady(null);
@@ -1246,14 +1246,14 @@ export default function FirmwareFlasherSimpleScreen({
     if (dfuReady !== null || dfuPresent !== null) {
       if (dfuReady === null && dfuPresent !== null) setDfuReady(dfuPresent);
       setPhase(firmware ? 'ready' : 'idle');
-      setStatus('اللوحة في وضع DFU بالفعل وجاهزة للتفليش.');
+      setStatus("De printplaat staat al in DFU-modus en is gereed om te flashen.");
       return;
     }
     const controller = new AbortController();
     abortRef.current = controller;
     setPhase('detecting');
     setManualDfuReason(null);
-    setStatus('التحقق من اللوحة قبل الدخول إلى وضع DFU…');
+    setStatus("Printplaat controleren vóór overschakelen naar DFU…");
     try {
       const device = await requireSingleSerialDevice();
       const detected = await bootloader.detectFlightController(controller.signal, {
@@ -1263,30 +1263,30 @@ export default function FirmwareFlasherSimpleScreen({
       if (selectedTarget && !detected.targetMatches(selectedTarget)) {
         const actual = describeFlightControllerHardware(detected.identity.board);
         await detected.release();
-        throw new OperatorMessageError({key: 'flasherSimple.e04', values: {v0: selectedTarget, v1: actual}}, `Target المحدد ${selectedTarget} لا يطابق اللوحة ${actual}. صحّح Target قبل المتابعة.`);
+        throw new OperatorMessageError({key: 'flasherSimple.e04', values: {v0: selectedTarget, v1: actual}}, `Target ${selectedTarget} komt niet overeen met printplaat ${actual}. Corrigeer het Target voordat u doorgaat.`);
       }
       if (detected.identity.firmware.knownFamily !== 'BETAFLIGHT') {
         await detected.release();
         setPhase('idle');
         setManualDfuReason(
-          'هذا Firmware لا يدعم إعادة التشغيل البرمجية إلى وضع DFU. ادخل وضع DFU يدويًا (زر BOOT أثناء توصيل USB) وسيُكتشف الجهاز تلقائياً أو عبر «اختيار جهاز DFU».',
+          "Deze firmware ondersteunt geen softwarematige herstart naar DFU. Start DFU handmatig door BOOT ingedrukt te houden terwijl u USB aansluit. Het apparaat wordt automatisch gevonden of via DFU-apparaat kiezen.",
         );
-        setStatus('يلزم الدخول اليدوي إلى وضع DFU.');
+        setStatus("DFU-modus moet handmatig worden gestart.");
         return;
       }
       setDetectedTarget(describeFlightControllerHardware(detected.identity.board));
       freezeIdentity(detected.identity);
-      setStatus('تم التعرف على اللوحة. جارٍ الانتقال إلى وضع DFU…');
+      setStatus("Printplaat herkend. Overschakelen naar DFU-modus…");
       await detected.rebootToBootloader(selectedTarget, false);
       // From here the NORMAL device is gone BY DESIGN. Its session was
       // released cleanly inside rebootToBootloader; nothing below may
       // reference it again.
-      setStatus('انتهى اتصال الإعدادات كما هو متوقع. بانتظار جهاز DFU…');
+      setStatus("De configuratieverbinding is volgens verwachting gesloten. Wachten op het DFU-apparaat…");
       try {
         const dfu = await bootloader.waitForOneDfuDevice(20_000, controller.signal);
         setDfuReady(dfu);
         setPhase(firmware ? 'ready' : 'idle');
-        setStatus('اللوحة الآن في وضع DFU وجاهزة للتفليش.');
+        setStatus("De printplaat staat nu in DFU-modus en is gereed om te flashen.");
       } catch (reason) {
         if (!(reason instanceof DfuPermissionRequiredError)) throw reason;
         // No AUTHORIZED device appeared inside the bounded wait. On the
@@ -1299,11 +1299,11 @@ export default function FirmwareFlasherSimpleScreen({
         setManualDfuReason(
           supportsSerialPicker
             ? firmware !== null
-              ? 'تم تجهيز Firmware. اختر جهاز DFU للمتابعة.'
-              : 'اللوحة دخلت وضع DFU. اضغط «اختيار جهاز DFU» مرة واحدة للسماح للمتصفح بالتعامل معها.'
-            : 'لم يظهر جهاز DFU بعد. إن لم تُعد اللوحة التشغيل تلقائياً، ادخل وضع DFU يدوياً (زر BOOT أثناء توصيل USB)؛ سيُكتشف الجهاز فور ظهوره.',
+              ? "Firmware gereed. Kies het DFU-apparaat om door te gaan."
+              : "De printplaat staat in DFU-modus. Tik één keer op DFU-apparaat kiezen om de browser toegang te geven."
+            : "Het DFU-apparaat is nog niet verschenen. Als de printplaat niet automatisch herstart, houdt u BOOT ingedrukt terwijl u USB aansluit. Het apparaat wordt gevonden zodra het verschijnt.",
         );
-        setStatus('بانتظار جهاز DFU…');
+        setStatus("Wachten op het DFU-apparaat…");
       }
     } catch (reason) {
       if (!controller.signal.aborted) failOperation('DFU_ENTRY', reason);
@@ -1337,7 +1337,7 @@ export default function FirmwareFlasherSimpleScreen({
         setDfuReady(device);
         setDfuPresent(device);
         setManualDfuReason(null);
-        setStatus('تم اختيار جهاز DFU. يمكنك الآن التفليش.');
+        setStatus("DFU-apparaat gekozen. U kunt nu flashen.");
       })
       .catch(reason => failOperation('DFU_ACCESS', reason));
   }, [client, failOperation, navigationLocked]);
@@ -1350,7 +1350,7 @@ export default function FirmwareFlasherSimpleScreen({
       // It is a capability limit, not a flash failure.
       failOperation(
         'PREPARE',
-        new Error('الوضع القياسي مخصص لملفات HEX الرسمية. استخدم «متقدم» للأنواع الأخرى.'),
+        new Error("De standaardmodus gebruikt officiële HEX-bestanden. Gebruik Geavanceerd voor andere bestandstypen."),
       );
       return;
     }
@@ -1373,7 +1373,7 @@ export default function FirmwareFlasherSimpleScreen({
     abortRef.current = controller;
     setPhase('detecting');
     setProgress(0);
-    setStatus('التحقق من اللوحة قبل التفليش…');
+    setStatus("Printplaat controleren vóór het flashen…");
     try {
       const device = await requireSingleSerialDevice();
       const detected = await bootloader.detectFlightController(controller.signal, {
@@ -1383,15 +1383,15 @@ export default function FirmwareFlasherSimpleScreen({
       if (!detected.targetMatches(selectedTarget)) {
         const actual = describeFlightControllerHardware(detected.identity.board);
         await detected.release();
-        throw new OperatorMessageError({key: 'flasherSimple.e05', values: {v0: selectedTarget, v1: actual}}, `تم إيقاف التفليش: Target ${selectedTarget} لا يطابق اللوحة ${actual}.`);
+        throw new OperatorMessageError({key: 'flasherSimple.e05', values: {v0: selectedTarget, v1: actual}}, `Flashen geblokkeerd: Target ${selectedTarget} komt niet overeen met printplaat ${actual}.`);
       }
       setDetectedTarget(selectedTarget);
       freezeIdentity(detected.identity);
-      setStatus('تم التعرف على اللوحة. جارٍ الانتقال إلى وضع DFU…');
+      setStatus("Printplaat herkend. Overschakelen naar DFU-modus…");
       await detected.rebootToBootloader(selectedTarget, false);
       // The serial device is now gone BY DESIGN - the expected phase
       // transition, not a disconnect.
-      setStatus('انتهى اتصال الإعدادات كما هو متوقع. بانتظار جهاز DFU…');
+      setStatus("De configuratieverbinding is volgens verwachting gesloten. Wachten op het DFU-apparaat…");
       try {
         const dfu = await bootloader.waitForOneDfuDevice(20_000, controller.signal);
         await completeFlash(dfu, firmware);
@@ -1405,7 +1405,7 @@ export default function FirmwareFlasherSimpleScreen({
         };
         setPendingFlash({pending, image: firmware});
         setPhase('waiting-permission');
-        setStatus('تم تجهيز Firmware. اختر جهاز DFU للمتابعة.');
+        setStatus("Firmware gereed. Kies het DFU-apparaat om door te gaan.");
       }
     } catch (reason) {
       // Everything in this block happens BEFORE the first destructive
@@ -1445,7 +1445,7 @@ export default function FirmwareFlasherSimpleScreen({
           pendingFlash.pending.operationId,
         );
         if (!verdict.ok) {
-          throw new OperatorMessageError({key: 'flasherSimple.e06'}, 'جهاز DFU المختار غير صالح لهذه العملية. اختر Flight Controller الصحيح.');
+          throw new OperatorMessageError({key: 'flasherSimple.e06'}, "Het gekozen DFU-apparaat is niet geschikt voor deze bewerking. Kies de juiste vluchtcontroller.");
         }
         await completeFlash(device, pendingFlash.image);
       })
@@ -1455,12 +1455,12 @@ export default function FirmwareFlasherSimpleScreen({
   const confirmFlash = useCallback(() => {
     if (!flashable || navigationLocked) return;
     Alert.alert(
-      'تفليش Firmware',
-      `سيتم تثبيت ${selectedRelease} على ${selectedTarget}. أزل المراوح واترك USB موصولاً حتى تظهر النتيجة النهائية.`,
+      "Firmware flashen",
+      `${selectedRelease} wordt geïnstalleerd op ${selectedTarget}. Verwijder de propellers en laat USB aangesloten tot het eindresultaat verschijnt.`,
       [
-        {text: 'إلغاء', style: 'cancel'},
+        {text: "Annuleren", style: 'cancel'},
         {
-          text: 'ابدأ التفليش',
+          text: "Flashen starten",
           style: 'destructive',
           onPress: () => flashPreparedFirmware().catch(() => undefined),
         },
@@ -1476,8 +1476,8 @@ export default function FirmwareFlasherSimpleScreen({
       setProgress(0);
       setPhase(firmware ? 'ready' : 'idle');
       setStatus(firmware
-        ? 'أُلغي التفليش قبل بدء الكتابة. Firmware ما زال جاهزاً.'
-        : 'أُلغي التفليش قبل بدء الكتابة.');
+        ? "Flashen geannuleerd voordat schrijven is gestart. De firmware blijft gereed."
+        : "Flashen geannuleerd voordat schrijven is gestart.");
       return;
     }
 
@@ -1486,13 +1486,13 @@ export default function FirmwareFlasherSimpleScreen({
       // WebUSB may still own one native transfer. Do not announce cancellation
       // as complete until the transport settles the actual terminal result.
       client.cancelDfuFlash().catch(() => undefined);
-      setStatus('تم طلب الإيقاف. انتظار انتهاء الخطوة الحالية بأمان…');
+      setStatus("Stop aangevraagd. Wachten tot de huidige stap veilig is afgerond…");
       return;
     }
 
     setPhase(firmware ? 'ready' : 'idle');
     setProgress(0);
-    setStatus('أُلغيت العملية.');
+    setStatus("De bewerking is geannuleerd.");
   }, [client, firmware, phase]);
 
   if (advanced) {
@@ -1506,7 +1506,7 @@ export default function FirmwareFlasherSimpleScreen({
               finished or cancelled explicitly, never navigated away
               from. */}
           <FirmwareButton
-            title="العودة إلى الوضع القياسي"
+            title={"Terug naar standaardmodus"}
             tone="secondary"
             size="compact"
             onPress={() => setAdvanced(false)}
@@ -1545,10 +1545,10 @@ export default function FirmwareFlasherSimpleScreen({
         }}>
         <View style={styles.modal}>
           <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>اختيار Flight Controller</Text>
+            <Text style={styles.modalTitle}>{"Vluchtcontroller kiezen"}</Text>
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="إغلاق"
+              accessibilityLabel={"Sluiten"}
               disabled={navigationLocked}
               onPress={() => setTargetPickerOpen(false)}
               style={[styles.closeButton, navigationLocked && styles.dimmed]}>
@@ -1559,7 +1559,7 @@ export default function FirmwareFlasherSimpleScreen({
             value={targetQuery}
             onChangeText={setTargetQuery}
             editable={!navigationLocked}
-            placeholder="ابحث باسم Target أو الشركة أو MCU"
+            placeholder={"Zoek op Target, fabrikant of MCU"}
             placeholderTextColor={colors.textMuted}
             style={styles.search}
             autoFocus
@@ -1593,7 +1593,7 @@ export default function FirmwareFlasherSimpleScreen({
         {navigation !== undefined ? (
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="العودة"
+            accessibilityLabel={"Terug"}
             /* Dimmed AND announced. A control that is visually dim but
                reports itself enabled tells a screen-reader user nothing
                about why pressing it does nothing. */
@@ -1607,7 +1607,7 @@ export default function FirmwareFlasherSimpleScreen({
         ) : null}
         <View style={styles.headerCopy}>
           <Text style={styles.title}>Firmware Flasher</Text>
-          <Text style={styles.subtitle}>اللوحة · الإصدار · الإعدادات · التفليش</Text>
+          <Text style={styles.subtitle}>{"Printplaat · versie · instellingen · flashen"}</Text>
         </View>
         <Pressable
           accessibilityRole="button"
@@ -1616,7 +1616,7 @@ export default function FirmwareFlasherSimpleScreen({
           disabled={navigationLocked}
           style={[styles.advancedLink, navigationLocked && styles.dimmed]}
           testID="flasher-advanced-mode">
-          <Text style={styles.advancedLinkText}>متقدم</Text>
+          <Text style={styles.advancedLinkText}>{"Geavanceerd"}</Text>
         </Pressable>
       </View>
 
@@ -1655,7 +1655,7 @@ export default function FirmwareFlasherSimpleScreen({
             {RETRYABLE_PROBLEM_CATEGORIES.includes(problem.category) ? (
               <View style={styles.problemActionRow}>
                 <FirmwareButton
-                  title="أعد المحاولة"
+                  title={"Opnieuw proberen"}
                   tone="secondary"
                   size="compact"
                   onPress={retryCatalogue}
@@ -1668,11 +1668,11 @@ export default function FirmwareFlasherSimpleScreen({
 
         {/* 1 — the board */}
         <View style={styles.card}>
-          <StepHeader number="١" title="اللوحة" />
+          <StepHeader number={"1"} title={"Printplaat"} />
           <View style={styles.actionRow}>
             {supportsSerialPicker ? (
               <FirmwareButton
-                title="اختيار جهاز USB"
+                title={"USB-apparaat kiezen"}
                 tone="secondary"
                 size="compact"
                 onPress={chooseSerialAndDetect}
@@ -1681,7 +1681,7 @@ export default function FirmwareFlasherSimpleScreen({
               />
             ) : null}
             <FirmwareButton
-              title={phase === 'detecting' ? 'جارٍ التعرف…' : 'التعرف على اللوحة المتصلة'}
+              title={phase === 'detecting' ? "Identificeren…" : "Aangesloten printplaat identificeren"}
               tone="secondary"
               size="compact"
               onPress={() => autoDetect().catch(() => undefined)}
@@ -1696,11 +1696,11 @@ export default function FirmwareFlasherSimpleScreen({
             style={[styles.selector, navigationLocked && styles.dimmed]}
             testID="simple-target-selector">
             <Text style={styles.selectorLabel}>Target</Text>
-            <Text style={styles.selectorValue}>{selectedTarget || 'اختر اللوحة'}</Text>
+            <Text style={styles.selectorValue}>{selectedTarget || "Printplaat kiezen"}</Text>
           </Pressable>
           {detectedTarget ? (
             <Text style={styles.detected} testID="simple-detected-target">
-              تم التعرف على اللوحة {detectedTarget}
+              {"Printplaat herkend: "}{detectedTarget}
             </Text>
           ) : null}
           {detectionNote !== null ? (
@@ -1712,7 +1712,7 @@ export default function FirmwareFlasherSimpleScreen({
 
         {/* 2 — the version */}
         <View style={styles.card}>
-          <StepHeader number="٢" title="الإصدار" />
+          <StepHeader number={"2"} title={"Versie"} />
           {releasesLoading ? <ActivityIndicator color={colors.accent} /> : null}
           {channels.length > 1 ? (
             <Pressable
@@ -1723,7 +1723,7 @@ export default function FirmwareFlasherSimpleScreen({
               style={[styles.channelToggle, navigationLocked && styles.dimmed]}
               testID="simple-channel-toggle">
               <Text style={styles.channelToggleText}>
-                القناة: {CHANNEL_TITLES[channel]}
+                {"Kanaal: "}{CHANNEL_TITLES[channel]}
               </Text>
               <Icon
                 name={channelPickerOpen ? 'chevron-up' : 'chevron-down'}
@@ -1756,7 +1756,7 @@ export default function FirmwareFlasherSimpleScreen({
           ) : null}
           {noStableForTarget ? (
             <Text style={styles.helper} testID="simple-no-stable">
-              لا يوجد إصدار مستقر لهذه اللوحة. القناة المعروضة هي {CHANNEL_TITLES[channel]}.
+              {"Geen stabiele versie voor deze printplaat. Getoond kanaal: "}{CHANNEL_TITLES[channel]}.
             </Text>
           ) : null}
           {/* A NUMBERED STEP WITH NOTHING UNDER IT IS NOT A STEP.
@@ -1769,8 +1769,8 @@ export default function FirmwareFlasherSimpleScreen({
           {channelReleases.length === 0 && !releasesLoading ? (
             <Text style={styles.helper} testID="simple-release-placeholder">
               {selectedTarget
-                ? 'لا توجد إصدارات معروضة لهذه اللوحة في القناة الحالية.'
-                : 'اختر اللوحة أولًا لعرض الإصدارات المتاحة.'}
+                ? "Geen versies voor deze printplaat in het huidige kanaal."
+                : "Kies eerst een printplaat om de beschikbare versies te zien."}
             </Text>
           ) : null}
           <View style={styles.releaseWrap}>
@@ -1800,20 +1800,18 @@ export default function FirmwareFlasherSimpleScreen({
 
         {/* 3 — the official build configuration */}
         <View style={styles.card} testID="simple-build-configuration">
-          <StepHeader number="٣" title="إعدادات البناء" />
+          <StepHeader number={"3"} title={"Buildinstellingen"} />
           {buildOptionsLoading ? <ActivityIndicator color={colors.accent} /> : null}
           {!selectedRelease ? (
-            <Text style={styles.helper}>اختر اللوحة والإصدار لعرض خيارات البناء الرسمية.</Text>
+            <Text style={styles.helper}>{"Kies de printplaat en versie om de officiële buildopties te zien."}</Text>
           ) : null}
           {buildOptionsError !== null ? (
             <Text style={styles.helper} testID="simple-build-options-error">
-              تعذّر تحميل خيارات البناء لهذا الإصدار؛ سيُستخدم البناء الأساسي (Core).
-            </Text>
+              {"De buildopties konden niet worden geladen. De basisbuild (Core) wordt gebruikt."}</Text>
           ) : null}
           {selectedRelease && !buildOptionsLoading && buildOptionsError === null && !configurable ? (
             <Text style={styles.helper} testID="simple-core-build-only">
-              هذا الإصدار يوفّر بناءً أساسياً (Core) فقط لهذه اللوحة؛ لا توجد خيارات قابلة للتغيير.
-            </Text>
+              {"Deze versie biedt alleen een basisbuild (Core) voor deze printplaat. Er zijn geen instelbare opties."}</Text>
           ) : null}
           {configurable && choices !== null && buildOptions !== null ? (
             <>
@@ -1853,12 +1851,12 @@ export default function FirmwareFlasherSimpleScreen({
                     testIDPrefix={`simple-build-${category.key}`}
                     lockedLabel={
                       category.key === 'telemetry' && radioCarriesTelemetry
-                        ? 'مضمّن تلقائياً مع بروتوكول الراديو'
+                        ? "Automatisch opgenomen bij het radioprotocol"
                         : undefined
                     }
                     lockedReason={
                       category.key === 'telemetry' && radioCarriesTelemetry
-                        ? 'بروتوكول الراديو المحدد يوفّر Telemetry بنفسه. غيّر «بروتوكول الراديو» لفتح هذا الخيار.'
+                        ? "Het gekozen radioprotocol levert zelf telemetrie. Kies een ander radioprotocol om deze optie te wijzigen."
                         : undefined
                     }
                     onChange={value =>
@@ -1886,7 +1884,7 @@ export default function FirmwareFlasherSimpleScreen({
                 <View style={styles.optionCopy}>
                   <Text style={styles.optionLabel}>Custom Defines</Text>
                   <Text style={styles.optionValue}>
-                    {choices.customDefines.trim().length === 0 ? 'بدون' : choices.customDefines.trim()}
+                    {choices.customDefines.trim().length === 0 ? "Geen" : choices.customDefines.trim()}
                   </Text>
                 </View>
                 <Icon
@@ -1900,7 +1898,7 @@ export default function FirmwareFlasherSimpleScreen({
                   value={choices.customDefines}
                   onChangeText={value => updateChoices({...choices, customDefines: value})}
                   editable={!navigationLocked}
-                  placeholder="مثال: USE_SOMETHING USE_OTHER=1"
+                  placeholder={"Voorbeeld: USE_SOMETHING USE_OTHER=1"}
                   placeholderTextColor={colors.textMuted}
                   style={styles.definesInput}
                   autoCapitalize="characters"
@@ -1913,16 +1911,16 @@ export default function FirmwareFlasherSimpleScreen({
 
         {/* 4 — prepare */}
         <View style={styles.card}>
-          <StepHeader number="٤" title="تحضير Firmware" />
+          <StepHeader number={"4"} title={"Firmware voorbereiden"} />
           {/* Downloading a build is reversible and repeatable, so it is
               a normal action - deliberately NOT the same mint slab the
               irreversible write used to share with it. */}
           <FirmwareButton
             title={phase === 'loading'
-              ? 'جارٍ التحضير…'
+              ? "Voorbereiden…"
               : firmware
-                ? 'إعادة تحضير Firmware'
-                : 'تحضير Firmware'}
+                ? "Firmware opnieuw voorbereiden"
+                : "Firmware voorbereiden"}
             tone="secondary"
             size="compact"
             onPress={() => loadFirmware().catch(() => undefined)}
@@ -1931,7 +1929,7 @@ export default function FirmwareFlasherSimpleScreen({
           />
           {firmware ? (
             <Text style={styles.readyText} testID="simple-firmware-ready">
-              جاهز: {firmware.filename}
+              {"Gereed: "}{firmware.filename}
             </Text>
           ) : null}
         </View>
@@ -1944,28 +1942,28 @@ export default function FirmwareFlasherSimpleScreen({
             equal weight around the primary action - is what buried the
             thing the operator actually came here to press. */}
         <View style={styles.card}>
-          <StepHeader number="٥" title="التفليش" />
+          <StepHeader number={"5"} title={"Flashen"} />
           {isBusy ? <FirmwareProgress percent={progress} label={status} /> : null}
 
           {phase === 'success' ? (
             <View testID="simple-flash-success">
               <FirmwareNotice
-                title="تمت كتابة Firmware والتحقق منه بنجاح"
+                title={"Firmware geschreven en geverifieerd"}
                 text={
                   resetConfirmed === true
-                    ? 'أعادت اللوحة الاتصال بنجاح.'
-                    : 'لم نتمكن من تأكيد عودة اللوحة تلقائيًا. إن لم تظهر خلال لحظات، افصل USB وأعد توصيله.'
+                    ? "De printplaat heeft opnieuw verbinding gemaakt."
+                    : "Automatisch opnieuw verbinden kon niet worden bevestigd. Als de printplaat niet snel verschijnt, koppelt u USB los en sluit u opnieuw aan."
                 }
                 tone="success"
               />
             </View>
           ) : null}
           {phase === 'failed' ? (
-            <FirmwareNotice title="فشل التفليش" text={status} tone="error" />
+            <FirmwareNotice title={"Flashen mislukt"} text={status} tone="error" />
           ) : null}
           {phase === 'unconfirmed' ? (
             <FirmwareNotice
-              title="تعذر تأكيد اكتمال العملية"
+              title={"Voltooiing niet bevestigd"}
               text={status}
               tone="warning"
             />
@@ -1976,15 +1974,15 @@ export default function FirmwareFlasherSimpleScreen({
           {dfuReady !== null ? (
             <Text style={styles.detected} testID="simple-dfu-ready">
               {dfuTargetVerified
-                ? 'اللوحة في وضع DFU وهويتها مطابقة للـ Target المحدد.'
-                : 'اللوحة في وضع DFU. لا يمكن قراءة هويتها هناك، فتأكد أن Target صحيح.'}
+                ? "De printplaat staat in DFU-modus en de identiteit komt overeen met het gekozen Target."
+                : "De printplaat staat in DFU-modus. De identiteit kan in deze modus niet worden uitgelezen. Controleer of het gekozen Target klopt."}
             </Text>
           ) : null}
 
           <View style={styles.actionRow}>
             {dfuReady === null ? (
               <FirmwareButton
-                title="الدخول إلى وضع DFU"
+                title={"DFU-modus starten"}
                 tone="secondary"
                 size="compact"
                 onPress={() => enterDfuMode().catch(() => undefined)}
@@ -1999,7 +1997,7 @@ export default function FirmwareFlasherSimpleScreen({
                 DFU device automatically. */}
             {supportsSerialPicker && dfuReady === null && phase !== 'waiting-permission' ? (
               <FirmwareButton
-                title="اختيار جهاز DFU"
+                title={"DFU-apparaat kiezen"}
                 tone="secondary"
                 size="compact"
                 onPress={chooseDfuDevice}
@@ -2009,7 +2007,7 @@ export default function FirmwareFlasherSimpleScreen({
             ) : null}
             {isBusy || phase === 'waiting-permission' ? (
               <FirmwareButton
-                title={phase === 'waiting-permission' ? 'إلغاء قبل بدء الكتابة' : 'إلغاء'}
+                title={phase === 'waiting-permission' ? "Annuleren vóór het schrijven" : "Annuleren"}
                 tone="secondary"
                 size="compact"
                 onPress={cancel}
@@ -2020,18 +2018,18 @@ export default function FirmwareFlasherSimpleScreen({
 
           {manualDfuReason !== null ? (
             <View testID="simple-manual-dfu">
-              <FirmwareNotice title="وضع DFU" text={manualDfuReason} tone="warning" />
+              <FirmwareNotice title={"DFU-modus"} text={manualDfuReason} tone="warning" />
             </View>
           ) : null}
 
           {phase === 'waiting-permission' ? (
             <>
               <FirmwareNotice
-                title="اختر جهاز DFU"
-                text="تم تجهيز Firmware واللوحة دخلت DFU ولم تبدأ الكتابة بعد. اختر جهاز DFU للمتابعة من نفس العملية."
+                title={"DFU-apparaat kiezen"}
+                text={"De firmware is gereed en de printplaat staat in DFU. Schrijven is nog niet gestart. Kies het DFU-apparaat om dezelfde bewerking voort te zetten."}
               />
               <FirmwareButton
-                title="اختيار جهاز DFU والمتابعة"
+                title={"DFU kiezen en doorgaan"}
                 onPress={chooseDfuAndContinue}
                 testID="simple-choose-dfu"
               />
@@ -2040,7 +2038,7 @@ export default function FirmwareFlasherSimpleScreen({
             /* THE destructive action: the only danger-toned control on
                the screen, and the only one that writes the board. */
             <FirmwareButton
-              title={phase === 'flashing' ? 'التفليش جارٍ…' : 'تفليش Firmware'}
+              title={phase === 'flashing' ? "Flashen…" : "Firmware flashen"}
               tone="danger"
               onPress={confirmFlash}
               disabled={navigationLocked || !flashable}
@@ -2050,14 +2048,12 @@ export default function FirmwareFlasherSimpleScreen({
 
           {firmware !== null && phase === 'ready' ? (
             <Text style={styles.helper} testID="simple-flash-safety">
-              أزل المراوح قبل التفليش، واترك USB موصولاً حتى تظهر النتيجة النهائية.
-            </Text>
+              {"Verwijder de propellers vóór het flashen en laat USB aangesloten tot het eindresultaat verschijnt."}</Text>
           ) : null}
         </View>
 
         <Text style={styles.footerNote}>
-          المسح الكامل و Baud اليدوي وأدوات الاسترداد وملفات Firmware المحلية في «متقدم».
-        </Text>
+          {"Volledig wissen, handmatige baudsnelheid, herstelgereedschap en lokale firmwarebestanden vindt u onder Geavanceerd."}</Text>
       </ScrollView>
     </View>
   );
@@ -2209,7 +2205,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
     paddingHorizontal: spacing.md,
     fontFamily: 'Cairo',
-    textAlign: 'right',
+    textAlign: 'left',
   },
   targetRow: {
     minHeight: 58,

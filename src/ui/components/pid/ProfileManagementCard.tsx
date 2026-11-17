@@ -47,34 +47,34 @@ import {Icon} from '../../icons';
 import {colors, radii, spacing, typography} from '../../theme';
 
 export const PROFILE_MANAGEMENT_COPY = Object.freeze({
-  title: 'إدارة الملفات',
-  hint: 'عمليات تطال الملف كله. راجع أثرها قبل تنفيذها.',
-  renameTitle: 'اسم الملف',
+  title: "Profielbeheer",
+  hint: "Bewerkingen over het hele dossier. Bekijk de sporen voordat je ze uitvoert.",
+  renameTitle: "Profielnaam",
   renameHint:
-    'يخزّن المتحكم الاسم في ثمانية BYTES. التطبيق يقصر الأحرف على ASCII كسياسة '
-    + 'منتج - لا كحدّ من البرنامج الثابت - ويقرأ الاسم بعد الكتابة للتحقق.',
+    "De controller slaat de naam op BYTES. 8. De app verkort de letters op ASCII als een beleid."
+    + "Producent - niet beperkt tot firmware - en leest de naam na het schrijven voor controle.",
   renameTooLong: (bytes: number): string =>
-    `الاسم يشغل ${bytes} بايت والحدّ ${MAX_PROFILE_NAME_BYTES}. المتحكم يقتطع بصمت `
-    + 'ثم يؤكّد، فلن نرسله: اختصره بنفسك حتى تعرف الاسم الذي سيُحفظ.',
+    `De naam draait ${bytes} byte en beperkt ${MAX_PROFILE_NAME_BYTES}. De controller is stil.`
+    + "Dan bevestigt hij het, we sturen het niet: je kunt het zelf verkorten tot je weet welke naam het zal bewaren.",
   renameNonAscii:
-    'التطبيق يقبل ASCII فقط في اسم الملف. هذه سياسة هذا التطبيق، وليست حدًّا من '
-    + 'متحكم الطيران.',
-  copyTitle: 'نسخ ملف إلى آخر',
-  copyHint: 'يُستبدل محتوى الملف الوجهة بالكامل. لا يمكن التراجع.',
+    "De applicatie accepteert alleen ASCII in de bestandsnaam. Dat is het beleid van deze app."
+    + "vluchtcontroller.",
+  copyTitle: "Profiel naar een ander profiel kopiëren",
+  copyHint: "De inhoud van het bestand vervangt de bestemming volledig. Je kunt niet teruggaan.",
   copyActiveRefused:
-    'لن ينسخ التطبيق فوق الملف النشط. المتحكم يسمح بذلك، لكنه لا يعيد تهيئة ما '
-    + 'يعمل الآن بعده، فتبقى القيم المخزّنة والسلوك الطائر مختلفين حتى إعادة '
-    + 'التشغيل. هذه قاعدة هذا التطبيق.',
-  copySameRefused: 'الملف المصدر والوجهة واحد؛ لا شيء لينسخ.',
-  resetTitle: 'إعادة الملف إلى قيم المصنع',
+    "De applicatie zal niet over het actieve bestand kopiëren. De controller geeft het toe, maar hij re-configureert niets."
+    + "De opgeslagen waarden en het gedrag van de vogel blijven verschillend tot de terugkeer."
+    + "De opstart. Dat is de basis van deze applicatie.",
+  copySameRefused: "Een bron en één bestemming; Niets te kopiëren.",
+  resetTitle: "Profiel terugzetten naar fabriekswaarden",
   resetHint:
-    'يعيد المتحكم كامل ملف PID إلى قيمه الافتراضية في الذاكرة العاملة فقط؛ '
-    + 'الأمر نفسه لا يحفظها حفظًا دائمًا، فلن تبقى بعد فصل البطارية. يشمل ذلك '
-    + 'الاسم وشرائح الضبط المبسّط، لا المعاملات وحدها.',
-  resetConfirmTitle: 'إعادة الملف إلى قيم المصنع؟',
+    "Het volledige PID-bestand wordt alleen in het werkgeheugen teruggestuurd naar de standaardwaarden;"
+    + "Hetzelfde geldt niet voor het altijd opslaan. Het zal niet meer bestaan na accu. Dat is inclusief:"
+    + "De naam en de vereenvoudigde controllers, niet alleen transacties.",
+  resetConfirmTitle: "Profiel terugzetten naar fabriekswaarden?",
   resetConfirmBody:
-    'ستفقد ضبط هذا الملف بالكامل. لن نتمكن من التحقق من كل حقل: سنعرض بالضبط ما '
-    + 'قرأناه وما لم نقرأه.',
+    "U verliest de file volledig. We kunnen niet elk veld controleren."
+    + "We hebben het gelezen en niet gelezen.",
 });
 
 export interface ProfileManagementCardProps {
@@ -170,7 +170,7 @@ export default function ProfileManagementCard({
         />
         {/* BYTES, counted as typed - the unit the firmware's buffer is in. */}
         <Text style={styles.counter} testID={`${testID}-name-bytes`}>
-          {`${nameBytes} / ${MAX_PROFILE_NAME_BYTES} بايت`}
+          {`${nameBytes} / ${MAX_PROFILE_NAME_BYTES} byte`}
         </Text>
         {nameTooLong ? <NoticeBox variant="warning" testID={`${testID}-name-too-long`}>
           <Text style={styles.noticeText}>{PROFILE_MANAGEMENT_COPY.renameTooLong(nameBytes)}</Text>
@@ -179,7 +179,7 @@ export default function ProfileManagementCard({
           <Text style={styles.noticeText}>{PROFILE_MANAGEMENT_COPY.renameNonAscii}</Text>
         </NoticeBox> : null}
         <Button
-          label="حفظ الاسم والتحقق"
+          label={"Naam opslaan en verifiëren"}
           variant="secondary"
           icon="check"
           disabled={busy || !nameChanged || nameTooLong || nameNotAscii}
@@ -192,26 +192,26 @@ export default function ProfileManagementCard({
       {canCopy && indexes.length > 1 ? <View style={styles.block} testID={`${testID}-copy`}>
         <Text style={styles.blockTitle}>{PROFILE_MANAGEMENT_COPY.copyTitle}</Text>
         <Text style={styles.hint}>{PROFILE_MANAGEMENT_COPY.copyHint}</Text>
-        <Text style={styles.fieldLabel}>من</Text>
+        <Text style={styles.fieldLabel}>{"Van"}</Text>
         <ChoiceChips
-          options={indexes.map(index => ({key: String(index), label: `ملف ${index + 1}`}))}
+          options={indexes.map(index => ({key: String(index), label: `Profiel ${index + 1}`}))}
           selectedKey={source === undefined ? null : String(source)}
           onSelect={key => setSource(Number.parseInt(key, 10))}
           disabled={busy}
-          accessibilityLabel="الملف المصدر"
+          accessibilityLabel={"Bronprofiel"}
           testID={`${testID}-copy-source`}
         />
-        <Text style={styles.fieldLabel}>إلى</Text>
+        <Text style={styles.fieldLabel}>{"Naar"}</Text>
         <ChoiceChips
           options={indexes.map(index => ({
             key: String(index),
-            label: `ملف ${index + 1}`,
-            note: index === activeIndex ? 'نشط' : undefined,
+            label: `Profiel ${index + 1}`,
+            note: index === activeIndex ? "Actief" : undefined,
           }))}
           selectedKey={destination === undefined ? null : String(destination)}
           onSelect={key => setDestination(Number.parseInt(key, 10))}
           disabled={busy}
-          accessibilityLabel="الملف الوجهة"
+          accessibilityLabel={"Doelprofiel"}
           testID={`${testID}-copy-destination`}
         />
         {copyOntoActive ? <NoticeBox variant="warning" testID={`${testID}-copy-active-refused`}>
@@ -223,7 +223,7 @@ export default function ProfileManagementCard({
           </NoticeBox>
           : null}
         <Button
-          label="نسخ والتحقق"
+          label={"Kopiëren en verifiëren"}
           variant="secondary"
           icon="copy"
           disabled={busy || !copyReady}
@@ -244,13 +244,13 @@ export default function ProfileManagementCard({
             <Text style={styles.noticeText}>{PROFILE_MANAGEMENT_COPY.resetConfirmBody}</Text>
             <View style={styles.confirmActions}>
               <Button
-                label="تراجع"
+                label={"Ongedaan maken"}
                 variant="secondary"
                 onPress={() => setConfirmingReset(false)}
                 testID={`${testID}-reset-cancel`}
               />
               <Button
-                label="نفّذ الإعادة"
+                label={"Terugzetten"}
                 variant="danger"
                 icon="rotate-ccw"
                 disabled={busy}
@@ -260,7 +260,7 @@ export default function ProfileManagementCard({
             </View>
           </View>
           : <Button
-            label="إعادة إلى قيم المصنع"
+            label={"Fabriekswaarden herstellen"}
             variant="secondary"
             icon="rotate-ccw"
             disabled={busy}
@@ -297,10 +297,10 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: colors.borderSoft,
   },
-  title: {...typography.sectionTitle, color: colors.textPrimary, textAlign: 'right'},
-  blockTitle: {...typography.label, color: colors.textPrimary, textAlign: 'right'},
-  hint: {...typography.caption, color: colors.textMuted, textAlign: 'right'},
-  fieldLabel: {...typography.caption, color: colors.textPrimary, textAlign: 'right'},
+  title: {...typography.sectionTitle, color: colors.textPrimary, textAlign: 'left'},
+  blockTitle: {...typography.label, color: colors.textPrimary, textAlign: 'left'},
+  hint: {...typography.caption, color: colors.textMuted, textAlign: 'left'},
+  fieldLabel: {...typography.caption, color: colors.textPrimary, textAlign: 'left'},
   block: {
     gap: spacing.xs,
     paddingTop: spacing.sm,
@@ -320,7 +320,7 @@ const styles = StyleSheet.create({
   },
   inputDisabled: {color: colors.disabled, backgroundColor: colors.surfaceAlt},
   counter: {...typography.caption, color: colors.textMuted, textAlign: 'left'},
-  noticeText: {...typography.caption, color: colors.textPrimary, textAlign: 'right'},
+  noticeText: {...typography.caption, color: colors.textPrimary, textAlign: 'left'},
   confirm: {
     gap: spacing.xs,
     padding: spacing.sm,

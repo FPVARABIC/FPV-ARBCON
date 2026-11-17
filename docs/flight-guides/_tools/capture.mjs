@@ -19,40 +19,50 @@
  * Usage: node docs/flight-guides/_tools/capture.mjs
  */
 import {chromium} from 'playwright-core';
-import {mkdirSync, rmSync} from 'node:fs';
+import {mkdirSync, rmSync, renameSync} from 'node:fs';
 import {STYLES, query, PREVIEW, IMAGE_ROOT} from './guide-spec.mjs';
 import {prepare} from './drive.mjs';
 
-const CHROME = '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
+const CHROME = process.env.CHROME_PATH ?? '/usr/bin/chromium';
+const CAPTURE_STYLES = process.env.GUIDE_STYLE
+  ? STYLES.filter(style => style.id === process.env.GUIDE_STYLE)
+  : STYLES;
+if (CAPTURE_STYLES.length === 0) throw new Error('Unknown GUIDE_STYLE');
 
-const browser = await chromium.launch({
+const launchBrowser = () => chromium.launch({
   executablePath: CHROME,
   args: ['--no-sandbox', '--font-render-hinting=none'],
 });
 
 const report = [];
-for (const style of STYLES) {
-  const dir = `${IMAGE_ROOT}/${style.id}/images`;
+for (const style of CAPTURE_STYLES) {
+  const dir = `${IMAGE_ROOT}/${style.id}/.images-next`;
   // Rebuilt from scratch every run, so a renamed or dropped step can
   // never leave a stale picture behind.
   rmSync(dir, {recursive: true, force: true});
   mkdirSync(dir, {recursive: true});
 
   for (const step of style.steps) {
+    console.log(`Capturing ${style.id}/${step.n}…`);
+    const browser = await launchBrowser();
     const context = await browser.newContext({
-      viewport: {width: 390, height: 900}, deviceScaleFactor: 2, locale: 'ar',
+      viewport: {width: 390, height: 900}, deviceScaleFactor: 2, locale: 'nl-NL',
     });
     const page = await context.newPage();
     const errors = [];
     page.on('pageerror', e => errors.push(String(e)));
     await page.goto(`${PREVIEW}?${query(step.fixture)}`, {waitUntil: 'networkidle'});
     await page.waitForTimeout(1500);
+    if (step.fixture.screen === 'pid-feel') {
+      const toggle = page.getByTestId('pid-advanced-toggle');
+      if (await toggle.count() && !await page.getByTestId('pid-feel').count()) await toggle.click();
+    }
     try {
       await prepare(page, step.prepare);
     } catch (error) {
       report.push({style: style.id, step: step.n, file: `${dir}/${step.n}-${step.shot}.png`,
                    error: `prepare failed: ${String(error).split('\n')[0]}`});
-      await context.close();
+      await browser.close();
       continue;
     }
 
@@ -63,10 +73,26 @@ for (const style of STYLES) {
       const height = await page.evaluate(() => {
         const scroller = [...document.querySelectorAll('div')]
           .find(n => n.scrollHeight > n.clientHeight + 8 && n.clientHeight > 200);
-        return scroller === undefined ? document.body.scrollHeight : scroller.scrollHeight + 24;
+        if (scroller === undefined) return document.body.scrollHeight + 24;
+        scroller.setAttribute('data-guide-full-capture', 'true');
+        // Include the fixed header and tabs outside the ScrollView.
+        return window.innerHeight + scroller.scrollHeight - scroller.clientHeight + 24;
       });
       await page.setViewportSize({width: 390, height: Math.min(Math.max(Math.ceil(height), 900), 8000)});
       await page.waitForTimeout(500);
+      // Picker interactions may have scrolled the form before closing.
+      // A full-page guide must start with the first field.
+      await page.evaluate(() => {
+        for (const node of document.querySelectorAll('*')) {
+          if (node.scrollTop) node.scrollTop = 0;
+        }
+        window.scrollTo(0, 0);
+      });
+      const remaining = await page.evaluate(() => {
+        const scroller = document.querySelector('[data-guide-full-capture]');
+        return scroller ? scroller.scrollHeight - scroller.clientHeight : 0;
+      });
+      if (remaining > 2) throw new Error(`Full-page capture clips ${remaining}px of the main form`);
       await page.screenshot({path: file, fullPage: true});
       size = {w: 390, h: height};
     } else {
@@ -81,7 +107,7 @@ for (const style of STYLES) {
           }, {needle: step.card.text, min: step.card.min ?? 3})).asElement();
       if (handle === null) {
         report.push({style: style.id, step: step.n, file, error: 'card not found'});
-        await context.close();
+        await browser.close();
         continue;
       }
       const box = await handle.boundingBox();
@@ -90,14 +116,23 @@ for (const style of STYLES) {
     }
 
     report.push({style: style.id, step: step.n, shot: step.shot, file, ...size, errors: errors.length});
-    await context.close();
+    await browser.close();
   }
 }
-await browser.close();
 
 const bad = report.filter(r => r.error !== undefined || (r.errors ?? 0) > 0);
 for (const r of report) {
   console.log(`${(r.style + '/' + r.step).padEnd(20)} ${String(r.shot ?? '').padEnd(20)} ${r.w}x${r.h}${r.error ? '  ERROR: ' + r.error : ''}`);
 }
 console.log(`\n${report.length} screenshots, ${bad.length} problem(s)`);
-if (bad.length > 0) process.exitCode = 1;
+if (bad.length > 0) {
+  process.exitCode = 1;
+} else {
+  // Publish only a complete capture set. A failed browser run preserves
+  // every existing image required to compile the application.
+  for (const style of CAPTURE_STYLES) {
+    const root = `${IMAGE_ROOT}/${style.id}`;
+    rmSync(`${root}/images`, {recursive: true, force: true});
+    renameSync(`${root}/.images-next`, `${root}/images`);
+  }
+}

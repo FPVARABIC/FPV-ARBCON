@@ -69,9 +69,9 @@ const CATEGORY_LABEL: Record<FirmwarePresetCategory, string> = {
  * different from the other two, not to be a grey pill in another language.
  */
 const STATUS_LABEL: Record<FirmwarePresetStatus, string> = {
-  OFFICIAL: 'رسمية',
-  COMMUNITY: 'من المجتمع',
-  EXPERIMENTAL: 'تجريبية',
+  OFFICIAL: "Officiële.",
+  COMMUNITY: "Van de gemeenschap.",
+  EXPERIMENTAL: "Experimental.",
 };
 const ALL_CATEGORIES: readonly FirmwarePresetCategory[] = [
   'TUNE',
@@ -117,7 +117,7 @@ export default function PresetsScreen({
   const [batch, setBatch] = useState<CliBatchResult>();
   const [cliOpen, setCliOpen] = useState(false);
   const [status, setStatus] = useState(
-    'حمّل الفهرس الرسمي ثم اختر حزمة متوافقة.',
+    "Laad de officiële index op en kies een geschikt pakket.",
   );
   const setBusy = useCallback(
     (busy: boolean) => onCliBusyChange(busy),
@@ -160,12 +160,12 @@ export default function PresetsScreen({
       // shorter list.
       const dropped =
         index.rejectedCount > 0
-          ? ` تجاهلنا ${index.rejectedCount} مدخلًا لم تُطابق بصمته أو مساره.`
+          ? ` ${index.rejectedCount} vermeldingen zijn overgeslagen omdat de hash of het pad niet overeenkwam.`
           : '';
       setStatus(
         compatible.length
-          ? `عُثر على ${compatible.length} حزمة متوافقة مع ${version.versionString}.${dropped}`
-          : `لا توجد حزم في المصدر الرسمي للإصدار ${version.versionString}.${dropped}`,
+          ? `We hebben een ${compatible.length} pakket gevonden dat overeenkomt met ${version.versionString}. ${dropped}.`
+          : `Er zijn geen pakketten in de officiële versie van ${version.versionString}.${dropped}.`,
       );
     } catch (error) {
       if (isStale()) return;
@@ -207,7 +207,7 @@ export default function PresetsScreen({
     setFirmwareVersion(undefined);
     setSelected(undefined);
     setLoaded(undefined);
-    setStatus('حمّل الفهرس الرسمي ثم اختر حزمة متوافقة.');
+    setStatus("Laad de officiële index op en kies een geschikt pakket.");
     loadCatalog().catch(() => undefined);
   }, [active, loadCatalog, sessionKey]);
   useEffect(
@@ -247,7 +247,7 @@ export default function PresetsScreen({
               .map(option => option.name),
           ),
         );
-        setStatus('تم التحقق من بصمة الملف. راجع الوصف والخيارات قبل التطبيق.');
+        setStatus("De vingerafdruk is gecontroleerd. Bekijk de beschrijving en keuzes voordat u de aanvraag indient.");
       } catch (error) {
         setFailure(errorText(error));
       } finally {
@@ -282,7 +282,7 @@ export default function PresetsScreen({
     if (!sessionKey) return;
     setBusy(true);
     setFailure(undefined);
-    setStatus('إنشاء نسخة diff all من المتحكم…');
+    setStatus("Het maken van een diff all versie van de controller...");
     try {
       await cli.begin(sessionKey);
       const backup = await cli.captureDiffAll();
@@ -291,10 +291,10 @@ export default function PresetsScreen({
         backup,
       );
       if (!saved)
-        throw new Error('لم يكتمل حفظ ملف النسخة الاحتياطية على الجهاز.');
+        throw new Error("Het back-up is nog niet voltooid.");
       await cli.exitWithoutSave();
       setBackupReady(true);
-      setStatus('حُفظت نسخة diff all. يمكنك الآن تطبيق الحزمة مؤقتًا.');
+      setStatus("diff all. is opgeslagen. Je kunt het pakket nu tijdelijk toepassen.");
     } catch (error) {
       await cli.exitWithoutSave().catch(() => undefined);
       setFailure(errorText(error));
@@ -308,7 +308,7 @@ export default function PresetsScreen({
     setFailure(undefined);
     setBatch(undefined);
     setProgress({ done: 0, total: commands.length });
-    setStatus('تطبيق الأوامر داخل CLI دون save…');
+    setStatus("Bevelen toepassen binnen CLI zonder save...");
     try {
       await cli.begin(sessionKey);
       setCliOpen(true);
@@ -318,8 +318,8 @@ export default function PresetsScreen({
       setBatch(result);
       setStatus(
         result.errors.length
-          ? `ظهرت ${result.errors.length} أخطاء CLI. الحفظ محظور؛ اخرج دون حفظ.`
-          : 'اكتمل التطبيق المؤقت بلا أخطاء. راجع النتيجة ثم احفظ أو اخرج دون حفظ.',
+          ? `Ze is aangekomen. ${result.errors.length} Fouten. CLI. Opslaan is geblokkeerd; Ga weg zonder te behouden.`
+          : "De tijdelijke applicatie is foutloos afgerond. Controleer het resultaat en dan save of exit without saving.",
       );
     } catch (error) {
       setCliOpen(false);
@@ -331,14 +331,12 @@ export default function PresetsScreen({
     if (!loaded) return;
     const warning = loaded.completeWarning.trim();
     Alert.alert(
-      'تطبيق Preset مؤقتًا',
-      `${warning ? `${warning}\n\n` : ''}سيُرسل ${
-        commands.length
-      } أمرًا إلى CLI دون save. أبقِ المراوح منزوعة.`,
+      "Preset app is tijdelijk.",
+      `${warning ? `${warning}\n\n` : ''} Hij zal worden gestuurd. ${commands.length} Een bevel aan mij. CLI Don. save. Houd propellers gescheiden.`,
       [
-        { text: 'إلغاء', style: 'cancel' },
+        { text: "Annuleren", style: 'cancel' },
         {
-          text: 'تطبيق مؤقت',
+          text: "Een tijdelijke toepassing",
           style: 'destructive',
           onPress: () => applyNow().catch(() => undefined),
         },
@@ -348,7 +346,7 @@ export default function PresetsScreen({
   const closeWithoutSave = useCallback(async () => {
     try {
       await cli.exitWithoutSave();
-      setStatus('خرجت من CLI دون save؛ لم تُثبت الحزمة.');
+      setStatus("Ik kwam uit CLI zonder save; Het pakket is nog niet bevestigd.");
     } catch (error) {
       setFailure(errorText(error));
     } finally {
@@ -360,7 +358,7 @@ export default function PresetsScreen({
     try {
       await cli.saveAndClose();
       setStatus(
-        'أُرسل save وأعيد تشغيل المتحكم. أعد الاتصال إذا لم تعد القراءة تلقائيًا.',
+        "Stuur save en zet de controller weer op. Bel me terug als het niet meer automatisch is.",
       );
       setBackupReady(false);
     } catch (error) {
@@ -375,15 +373,14 @@ export default function PresetsScreen({
     <View style={styles.root} testID="presets-screen">
       <ScrollView contentContainerStyle={[styles.content, { maxWidth }]}>
         <View style={styles.hero}>
-          <Text style={styles.title}>الحزم الجاهزة</Text>
+          <Text style={styles.title}>{"Presets"}</Text>
           <Text style={styles.subtitle}>
-            حزم الإعدادات الرسمية، مع معاينة الأوامر ونسخة احتياطية قبل الحفظ.
-          </Text>
+            {"Officiële setuppakketten, met een preview van de bestellingen en een back-up voor het bewaren."}</Text>
           <View style={styles.identityRow}>
             <Text style={styles.identity}>
               Firmware: {firmwareVersion ?? '—'}
             </Text>
-            <Text style={styles.identity}>المصدر: مستودع الحزم الرسمي</Text>
+            <Text style={styles.identity}>{"De officiële pakkettenruimte."}</Text>
           </View>
         </View>
         {failure ? (
@@ -395,7 +392,7 @@ export default function PresetsScreen({
           <TextInput
             value={query}
             onChangeText={setQuery}
-            placeholder="ابحث بالاسم أو المؤلف أو الكلمة…"
+            placeholder={"Zoek naar de naam, de auteur of het woord."}
             placeholderTextColor={colors.textMuted}
             style={styles.search}
             editable={!cliOpen}
@@ -407,7 +404,7 @@ export default function PresetsScreen({
             disabled={loading || cliOpen}
           >
             <Text style={styles.reloadText}>
-              {loading ? 'تحميل…' : 'تحديث الفهرس'}
+              {loading ? "Loading..." : "Update van de index"}
             </Text>
           </Pressable>
         </View>
@@ -420,7 +417,7 @@ export default function PresetsScreen({
             onPress={() => setCategory('ALL')}
             style={[styles.chip, category === 'ALL' && styles.chipOn]}
           >
-            <Text style={styles.chipText}>الكل</Text>
+            <Text style={styles.chipText}>{"Alles"}</Text>
           </Pressable>
           {ALL_CATEGORIES.map(item => (
             <Pressable
@@ -435,7 +432,7 @@ export default function PresetsScreen({
         <View style={styles.workspace}>
           <View style={styles.list}>
             <Text style={styles.sectionTitle}>
-              الحزم المتوافقة ({filtered.length})
+              {"Compatibele presets ("}{filtered.length})
             </Text>
             {filtered.slice(0, 160).map(preset => (
               <Pressable
@@ -462,21 +459,20 @@ export default function PresetsScreen({
                 </View>
                 <Text style={styles.presetTitle}>{preset.title}</Text>
                 <Text style={styles.meta}>
-                  {preset.author ?? 'مجتمع الحزم'} ·{' '}
+                  {preset.author ?? "De samenleving van verpakkingen."} ·{' '}
                   {preset.firmwareVersions.join(', ')}
                 </Text>
               </Pressable>
             ))}
           </View>
           <View style={styles.detail}>
-            <Text style={styles.sectionTitle}>المراجعة قبل التطبيق</Text>
+            <Text style={styles.sectionTitle}>{"Reviews voor de aanvraag"}</Text>
             {detailsLoading ? (
-              <Text style={styles.hint}>تحميل الملف والتحقق من بصمته…</Text>
+              <Text style={styles.hint}>{"Het downloaden van het dossier en het testen van zijn vingerafdrukken..."}</Text>
             ) : null}
             {!loaded ? (
               <Text style={styles.hint}>
-                اختر Preset من القائمة لعرض ما سيتغير.
-              </Text>
+                {"Kies Preset uit de lijst om te zien wat er verandert."}</Text>
             ) : (
               <>
                 <Text style={styles.detailTitle}>{loaded.summary.title}</Text>
@@ -494,7 +490,7 @@ export default function PresetsScreen({
                 ) : null}
                 {loaded.document.options.length ? (
                   <View style={styles.options}>
-                    <Text style={styles.subhead}>الخيارات</Text>
+                    <Text style={styles.subhead}>{"Keuzes."}</Text>
                     {loaded.document.options.map(option => (
                       <Pressable
                         key={option.name}
@@ -532,7 +528,7 @@ export default function PresetsScreen({
                           {option.group ? (
                             <Text style={styles.meta}>
                               {option.group}
-                              {option.exclusive ? ' · اختيار واحد' : ''}
+                              {option.exclusive ? "• Eén keuze" : ''}
                             </Text>
                           ) : null}
                         </View>
@@ -543,8 +539,7 @@ export default function PresetsScreen({
                 <View style={styles.commandSummary}>
                   <Text style={styles.commandCount}>{commands.length}</Text>
                   <Text style={styles.hint}>
-                    أمر CLI بعد تطبيق الخيارات وINCLUDE
-                  </Text>
+                    {"CLI na de opties en INCLUDE."}</Text>
                 </View>
                 <Pressable
                   testID="presets-backup"
@@ -554,8 +549,8 @@ export default function PresetsScreen({
                 >
                   <Text style={styles.primaryText}>
                     {backupReady
-                      ? 'نسخة diff all محفوظة'
-                      : '1 · أنشئ واحفظ نسخة diff all'}
+                      ? "diff all is opgeslagen."
+                      : "1 · diff all maken en bewaren"}
                   </Text>
                 </Pressable>
                 <Pressable
@@ -568,7 +563,7 @@ export default function PresetsScreen({
                   disabled={!backupReady || cliOpen || !commands.length}
                   onPress={confirmApply}
                 >
-                  <Text style={styles.applyText}>2 · طبّق مؤقتًا دون save</Text>
+                  <Text style={styles.applyText}>{"2 wordt tijdelijk zonder save toegepast."}</Text>
                 </Pressable>
               </>
             )}
@@ -595,8 +590,8 @@ export default function PresetsScreen({
           <View style={styles.decision} accessibilityRole="alert">
             <Text style={styles.decisionTitle}>
               {batch?.errors.length
-                ? 'أخطاء CLI — الحفظ محظور'
-                : 'الحزمة مطبقة مؤقتًا'}
+                ? "CLI-fouten  —  Bewaring verboden"
+                : "Het pakket is tijdelijk."}
             </Text>
             {batch?.errors.map((item, index) => (
               <Text key={index} style={styles.cliError}>
@@ -610,7 +605,7 @@ export default function PresetsScreen({
                 style={styles.cancel}
                 onPress={() => closeWithoutSave().catch(() => undefined)}
               >
-                <Text style={styles.cancelText}>إلغاء والخروج دون حفظ</Text>
+                <Text style={styles.cancelText}>{"Afzeggen en uitgaan zonder te behouden."}</Text>
               </Pressable>
               <Pressable
                 testID="presets-save"
@@ -621,7 +616,7 @@ export default function PresetsScreen({
                 disabled={Boolean(batch?.errors.length)}
                 onPress={() => save().catch(() => undefined)}
               >
-                <Text style={styles.saveText}>حفظ وإعادة تشغيل FC</Text>
+                <Text style={styles.saveText}>{"FC opslaan en herstarten"}</Text>
               </Pressable>
             </View>
           </View>
@@ -630,9 +625,7 @@ export default function PresetsScreen({
           <Text style={styles.statusText}>{status}</Text>
         </View>
         <Text style={styles.hardware}>
-          {t('hardwareVerification.behaviourTitle')} · نجاح إرسال CLI لا يثبت
-          جودة الضبط أو سلامة الطيران؛ اختبر على الطاولة بلا مراوح.
-        </Text>
+          {t('hardwareVerification.behaviourTitle')} {"Een geslaagde CLI-overdracht bewijst de kwaliteit van de afstelling of de vliegveiligheid niet. test op de werkbank zonder propellers."}</Text>
       </ScrollView>
     </View>
   );
@@ -663,11 +656,11 @@ const styles = StyleSheet.create({
   title: {
     ...typography.title,
     color: colors.textPrimary,
-    writingDirection: 'rtl'},
+    writingDirection: 'ltr'},
   subtitle: {
     ...typography.body,
     color: colors.textSecondary,
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   identityRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -694,7 +687,7 @@ const styles = StyleSheet.create({
     // rendered in the system fallback font. Measured in a browser.
     ...typography.bodyStrong,
     color: colors.error,
-    writingDirection: 'rtl'},
+    writingDirection: 'ltr'},
   toolbar: { flexDirection: 'row', gap: spacing.sm },
   search: {
     flex: 1,
@@ -705,7 +698,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
     color: colors.textPrimary,
     paddingHorizontal: spacing.md,
-    textAlign: 'right',
+    textAlign: 'left',
   },
   reload: {
     minHeight: 46,
@@ -757,7 +750,7 @@ const styles = StyleSheet.create({
   sectionTitle: {
     ...typography.sectionTitle,
     color: colors.textPrimary,
-    writingDirection: 'rtl'},
+    writingDirection: 'ltr'},
   preset: {
     padding: spacing.md,
     borderRadius: radii.md,
@@ -788,15 +781,15 @@ const styles = StyleSheet.create({
   hint: {
     ...typography.body,
     color: colors.textMuted,
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   detailTitle: {
     ...typography.sectionTitle,
     color: colors.accentStrong,
-    writingDirection: 'rtl'},
+    writingDirection: 'ltr'},
   description: {
     ...typography.body,
     color: colors.textSecondary,
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   warning: {
     padding: spacing.md,
     borderRadius: radii.md,
@@ -804,13 +797,13 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.warning,
   },
-  warningText: { color: colors.warning, writingDirection: 'rtl' },
+  warningText: { color: colors.warning, writingDirection: 'ltr' },
   options: { gap: spacing.xs },
   subhead: {
     ...typography.body,
     color: colors.textPrimary,
     fontWeight: '700',
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   option: {
     minHeight: 48,
     flexDirection: 'row',
@@ -888,7 +881,7 @@ const styles = StyleSheet.create({
   decisionTitle: {
     ...typography.sectionTitle,
     color: colors.textPrimary,
-    writingDirection: 'rtl'},
+    writingDirection: 'ltr'},
   cliError: {
     ...typography.caption,
     color: colors.error,
@@ -923,11 +916,11 @@ const styles = StyleSheet.create({
     ...typography.label,
     color: colors.accentText,
     textAlign: 'center',
-    writingDirection: 'rtl',
+    writingDirection: 'ltr',
   },
   hardware: {
     ...typography.caption,
     color: colors.warning,
     textAlign: 'center',
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
 });

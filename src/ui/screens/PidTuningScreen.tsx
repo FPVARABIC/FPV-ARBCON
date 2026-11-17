@@ -125,9 +125,9 @@ type Phase = 'IDLE' | 'LOADING' | 'READY' | 'SAVING' | 'ERROR';
 type SimplifiedState = {readonly kind: 'READING'} | {readonly kind: 'PORT_ABSENT'} | PidSimplifiedLoadOutcome;
 
 const AXES: readonly {key: PidAxisKey; title: string; subtitle: string}[] = Object.freeze([
-  {key: 'roll', title: 'Roll', subtitle: 'المحور الجانبي'},
-  {key: 'pitch', title: 'Pitch', subtitle: 'المحور الطولي'},
-  {key: 'yaw', title: 'Yaw', subtitle: 'محور الاتجاه'},
+  {key: 'roll', title: 'Roll', subtitle: "Aan de zijkant."},
+  {key: 'pitch', title: 'Pitch', subtitle: "De lengteas."},
+  {key: 'yaw', title: 'Yaw', subtitle: "De richting."},
 ]);
 const EMPTY_PATCH: SimplifiedTuningPatch = Object.freeze({});
 const GENERATOR_DEFAULTS = simplifiedDefaultsFor('API_1_47');
@@ -137,42 +137,42 @@ const MULTIPLIER_STEP = 5;
 
 function blockMessage(reason: PidBlockReason): string {
   return ({
-    DISCONNECTED: 'انتهى الاتصال بمتحكم الطيران. أعد الاتصال ثم أعد القراءة.',
-    IDENTIFYING: 'ما زال التطبيق يتحقق من هوية متحكم الطيران.',
-    UNSUPPORTED_FIRMWARE: 'إصدار البرنامج الثابت في هذه اللوحة غير مدعوم لضبط PID، لأن تخطيط القيم يختلف بين الإصدارات.',
-    APP_BACKGROUNDED: 'أعد التطبيق إلى الواجهة قبل قراءة أو حفظ PID.',
-    LINK_RECOVERING: 'الاتصال قيد الاستعادة. انتظر ثم أعد القراءة.',
-    FC_ARMED: 'رُفض الحفظ لأن متحكم الطيران مسلّح.',
-    ARMED_STATE_UNKNOWN: 'تعذر إثبات أن متحكم الطيران DISARMED؛ لم يُرسل أي تعديل.',
-    MOTOR_TEST_ACTIVE: 'أنهِ جلسة اختبار المحركات من الزر الثابت أسفل شاشة المحركات، ثم أعد القراءة.',
-    CONFIGURATION_BUSY: 'هناك معاملة إعدادات أخرى جارية. انتظر ثم أعد المحاولة.',
-    STALE_BASE: 'تغيّرت قيم PID على متحكم الطيران منذ آخر قراءة. أعد القراءة قبل الحفظ.',
-    INVALID_CONFIGURATION: 'هناك قيمة PID أو Rates أو Filters خارج الحدود الرسمية أو حد Nyquist الآمن.',
-    SESSION_CHANGED: 'تغيّرت جلسة المتحكم منذ إنشاء هذه التعديلات. أعد تحميل الإعدادات قبل الحفظ.',
-    UNVERIFIED_FUTURE_API: 'إصدار البرنامج الثابت أحدث من أي تخطيط تحقّقنا منه من المصدر، لذلك لا نكتب أي ضبط إليه.',
-    PROFILE_CHANGED: 'تغيّر الملف النشط على متحكم الطيران بعد قراءة القيم. لم يُرسل أي تعديل؛ أعد القراءة أولًا.',
-    DIRECT_EDIT_CONFLICTS_WITH_ACTIVE_SIMPLIFIED: 'الضبط المبسّط نشط ويملك هذه القيم؛ تعديلها يدويًا سيُلغى فورًا. لم يُرسل شيء.',
-    ACTIVE_DESTINATION_COPY_UNSAFE: 'لا ننسخ فوق الملف النشط، لأن المتحكم لا يعيد تهيئة نفسه بعد النسخ.',
-    SIMPLIFIED_TUNING_UNSUPPORTED: 'هذا البناء من البرنامج الثابت لا يتضمّن الضبط المبسّط.',
-    SIMPLIFIED_PROJECTION_ORACLE_DISAGREES: 'حساب المتحكم لنتيجة الشرائح لا يطابق حسابنا، فلم نكتب شيئًا.',
-    UNKNOWN_RATES_TYPE: 'نوع المعدلات المطلوب ليس من الأنواع الخمسة التي تحققنا منها من المصدر.',
+    DISCONNECTED: "Verbinding met de vluchtcontroller beëindigd. Verbind opnieuw en lees opnieuw uit.",
+    IDENTIFYING: "De app controleert de identiteit van de vluchtcontroller nog.",
+    UNSUPPORTED_FIRMWARE: "De firmware-versie in dit bord is niet ondersteund om PID aan te passen, omdat de rangschikking van de waarden tussen de versieën verschilt.",
+    APP_BACKGROUNDED: "Schrijf de app op de interface voordat je PID. leest of opslaat.",
+    LINK_RECOVERING: "De verbinding wordt hersteld. Wacht en lees weer.",
+    FC_ARMED: "Opslaan geweigerd: de vluchtcontroller is gearmd.",
+    ARMED_STATE_UNKNOWN: "vluchtcontroller DISARMED kan niet worden aangetoond; Hij heeft geen correctie gestuurd.",
+    MOTOR_TEST_ACTIVE: "Het is de motortest sessie van de vaste knop onder het motoren scherm, en dan weer lezen.",
+    CONFIGURATION_BUSY: "Er zijn nog andere instellingen aan de gang. Wacht en probeer het weer.",
+    STALE_BASE: "PID is veranderd in vluchtcontroller sinds het laatste lezen. Begin met het lezen voor het bewaren.",
+    INVALID_CONFIGURATION: "Er is een waarde van PID, Rates of Filters buiten de officiële grens of de veilige grens van Nyquist.",
+    SESSION_CHANGED: "De controllersessie is gewijzigd sinds deze aanpassingen zijn gemaakt. Lees de instellingen opnieuw uit voordat u opslaat.",
+    UNVERIFIED_FUTURE_API: "De firmware versie is nu hoger dan welke plannen ook die we van de bron hebben gecontroleerd, dus we schrijven er geen aanpassingen op.",
+    PROFILE_CHANGED: "Het actieve bestand op vluchtcontroller is veranderd na het lezen van de waarden. Hij heeft geen correctie gestuurd. Lees eerst weer.",
+    DIRECT_EDIT_CONFLICTS_WITH_ACTIVE_SIMPLIFIED: "De Simplified Control is actief en heeft deze waarden; De handmatige aanpassing wordt onmiddellijk ingetrokken. Hij stuurde niets.",
+    ACTIVE_DESTINATION_COPY_UNSAFE: "We kopiëren niet over het actieve bestand, omdat de controller zich niet na het kopiëren opnieuw opstelt.",
+    SIMPLIFIED_TUNING_UNSUPPORTED: "Deze firmware-constructie heeft geen vereenvoudigde bediening.",
+    SIMPLIFIED_PROJECTION_ORACLE_DISAGREES: "De controle berekening van het slide-resultaat past niet bij ons. We hebben niets geschreven.",
+    UNKNOWN_RATES_TYPE: "De gewenste snelheid is niet van de vijf soorten die we van de bron hebben gecontroleerd.",
   })[reason];
 }
 function saveMessage(outcome: PidSaveOutcome): {text: string; warning: boolean} {
   switch (outcome.kind) {
-    case 'SAVED_VERIFIED': return {text: 'حُفظت القيم المتغيرة، وأكدت القراءة الراجعة تطابقها.', warning: false};
-    case 'NO_CHANGES': return {text: 'لا توجد تغييرات جديدة.', warning: false};
-    case 'SAVED_UNVERIFIED': return {text: 'أُقر الحفظ، لكن تعذرت القراءة الراجعة. أعد القراءة قبل الطيران.', warning: true};
-    case 'APPLIED_PERSISTENCE_UNVERIFIED': return {text: 'طُبّقت القيم وأكدتها القراءة، لكن لم يثبت حفظها في ذاكرة المتحكم. لا تعتمد عليها بعد إعادة التشغيل.', warning: true};
-    case 'READBACK_MISMATCH': return {text: 'أعادت اللوحة قيمًا لا تطابق ما طُلب ولا ما يتوقعه المصدر. لم يُدّع نجاح.', warning: true};
-    case 'UNEXPECTED_CROSS_SUBSYSTEM_CHANGE': return {text: 'غيّر المتحكم إعدادًا خارج هذه الشاشة بطريقة لا يفسّرها المصدر. أعد قراءة إعدادات المحركات.', warning: true};
-    case 'SIDE_EFFECT_PREDICTION_NOT_PROVEN': return {text: 'غيّر المتحكم إعدادًا خارج هذه الشاشة، ولا يمكننا حساب القيمة المتوقعة له من بيانات MSP وحدها. لم يُحفظ التغيير؛ أعد قراءة إعدادات المحركات.', warning: true};
+    case 'SAVED_VERIFIED': return {text: "De veranderende waarden werden bewaard, en de teruglezing bevestigde dat ze overeenkwamen.", warning: false};
+    case 'NO_CHANGES': return {text: "Er zijn geen nieuwe veranderingen.", warning: false};
+    case 'SAVED_UNVERIFIED': return {text: "Opslaan is bevestigd, maar teruglezen is mislukt. Lees het voor de vlucht.", warning: true};
+    case 'APPLIED_PERSISTENCE_UNVERIFIED': return {text: "De waarden werden geladen en bevestigd te lezen, maar niet opgeslagen in het geheugen. Vertrouw er niet op na het opnieuw opstarten.", warning: true};
+    case 'READBACK_MISMATCH': return {text: "Het printplaat gaf weer waarden die niet overeenkwamen met wat de bron vroeg of verwachtte. Hij was niet succesvol.", warning: true};
+    case 'UNEXPECTED_CROSS_SUBSYSTEM_CHANGE': return {text: "De controller veranderde de instelling buiten dit scherm op een manier die de bron niet kan uitleggen. Lees de motoren-instellingen weer.", warning: true};
+    case 'SIDE_EFFECT_PREDICTION_NOT_PROVEN': return {text: "De controller veranderde de instelling buiten dit scherm, en we kunnen de verwachte waarde niet berekenen vanuit de MSP-gegevens alleen. De verandering is niet gespaard. Lees de motoren-instellingen weer.", warning: true};
     case 'UNCONFIRMED': return {text: unconfirmedWriteMessage(outcome.stage), warning: true};
     /* U-R1. RAM moved and flash did not - never «فشل الحفظ». */
     case 'PARTIAL_UNPERSISTED': return {text: partialApplyMessage(outcome.failedStage === 'EEPROM'), warning: true};
     case 'REJECTED': return {text: blockMessage(outcome.reason), warning: true};
-    case 'SESSION_ENDED': return {text: 'انتهت جلسة الاتصال أثناء العملية.', warning: true};
-    case 'FAILED': return {text: 'فشل الحفظ قبل تأكيد الاستمرار. لم يدّع التطبيق نجاحًا.', warning: true};
+    case 'SESSION_ENDED': return {text: "De gesprek is afgelopen tijdens de operatie.", warning: true};
+    case 'FAILED': return {text: "Een storing mislukte voordat de voortzetting bevestigd werd. De app was niet succesvol.", warning: true};
   }
 }
 /**
@@ -184,12 +184,12 @@ function saveMessage(outcome: PidSaveOutcome): {text: string; warning: boolean} 
  */
 function profileSwitchMessage(outcome: PidProfileSwitchOutcome): {text: string; warning: boolean} {
   switch (outcome.kind) {
-    case 'SWITCHED': return {text: 'تم تفعيل الملف المطلوب، وأعيدت قراءة قيمه من متحكم الطيران.', warning: false};
-    case 'NOT_APPLIED': return {text: 'أقرّ المتحكم الأمر لكنه ما زال يعمل على الملف السابق. لم يتغيّر شيء؛ أعد المحاولة أو تحقق من البرنامج الثابت.', warning: true};
-    case 'UNCONFIRMED': return {text: 'لم تتأكد نتيجة تبديل الملف. أعد القراءة قبل الاعتماد على القيم المعروضة.', warning: true};
+    case 'SWITCHED': return {text: "Het verlangde bestand is geactiveerd en de waarde van het vluchtcontroller is herlezen.", warning: false};
+    case 'NOT_APPLIED': return {text: "De controller heeft het goedgekeurd, maar hij werkt nog steeds aan het oude dossier. Niets is veranderd. Probeer opnieuw of controleer firmware.", warning: true};
+    case 'UNCONFIRMED': return {text: "Het resultaat van het uitwisselen is nog niet bevestigd. Maak het goed voor je het leest voordat je je afhankelijk maakt van de waarden.", warning: true};
     case 'REJECTED': return {text: blockMessage(outcome.reason), warning: true};
-    case 'SESSION_ENDED': return {text: 'انتهت جلسة الاتصال أثناء تبديل الملف.', warning: true};
-    case 'FAILED': return {text: 'فشل تبديل الملف قبل أن يصل إلى المتحكم.', warning: true};
+    case 'SESSION_ENDED': return {text: "De gesprek is afgelopen tijdens het uitwisselen van het dossier.", warning: true};
+    case 'FAILED': return {text: "Het bestand is niet doorgeschakeld voordat het de controller bereikt.", warning: true};
   }
 }
 /**
@@ -199,14 +199,14 @@ function profileSwitchMessage(outcome: PidProfileSwitchOutcome): {text: string; 
  */
 function ratesTypeMessage(outcome: PidRatesTypeOutcome): {text: string; warning: boolean} {
   switch (outcome.kind) {
-    case 'NO_CHANGES': return {text: 'خوارزمية Rates المطلوبة هي المفعّلة أصلًا على المتحكم.', warning: false};
-    case 'PERSISTED_VERIFIED': return {text: 'بُدّلت خوارزمية Rates وحُفظت. الأرقام المخزّنة لم تُحوّل؛ صارت تُقرأ بمعادلة أخرى.', warning: false};
-    case 'APPLIED_PERSISTENCE_UNVERIFIED': return {text: 'طُبّقت الخوارزمية الجديدة لكن لم يثبت حفظها في ذاكرة المتحكم. لا تعتمد عليها بعد إعادة التشغيل.', warning: true};
-    case 'READBACK_MISMATCH': return {text: 'بعد كتابة نوع الخوارزمية أعادت اللوحة قيم Rates مختلفة عمّا كان مخزّنًا. توقفنا قبل إكمال الحفظ.', warning: true};
-    case 'UNCONFIRMED': return {text: 'لم تتأكد نتيجة تبديل خوارزمية Rates. أعد القراءة قبل الطيران.', warning: true};
+    case 'NO_CHANGES': return {text: "Het vereiste Rates-algoritme is de oorspronkelijke activator van de controller.", warning: false};
+    case 'PERSISTED_VERIFIED': return {text: "Het Rates-algoritme is vervangen en bewaard. De opgeslagen nummers zijn niet overgedragen. Het wordt gelezen door een andere vergelijking.", warning: false};
+    case 'APPLIED_PERSISTENCE_UNVERIFIED': return {text: "Het nieuwe algoritme is geplatteerd, maar niet in het geheugen. Vertrouw er niet op na het opnieuw opstarten.", warning: true};
+    case 'READBACK_MISMATCH': return {text: "Na het schrijven van het algoritme type herstelde het bord de Rates-waarden die anders waren dan ze opgeslagen waren. De bewerking is gestopt voordat het opslaan was voltooid.", warning: true};
+    case 'UNCONFIRMED': return {text: "Rates.-algoritme is niet bevestigd. Lees het voor de vlucht.", warning: true};
     case 'REJECTED': return {text: blockMessage(outcome.reason), warning: true};
-    case 'SESSION_ENDED': return {text: 'انتهت جلسة الاتصال أثناء تبديل خوارزمية Rates.', warning: true};
-    case 'FAILED': return {text: 'فشل تبديل خوارزمية Rates قبل أن يصل إلى المتحكم.', warning: true};
+    case 'SESSION_ENDED': return {text: "De verbinding is afgesloten tijdens het schakelen van het Rates.-algoritme.", warning: true};
+    case 'FAILED': return {text: "Het Rates-algorithmiek schakelde af voordat het de controller bereikte.", warning: true};
   }
 }
 /**
@@ -216,24 +216,24 @@ function ratesTypeMessage(outcome: PidRatesTypeOutcome): {text: string; warning:
  */
 function simplifiedSaveMessage(outcome: PidSimplifiedSaveOutcome): {text: string; warning: boolean} {
   switch (outcome.kind) {
-    case 'NO_CHANGES': return {text: 'لا تغييرات في الضبط المبسّط.', warning: false};
-    case 'SAVED_VERIFIED': return {text: 'أعاد المتحكم حساب القيم من الشرائح وحفظها، وطابقت القراءة الراجعة ما توقّعناه.', warning: false};
-    case 'APPLIED_PERSISTENCE_UNVERIFIED': return {text: 'أعاد المتحكم الحساب وأكدته القراءة، لكن لم يثبت حفظه في الذاكرة. لا تعتمد عليه بعد إعادة التشغيل.', warning: true};
-    case 'READBACK_MISMATCH': return {text: 'القيم التي ولّدها المتحكم لا تطابق ما يحسبه المصدر. لم يُدّع نجاح؛ أعد القراءة.', warning: true};
-    case 'UNCONFIRMED': return {text: 'لم تتأكد نتيجة الضبط المبسّط. أعد القراءة قبل الطيران.', warning: true};
+    case 'NO_CHANGES': return {text: "Geen veranderingen in de vereenvoudigde instelling.", warning: false};
+    case 'SAVED_VERIFIED': return {text: "De vluchtcontroller heeft de waarden opnieuw berekend uit de schuifregelaars en opgeslagen. Teruglezen bevestigt de verwachte waarden.", warning: false};
+    case 'APPLIED_PERSISTENCE_UNVERIFIED': return {text: "De account controller herstelde en bevestigde dat hij het kon lezen, maar hij kon het niet bevestigen dat hij het in het geheugen had. Vertrouw er niet op na het opnieuw opstarten.", warning: true};
+    case 'READBACK_MISMATCH': return {text: "De waarden die door de controller zijn geproduceerd, passen niet overeen met wat de bron denkt. Hij was niet succesvol. Lees het weer.", warning: true};
+    case 'UNCONFIRMED': return {text: "Het resultaat van de vereenvoudiging is nog niet bevestigd. Lees het voor de vlucht.", warning: true};
     case 'REJECTED': return {text: blockMessage(outcome.reason), warning: true};
-    case 'SESSION_ENDED': return {text: 'انتهت جلسة الاتصال أثناء الضبط المبسّط.', warning: true};
-    case 'FAILED': return {text: 'فشل الضبط المبسّط قبل أن يصل إلى المتحكم.', warning: true};
+    case 'SESSION_ENDED': return {text: "De gesprek is afgelopen tijdens de Simplificatie.", warning: true};
+    case 'FAILED': return {text: "De vereenvoudigde reglementering is mislukt voor het de controller bereikt.", warning: true};
   }
 }
 function simplifiedLoadMessage(state: SimplifiedState): string | undefined {
   switch (state.kind) {
     case 'READING': case 'LOADED': return undefined;
-    case 'PORT_ABSENT': return 'لا يقرأ هذا الإصدار من التطبيق الضبط المبسّط. هذه حدود التطبيق، لا حدود المتحكم.';
-    case 'UNSUPPORTED': return 'بناء البرنامج الثابت في هذه اللوحة لا يتضمّن الضبط المبسّط، فاستخدم الإعدادات المتقدمة أدناه.';
+    case 'PORT_ABSENT': return "Deze appversie leest de eenvoudige afstelling niet uit. Dit is een beperking van de app, niet van de vluchtcontroller.";
+    case 'UNSUPPORTED': return "Deze firmwarebuild bevat geen eenvoudige afstelling. Gebruik de geavanceerde instellingen hieronder.";
     case 'REJECTED': return blockMessage(state.reason);
-    case 'SESSION_ENDED': return 'انتهت جلسة الاتصال قبل قراءة الضبط المبسّط.';
-    case 'FAILED': return 'تعذّرت قراءة الضبط المبسّط من متحكم الطيران.';
+    case 'SESSION_ENDED': return "De gesprek is voorbij voor de vereenvoudigde instellingen gelezen zijn.";
+    case 'FAILED': return "De eenvoudige afstelling kon niet uit de vluchtcontroller worden gelezen.";
   }
 }
 /**
@@ -245,13 +245,13 @@ function simplifiedLoadMessage(state: SimplifiedState): string | undefined {
  */
 function profileNameMessage(outcome: PidProfileNameOutcome): {text: string; warning: boolean} {
   switch (outcome.kind) {
-    case 'NAMED_VERIFIED': return {text: `حُفظ الاسم «${outcome.name}» وطابقته القراءة الراجعة.`, warning: false};
-    case 'NAME': return {text: `الاسم الحالي: «${outcome.name}».`, warning: false};
-    case 'NAME_MISMATCH': return {text: `طلبنا «${outcome.requested}» فأعاد المتحكم «${outcome.observed}». لم يُحفظ الاسم كما طُلب.`, warning: true};
+    case 'NAMED_VERIFIED': return {text: `De naam «${outcome.name}» is opgeslagen. Teruglezen bevestigt de naam.`, warning: false};
+    case 'NAME': return {text: `De huidige naam:  — ${outcome.name} —.`, warning: false};
+    case 'NAME_MISMATCH': return {text: `Naam «${outcome.requested}» aangevraagd, maar de controller gaf «${outcome.observed}» terug. De naam is niet opgeslagen zoals aangevraagd.`, warning: true};
     case 'REJECTED': return {text: blockMessage(outcome.reason), warning: true};
-    case 'UNCONFIRMED': return {text: 'لم تتأكد نتيجة تسمية الملف. أعد القراءة قبل الاعتماد عليها.', warning: true};
-    case 'SESSION_ENDED': return {text: 'انتهت جلسة الاتصال أثناء تسمية الملف.', warning: true};
-    case 'FAILED': return {text: 'فشلت تسمية الملف قبل أن تصل إلى المتحكم.', warning: true};
+    case 'UNCONFIRMED': return {text: "U weet niet hoe het is. Lees het voor je er op vertrouwt.", warning: true};
+    case 'SESSION_ENDED': return {text: "De gesprek is afgelopen tijdens het benoemen van het dossier.", warning: true};
+    case 'FAILED': return {text: "Ik heb het bestand niet getiteld voordat het de controller bereikte.", warning: true};
   }
 }
 
@@ -262,23 +262,23 @@ function profileNameMessage(outcome: PidProfileNameOutcome): {text: string; warn
  */
 function profileCopyMessage(outcome: PidProfileCopyOutcome): {text: string; warning: boolean} {
   switch (outcome.kind) {
-    case 'COPIED_VERIFIED': return {text: `نُسخ الملف ${outcome.sourceIndex + 1} إلى الملف ${outcome.destinationIndex + 1}، وطابقت القراءة الراجعة المصدر.`, warning: false};
-    case 'COPY_MISMATCH': return {text: `الملف ${outcome.destinationIndex + 1} لا يطابق المصدر بعد النسخ (${outcome.fields.length} حقلًا). لم يُدّع نجاح.`, warning: true};
-    case 'LEFT_ON_ANOTHER_PROFILE': return {text: `المتحكم يعمل الآن على الملف ${outcome.activeIndex + 1} بدل الملف ${outcome.requestedIndex + 1} الذي طلبناه. أعد اختيار الملف قبل الطيران.`, warning: true};
+    case 'COPIED_VERIFIED': return {text: `Profiel ${outcome.sourceIndex + 1} is naar profiel ${outcome.destinationIndex + 1} gekopieerd. Teruglezen bevestigt dat het doel overeenkomt met de bron.`, warning: false};
+    case 'COPY_MISMATCH': return {text: `Het ${outcome.destinationIndex + 1}-bestand komt niet overeen met de bron na het kopiëren (${outcome.fields.length}-veld). Hij was niet succesvol.`, warning: true};
+    case 'LEFT_ON_ANOTHER_PROFILE': return {text: `De controller werkt nu op het ${outcome.activeIndex + 1}-bestand in plaats van het ${outcome.requestedIndex + 1}-bestand dat we hebben besteld. Selecteer het dossier opnieuw voor de vlucht.`, warning: true};
     case 'REJECTED': return {text: blockMessage(outcome.reason), warning: true};
-    case 'UNCONFIRMED': return {text: 'لم تتأكد نتيجة النسخ. أعد القراءة قبل الاعتماد عليها.', warning: true};
-    case 'SESSION_ENDED': return {text: 'انتهت جلسة الاتصال أثناء النسخ.', warning: true};
-    case 'FAILED': return {text: 'فشل النسخ قبل أن يصل إلى المتحكم.', warning: true};
+    case 'UNCONFIRMED': return {text: "Je hebt het resultaat van de kopieën niet bevestigd. Lees het voor je er op vertrouwt.", warning: true};
+    case 'SESSION_ENDED': return {text: "De gesprek is afgelopen tijdens het kopiëren.", warning: true};
+    case 'FAILED': return {text: "De kopieën zijn mislukt voordat het de controller bereikt.", warning: true};
   }
 }
 
 /** What each observable reset resource is called in the operator's words. */
 const RESET_RESOURCE_LABELS: Readonly<Record<PidResetResource, string>> = Object.freeze({
-  PID: 'قيم P/I/D للمحاور الخمسة',
-  PID_ADVANCED: 'الإعدادات المتقدمة: F و D Max و TPA و Dynamic Idle',
-  FILTER_CONFIG: 'مرشّحات D-term وترشيح Yaw',
-  PROFILE_NAME: 'اسم الملف',
-  SIMPLIFIED_TUNING: 'وضع الضبط المبسّط',
+  PID: "P/I/D-waarden voor de vijf assen",
+  PID_ADVANCED: "Geavanceerde instellingen: F, D Max, TPA en Dynamic Idle",
+  FILTER_CONFIG: "D-term- en yaw-filters",
+  PROFILE_NAME: "Profielnaam",
+  SIMPLIFIED_TUNING: "Eenvoudige afstelling",
 });
 
 const resetResourceList = (resources: readonly PidResetResource[]): string =>
@@ -299,45 +299,45 @@ const resetResourceList = (resources: readonly PidResetResource[]): string =>
 function profileResetMessage(outcome: PidProfileResetOutcome): {text: string; warning: boolean} {
   switch (outcome.kind) {
     case 'RESET_APPLIED_PARTIALLY_VERIFIED': return {
-      text: `أُعيد الملف إلى قيم المصنع في الذاكرة العاملة. تحقّقنا من: ${resetResourceList(outcome.verifiedScope)}. `
+      text: `Het profiel is in het werkgeheugen teruggezet naar de fabriekswaarden. Geverifieerd: ${resetResourceList(outcome.verifiedScope)}. `
         + (outcome.verificationGaps.length > 0
-          ? `تعذّر التحقق من: ${resetResourceList(outcome.verificationGaps.map(gap => gap.resource))}`
-            + ' لأن قراءتها لم تُجب، ولا ندّعي صحتها. '
+          ? `Niet geverifieerd: ${resetResourceList(outcome.verificationGaps.map(gap => gap.resource))}. `
+            + "Teruglezen is mislukt; de juistheid is niet bevestigd. "
           : '')
-        + 'بقية الحقول لم نقرأها ولا ندّعي صحتها. الأمر نفسه لا يحفظ حفظًا دائمًا؛ احفظ إن أردت بقاءه بعد فصل البطارية.',
+        + "De overige velden zijn niet uitgelezen; de juistheid daarvan is niet bevestigd. Deze opdracht slaat niet permanent op. Sla de instellingen op als ze behouden moeten blijven na het loskoppelen van de accu.",
       warning: true,
     };
-    case 'READBACK_MISMATCH': return {text: `القراءة بعد الإعادة لا تطابق قيم المصنع في ${outcome.fields.length} حقلًا. لم يُدّع نجاح.`, warning: true};
+    case 'READBACK_MISMATCH': return {text: `Het lezen na het terugvoeren past niet bij de fabriekswaarden in ${outcome.fields.length} als een veld. Hij was niet succesvol.`, warning: true};
     case 'REJECTED': return {text: blockMessage(outcome.reason), warning: true};
-    case 'UNCONFIRMED': return {text: 'لم تتأكد نتيجة الإعادة. أعد القراءة قبل الاعتماد عليها.', warning: true};
-    case 'SESSION_ENDED': return {text: 'انتهت جلسة الاتصال أثناء الإعادة.', warning: true};
-    case 'FAILED': return {text: 'فشلت الإعادة قبل أن تصل إلى المتحكم.', warning: true};
+    case 'UNCONFIRMED': return {text: "Het resultaat is nog niet bevestigd. Lees het voor je er op vertrouwt.", warning: true};
+    case 'SESSION_ENDED': return {text: "De gesprek is afgelopen tijdens de terugkeer.", warning: true};
+    case 'FAILED': return {text: "De herhaling is mislukt voordat je de controller bereikte.", warning: true};
   }
 }
 
 function issueMessage(issue: ReturnType<typeof validatePidTuningDraft>[number]): string {
   return ({
-    PID_GAIN_INVALID: 'إحدى قيم P/I/D خارج 0–250',
-    IDLE_MIN_RPM_INVALID: 'قيمة Dynamic Idle خارج 0–200',
-    FEEDFORWARD_INVALID: 'إحدى قيم F خارج 0–1000',
-    FEEDFORWARD_AVERAGING_INVALID: 'وضع تنعيم Feedforward غير معروف',
-    FEEDFORWARD_BOOST_INVALID: 'قيمة Feedforward boost خارج 0–50',
-    FEEDFORWARD_JITTER_INVALID: 'قيمة تجاهل ارتجاف العصا خارج 0–20',
-    RATES_TYPE_INVALID: 'نوع Rates المقروء غير مدعوم للتحرير الآمن',
+    PID_GAIN_INVALID: "Een van de P/I/D-waarden buiten 0–250.",
+    IDLE_MIN_RPM_INVALID: "Dynamic Idle buiten 0–200",
+    FEEDFORWARD_INVALID: "Een van de F-waarden buiten 0–1000.",
+    FEEDFORWARD_AVERAGING_INVALID: "Feedforward's status is onbekend.",
+    FEEDFORWARD_BOOST_INVALID: "Feedforward boost buiten 0–50",
+    FEEDFORWARD_JITTER_INVALID: "stick buiten 0–20",
+    RATES_TYPE_INVALID: "Rates-type niet ondersteund voor veilige release.",
     /* Reachable only if the draft's type drifts from the board's. The
        selector keeps them equal and routes a real change through the
        separate rates-type transaction, so this reads as the defect it is. */
-    RATES_TYPE_CHANGE_UNSUPPORTED: 'نوع Rates في المسودة لا يطابق ما على المتحكم؛ أعد القراءة',
-    RATE_VALUE_INVALID: 'إحدى قيم Rates خارج حدود الخوارزمية الحالية',
-    THROTTLE_CURVE_INVALID: 'منحنى أو حد الخانق خارج المدى المسموح',
-    FILTER_VALUE_INVALID: 'إحدى قيم الفلاتر خارج حدود البرنامج الثابت',
-    FILTER_ORDER_INVALID: 'حدود Min/Max للفلاتر غير متناسقة',
-    FILTER_CAPABILITY_UNPROVEN: 'لا يمكن تفعيل أو تعطيل وضع فلتر لم تثبته القراءة الحالية',
-    FILTER_RATE_UNKNOWN: 'لا يمكن تعديل الفلاتر دون معرفة Gyro وPID loop rate',
-    FILTER_EXCEEDS_NYQUIST: 'أحد ترددات الفلاتر يبلغ أو يتجاوز حد Nyquist',
-    ADVANCED_PID_VALUE_INVALID: 'إحدى قيم الإعدادات المتقدمة خارج حدود البرنامج الثابت',
-    ADVANCED_FILTER_VALUE_INVALID: 'إحدى قيم الفلاتر المتقدمة خارج حدود البرنامج الثابت',
-    RPM_FILTER_VALUE_INVALID: 'إحدى قيم مرشّح RPM خارج حدود البرنامج الثابت، والمتحكم يرفض الرسالة كاملة',
+    RATES_TYPE_CHANGE_UNSUPPORTED: "Het type Rates in de tekening komt niet overeen met wat op de controller staat; Lees het weer.",
+    RATE_VALUE_INVALID: "Een Rates-waarde buiten de huidige algoritme.",
+    THROTTLE_CURVE_INVALID: "gas kromming of limiet buiten het toegestane bereik",
+    FILTER_VALUE_INVALID: "Eén van de filterwaarden is buiten de firmware.",
+    FILTER_ORDER_INVALID: "De Min/Max-grens voor niet-coördinerende filters",
+    FILTER_CAPABILITY_UNPROVEN: "Het kan niet worden geactiveerd of uitgeschakeld zonder dat de huidige lezing bevestigd is.",
+    FILTER_RATE_UNKNOWN: "Filters kunnen niet worden aangepast zonder kennis van Gyro, PID, loop, rate.",
+    FILTER_EXCEEDS_NYQUIST: "Een filterfrequentie die Nyquist is of overschrijdt",
+    ADVANCED_PID_VALUE_INVALID: "Een waarde van de geavanceerde instellingen buiten de firmware-grens.",
+    ADVANCED_FILTER_VALUE_INVALID: "Een van de waarde van de geavanceerde filters buiten de firmware.",
+    RPM_FILTER_VALUE_INVALID: "Een van de RPM-filterwaarden is buiten de firmware-grens, en de controller weigert het volledige bericht.",
   })[issue];
 }
 
@@ -452,11 +452,11 @@ function SimplifiedFilterCard({copy, block, observed, disabled, onToggle, onMult
       <ToggleSwitch value={block.enabled} onValueChange={onToggle} disabled={disabled} accessibilityLabel={copy.title} testID={`${testID}-toggle`} />
     </View>
     {block.enabled ? <>
-      <MultiplierStepper label={`${copy.title}: قوة الفلترة`} raw={block.multiplier} min={SIMPLIFIED_TUNING_FILTERS_MIN} disabled={disabled} onChange={onMultiplier} testID={`${testID}-multiplier`} />
+      <MultiplierStepper label={`${copy.title}: Filterkracht`} raw={block.multiplier} min={SIMPLIFIED_TUNING_FILTERS_MIN} disabled={disabled} onChange={onMultiplier} testID={`${testID}-multiplier`} />
       {lpf1 === undefined
         ? <Text style={styles.fieldNote} testID={`${testID}-zero`}>{SIMPLIFIED_ZERO_FILTER_NOTE}</Text>
-        : <Text style={styles.effectiveRange} testID={`${testID}-range`}>{`التردد الفعّال: ${lpf1}`}</Text>}
-      {generated.lpf2StaticHz > 0 ? <Text style={styles.fieldNote} testID={`${testID}-lpf2`}>{`المرحلة الثانية: ${formatEffectiveRange(generated.lpf2StaticHz, generated.lpf2StaticHz)}`}</Text> : null}
+        : <Text style={styles.effectiveRange} testID={`${testID}-range`}>{`${lpf1}`}</Text>}
+      {generated.lpf2StaticHz > 0 ? <Text style={styles.fieldNote} testID={`${testID}-lpf2`}>{`Stage twee: ${formatEffectiveRange(generated.lpf2StaticHz, generated.lpf2StaticHz)}`}</Text> : null}
     </> : null}
   </View>;
 }
@@ -653,7 +653,7 @@ export default function PidTuningScreen({sessionKey, active, onOpenMotors, onDir
     if (snapshot !== undefined) setDraft(createPidTuningDraft(snapshot));
     setSimplifiedPatch(EMPTY_PATCH); setPendingRatesType(undefined); retireStatus();
   }, [retireStatus, snapshot]);
-  const reload = useCallback(() => { const perform = () => setReloadToken(value => value + 1); if (!dirty) return perform(); Alert.alert('تجاهل تغييرات الضبط؟', 'ستُستبدل القيم الحالية بقراءة جديدة من متحكم الطيران.', [{text: 'إلغاء', style: 'cancel'}, {text: 'إعادة القراءة', style: 'destructive', onPress: perform}]); }, [dirty]);
+  const reload = useCallback(() => { const perform = () => setReloadToken(value => value + 1); if (!dirty) return perform(); Alert.alert("De veranderingen van de instellingen negeren?", "De huidige waarden worden vervangen door een nieuwe uitlezing uit de vluchtcontroller.", [{text: "Annuleren", style: 'cancel'}, {text: "Opnieuw uitlezen", style: 'destructive', onPress: perform}]); }, [dirty]);
 
   /* ---------------------------------------------------------------- */
   /* The save chain                                                    */
@@ -725,7 +725,7 @@ export default function PidTuningScreen({sessionKey, active, onOpenMotors, onDir
     }
 
     setDraft(createPidTuningDraft(base));
-    setStatus(last ?? {text: 'لا توجد تغييرات جديدة.', warning: false});
+    setStatus(last ?? {text: "Er zijn geen nieuwe veranderingen.", warning: false});
     setPhase(terminal ? 'ERROR' : 'READY');
   }, [saveBlockedBySession, blocked, controller, draft, pendingRatesType, ratesTypeDirty, retireStatus, sessionKey, simplifiedDirty, simplifiedPatch, snapshot]);
 
@@ -743,7 +743,7 @@ export default function PidTuningScreen({sessionKey, active, onOpenMotors, onDir
   const selectProfile = useCallback(async (kind: PidProfileKind, index: number) => {
     if (sessionKey === undefined || controller.selectProfile === undefined) return;
     if (dirty) {
-      Alert.alert('لديك تغييرات غير محفوظة', 'تبديل الملف سيستبدل كل ما هو معروض بقيم الملف الجديد، ولن تنتقل تعديلاتك معه. احفظ أولًا أو تجاهل التغييرات.', [{text: 'حسنًا', style: 'cancel'}]);
+      Alert.alert("U hebt niet-opgeslagen wijzigingen", "Het vervangen van het bestand vervangt alles wat weergegeven is door de nieuwe bestandswaarden, en uw wijzigingen zullen niet met hem worden verplaatst. Eerst bewaren of de veranderingen negeren.", [{text: "OK", style: 'cancel'}]);
       return;
     }
     setPhase('SAVING'); retireStatus();
@@ -777,7 +777,7 @@ export default function PidTuningScreen({sessionKey, active, onOpenMotors, onDir
    */
   const guardUnsaved = useCallback((): boolean => {
     if (!dirty) return true;
-    Alert.alert('لديك تغييرات غير محفوظة', 'هذه العملية تستبدل قيم الملف. احفظ أولًا أو تجاهل التغييرات.', [{text: 'حسنًا', style: 'cancel'}]);
+    Alert.alert("U hebt niet-opgeslagen wijzigingen", "Dit proces vervangt de waarden van het bestand. Eerst bewaren of de veranderingen negeren.", [{text: "OK", style: 'cancel'}]);
     return false;
   }, [dirty]);
 
@@ -827,7 +827,7 @@ export default function PidTuningScreen({sessionKey, active, onOpenMotors, onDir
     setPhase(outcome.kind === 'FAILED' || outcome.kind === 'SESSION_ENDED' ? 'ERROR' : 'READY');
   }, [controller, guardUnsaved, refreshProfileScoped, retireStatus, sessionKey]);
 
-  const loadingMessage = loadOutcome?.kind === 'REJECTED' ? blockMessage(loadOutcome.reason) : loadOutcome?.kind === 'FAILED' ? 'تعذرت قراءة إعدادات PID من متحكم الطيران.' : loadOutcome?.kind === 'SESSION_ENDED' ? 'انتهت جلسة الاتصال.' : undefined;
+  const loadingMessage = loadOutcome?.kind === 'REJECTED' ? blockMessage(loadOutcome.reason) : loadOutcome?.kind === 'FAILED' ? "De PID-instellingen konden niet uit de vluchtcontroller worden gelezen." : loadOutcome?.kind === 'SESSION_ENDED' ? "De verbindingssessie is beëindigd." : undefined;
   const gyroNyquist = snapshot?.gyroSampleRateHz === undefined ? undefined : snapshot.gyroSampleRateHz / 2;
   const pidNyquist = snapshot?.gyroSampleRateHz === undefined || snapshot.pidProcessDenom === undefined || snapshot.pidProcessDenom < 1 ? undefined : snapshot.gyroSampleRateHz / snapshot.pidProcessDenom / 2;
   const filtersEditable = gyroNyquist !== undefined && pidNyquist !== undefined;
@@ -836,9 +836,9 @@ export default function PidTuningScreen({sessionKey, active, onOpenMotors, onDir
   const overwrite = draftSimplified !== undefined && simplifiedDirty ? overwriteSummary(draftSimplified) : undefined;
   const axisSettings = (axis: RateAxisDraft): RateAxisSettings => ({rcRate: axis.rcRate, superRate: axis.superRate, expo: axis.expo, rateLimit: axis.limit});
   const dirtyScopes = [
-    ...(simplifiedDirty ? ['الضبط المبسّط'] : []),
-    ...(ratesTypeDirty ? ['خوارزمية Rates'] : []),
-    ...(valuesDirty ? ['القيم'] : []),
+    ...(simplifiedDirty ? ["Eenvoudige aanpassing."] : []),
+    ...(ratesTypeDirty ? ["Rates-algoritme"] : []),
+    ...(valuesDirty ? ["De waarden."] : []),
   ];
 
   const sliderRow = (slider: SimplifiedSliderCopy) => {
@@ -854,10 +854,10 @@ export default function PidTuningScreen({sessionKey, active, onOpenMotors, onDir
     {/* 1. WHAT THIS PAGE IS. One line, not a paragraph - the safety notice
         below carries the warning, and repeating it in the header would just
         push the first control further down. */}
-    <View style={styles.hero}><Text style={styles.title}>ضبط PID</Text><Text style={styles.subtitle}>اضبط قوة تصحيح المتحكم وسرعة استجابة الطائرة. لا يُرسل أي تعديل قبل إثبات أن المتحكم DISARMED، وتُقرأ كل كتابة مرة أخرى للتحقق.</Text></View>
+    <View style={styles.hero}><Text style={styles.title}>{"PID-afstelling"}</Text><Text style={styles.subtitle}>{"Stel de regelmogelijkheid en de snelheid van het vliegtuig aan. Geen aanpassing wordt verzonden voordat de controller DISARMED is bewezen, en elke tekst wordt opnieuw gelezen om te controleren."}</Text></View>
 
-    <NoticeBox variant="danger" title="تغيير الضبط قد يجعل الطائرة غير مستقرة" testID="pid-danger">
-      <Text style={styles.dangerText}>انزع المراوح أثناء الإعداد، وغيّر تدريجيًا، واحتفظ بنسخة من القيم الأصلية. نجاح أمر MSP لا يعني أن الضبط مناسب للطيران.</Text>
+    <NoticeBox variant="danger" title={"Het veranderen van de bediening kan het vliegtuig onstabiel maken."} testID="pid-danger">
+      <Text style={styles.dangerText}>{"Verwijder de propellers tijdens het instellen. Wijzig geleidelijk en bewaar de oorspronkelijke waarden. Een geslaagde MSP-opdracht bewijst niet dat de afstelling geschikt is om te vliegen."}</Text>
     </NoticeBox>
 
     {/* THE HARDWARE-VERIFICATION NOTICE STAYS AT PAGE LEVEL.
@@ -869,25 +869,25 @@ export default function PidTuningScreen({sessionKey, active, onOpenMotors, onDir
         page-level warning and is never folded away. */}
     <View style={styles.hardwareNotice} testID="pid-hardware-notice">
       <Text style={styles.hardwareTitle}>{t('hardwareVerification.behaviourTitle')}</Text>
-      <Text style={styles.hardwareText}>الترميز والقراءة الراجعة مختبران آليًا، لكن النتيجة الديناميكية لا يمكن اعتمادها دون Flight Controller وطائرة حقيقية واختبار متدرج آمن.</Text>
+      <Text style={styles.hardwareText}>{"Codering en teruglezen zijn in software getest. Het dynamische gedrag vereist een echte vluchtcontroller en een echt toestel, met een veilige, stapsgewijze praktijktest."}</Text>
     </View>
 
-    {loadingMessage !== undefined ? <View style={styles.warning} testID="pid-load-message"><Text style={styles.warningText}>{loadingMessage}</Text>{loadOutcome?.kind === 'REJECTED' && loadOutcome.reason === 'MOTOR_TEST_ACTIVE' ? <Button label="فتح شاشة المحركات" onPress={onOpenMotors} variant="secondary" icon="fan" style={styles.inlineAction} /> : <Button label="إعادة القراءة" onPress={reload} variant="secondary" icon="refresh-cw" style={styles.inlineAction} />}</View> : null}
+    {loadingMessage !== undefined ? <View style={styles.warning} testID="pid-load-message"><Text style={styles.warningText}>{loadingMessage}</Text>{loadOutcome?.kind === 'REJECTED' && loadOutcome.reason === 'MOTOR_TEST_ACTIVE' ? <Button label={"Motorscherm openen"} onPress={onOpenMotors} variant="secondary" icon="fan" style={styles.inlineAction} /> : <Button label={"Opnieuw uitlezen"} onPress={reload} variant="secondary" icon="refresh-cw" style={styles.inlineAction} />}</View> : null}
 
     {draft !== undefined ? <>
       {/* 2. WHO AM I TUNING. Two selectors that used to read `1 | 1`; each
           now carries what it governs and, when the board sends one, its
           name. */}
       <View style={styles.profileBadges}>
-        <ProfileSelector label="ملف PID" hint="يحكم قوة التصحيح والفلاتر" name={profileNames.pid} testID="pid-active-profile" count={snapshot?.pidProfileCount} active={snapshot?.pidProfileIndex} disabled={busy || controller.selectProfile === undefined} onSelect={index => selectProfile('PID', index)} />
-        <ProfileSelector label="ملف Rates" hint="يحكم سرعة الدوران واستجابة العصا" name={profileNames.rate} testID="pid-active-rates-profile" count={snapshot?.rateProfileCount} active={snapshot?.controlRateProfileIndex} disabled={busy || controller.selectProfile === undefined} onSelect={index => selectProfile('RATE', index)} />
+        <ProfileSelector label={"PID-profiel"} hint={"Hij regeert de correctie- en filterkracht."} name={profileNames.pid} testID="pid-active-profile" count={snapshot?.pidProfileCount} active={snapshot?.pidProfileIndex} disabled={busy || controller.selectProfile === undefined} onSelect={index => selectProfile('PID', index)} />
+        <ProfileSelector label={"Rateprofiel"} hint={"Hij bepaalt de snelheid en reactie van stick."} name={profileNames.rate} testID="pid-active-rates-profile" count={snapshot?.rateProfileCount} active={snapshot?.controlRateProfileIndex} disabled={busy || controller.selectProfile === undefined} onSelect={index => selectProfile('RATE', index)} />
       </View>
 
       {/* 3. THE MAIN WORKSPACE. */}
       <View style={styles.section} testID="pid-simplified">
-        <Text style={styles.sectionTitle}>الضبط المبسّط</Text>
+        <Text style={styles.sectionTitle}>{"Eenvoudige aanpassing."}</Text>
         <Text style={styles.sectionHint}>{SIMPLIFIED_SUMMARY}</Text>
-        <Disclosure label="كيف يعمل الضبط المبسّط؟" open={explanationOpen} onToggle={() => setExplanationOpen(value => !value)} testID="pid-simplified-explanation">
+        <Disclosure label={"Hoe werkt de vereenvoudigde reglementering?"} open={explanationOpen} onToggle={() => setExplanationOpen(value => !value)} testID="pid-simplified-explanation">
           <Text style={styles.bodyText}>{SIMPLIFIED_EXPLANATION}</Text>
         </Disclosure>
 
@@ -896,11 +896,11 @@ export default function PidTuningScreen({sessionKey, active, onOpenMotors, onDir
         {draftSimplified !== undefined && simplifiedMode !== undefined ? <>
           {simplifiedMode.known ? <>
             <ChoiceChips
-              options={[{key: 'OFF', label: 'موقوف'}, {key: 'RP', label: 'Roll + Pitch'}, {key: 'RPY', label: 'Roll + Pitch + Yaw'}]}
+              options={[{key: 'OFF', label: "Uit"}, {key: 'RP', label: 'Roll + Pitch'}, {key: 'RPY', label: 'Roll + Pitch + Yaw'}]}
               selectedKey={draftSimplified.pids.mode.kind === 'OFF' ? 'OFF' : draftSimplified.pids.mode.kind === 'RP' ? 'RP' : 'RPY'}
               onSelect={key => patchPids({modeRaw: key === 'OFF' ? 0 : key === 'RP' ? 1 : 2})}
               disabled={busy}
-              accessibilityLabel="المحاور التي يولّدها الضبط المبسّط"
+              accessibilityLabel={"De axes die door de vereenvoudigde aanpassing worden geproduceerd"}
               testID="pid-simplified-mode"
             />
             {draftSimplified.pids.mode.kind === 'OFF' && observedSimplified?.pids.mode.kind !== 'OFF'
@@ -908,12 +908,12 @@ export default function PidTuningScreen({sessionKey, active, onOpenMotors, onDir
               : null}
             {simplifiedGenerating ? <>
               {SIMPLIFIED_PRIMARY_SLIDERS.map(sliderRow)}
-              <Disclosure label="مؤثرات إضافية" open={moreSlidersOpen} onToggle={() => setMoreSlidersOpen(value => !value)} testID="pid-simplified-more">
+              <Disclosure label={"Extra effecten."} open={moreSlidersOpen} onToggle={() => setMoreSlidersOpen(value => !value)} testID="pid-simplified-more">
                 {SIMPLIFIED_MORE_SLIDERS.map(sliderRow)}
               </Disclosure>
             </> : null}
           </> : <NoticeBox variant="warning" title={simplifiedMode.label} testID="pid-simplified-unknown-mode">
-            <Text style={styles.warningText}>لا نعرف ما الذي يولّده هذا الوضع، فلن نعرضه كـ«موقوف» ولن نعدّله. استخدم الإعدادات المتقدمة أدناه.</Text>
+            <Text style={styles.warningText}>{"We weten niet wat de oorzaak is, dus we zullen het niet laten stoppen of corrigeren. Gebruik de onderstaande geavanceerde instellingen."}</Text>
           </NoticeBox>}
 
           {simplifiedMode.known ? <View style={[styles.filterGrid, wide && styles.filterGridWide]}>
@@ -922,8 +922,8 @@ export default function PidTuningScreen({sessionKey, active, onOpenMotors, onDir
           </View> : null}
 
           {overwrite !== undefined ? <View style={styles.overwrite} testID="pid-simplified-overwrite">
-            <Text style={styles.overwriteTitle}>{overwrite.categories.length === 0 ? 'سيغيّر الحفظ إعدادات الضبط المبسّط فقط.' : `سيعيد الحفظ حساب: ${overwrite.categories.join(' · ')}`}</Text>
-            {overwrite.fields.length === 0 ? null : <Disclosure label={`القيم التي ستُستبدل (${overwrite.fields.length})`} open={overwriteDetailOpen} onToggle={() => setOverwriteDetailOpen(value => !value)} testID="pid-simplified-overwrite-detail">
+            <Text style={styles.overwriteTitle}>{overwrite.categories.length === 0 ? "Het bewaren verandert alleen de vereenvoudigde instellingen." : `${overwrite.categories.join(' · ')} zal teruggezet worden.`}</Text>
+            {overwrite.fields.length === 0 ? null : <Disclosure label={`De waarden die ${overwrite.fields.length} vervangen.`} open={overwriteDetailOpen} onToggle={() => setOverwriteDetailOpen(value => !value)} testID="pid-simplified-overwrite-detail">
               <Text style={styles.overwriteFields}>{overwrite.fields.join(' · ')}</Text>
             </Disclosure>}
           </View> : null}
@@ -934,22 +934,22 @@ export default function PidTuningScreen({sessionKey, active, onOpenMotors, onDir
           nothing until the save bar is used, and the notice says plainly
           that the stored numbers are not converted. */}
       <View style={styles.section} testID="pid-rates">
-        <Text style={styles.sectionTitle}>سرعة الدوران (Rates)</Text>
-        <Text style={styles.sectionHint}>تحدّد كم درجة في الثانية تدور الطائرة عند دفع العصا بالكامل، وكيف تتوزع الاستجابة بين المركز والطرف.</Text>
+        <Text style={styles.sectionTitle}>{"Draaiingssnelheid (Rates)."}</Text>
+        <Text style={styles.sectionHint}>{"Bepaal hoeveel graden per seconde het vliegtuig draait wanneer het stick volledig wordt aangedreven, en hoe de reactie wordt verdeeld tussen het middelpunt en het punt."}</Text>
         <ChoiceChips
           options={[{key: '0', label: ratesTypeName(classifyRatesType(0))}, {key: '1', label: ratesTypeName(classifyRatesType(1))}, {key: '2', label: ratesTypeName(classifyRatesType(2))}, {key: '3', label: ratesTypeName(classifyRatesType(3))}, {key: '4', label: ratesTypeName(classifyRatesType(4))}]}
           selectedKey={effectiveRatesTypeRaw === undefined || effectiveRatesTypeRaw > 4 ? null : String(effectiveRatesTypeRaw)}
           onSelect={key => { setPendingRatesType(Number.parseInt(key, 10)); retireStatus(); }}
           disabled={busy || controller.setRatesType === undefined}
-          accessibilityLabel="خوارزمية Rates"
+          accessibilityLabel={"Rates-algoritme"}
           testID="pid-rates-type"
         />
-        {effectiveRatesType?.kind === 'UNKNOWN' ? <NoticeBox variant="warning" testID="pid-rates-type-unknown"><Text style={styles.warningText}>{`المتحكم يستخدم خوارزمية Rates لا نعرفها (${effectiveRatesType.raw}). لن نعدّل قيم Rates بمعادلة لا نملكها.`}</Text></NoticeBox> : null}
+        {effectiveRatesType?.kind === 'UNKNOWN' ? <NoticeBox variant="warning" testID="pid-rates-type-unknown"><Text style={styles.warningText}>{`De controller gebruikt een algoritme. Rates We kennen haar niet. ${effectiveRatesType.raw} ). We kunnen Rates niet aanpassen met een vergelijking die we niet hebben.`}</Text></NoticeBox> : null}
         {ratesTypeDirty ? <NoticeBox variant="warning" testID="pid-rates-type-pending">
-          <Text style={styles.warningText}>سيُكتب هذا التغيير عند الحفظ. الأرقام المخزّنة لا تُحوَّل: تبقى كما هي وتُفسَّر بالمعادلة الجديدة، فراجع القيم والمعاينة قبل الطيران.</Text>
+          <Text style={styles.warningText}>{"Deze wijziging wordt bij opslaan geschreven. De opgeslagen getallen worden niet omgerekend: ze blijven gelijk en worden met de nieuwe formule geïnterpreteerd. Controleer de waarden en het voorbeeld vóór de vlucht."}</Text>
         </NoticeBox> : null}
         {pendingRangeIssue ? <NoticeBox variant="danger" testID="pid-rates-range-issue">
-          <Text style={styles.dangerText}>إحدى القيم الحالية خارج حدود الخوارزمية المختارة. صحّحها أولًا؛ لن نغيّرها نيابةً عنك.</Text>
+          <Text style={styles.dangerText}>{"Een van de huidige waarden is buiten de grenzen van het gekozen algoritme. Eerst corrigeren. We veranderen het niet voor jou."}</Text>
         </NoticeBox> : null}
 
         {ratePresentation !== undefined ? <View style={[styles.axisGrid, wide && styles.axisGridWide]}>{AXES.map(axis => <RateAxisCard key={axis.key} axisKey={axis.key} title={axis.title} value={draft.rates[axis.key]} presentation={ratePresentation} disabled={busy} update={updateRate} />)}</View> : null}
@@ -970,21 +970,21 @@ export default function PidTuningScreen({sessionKey, active, onOpenMotors, onDir
         /> : null}
       </View>
 
-      {issues.length > 0 ? <NoticeBox variant="danger" title="راجع القيم قبل الحفظ" testID="pid-issues"><Text style={styles.dangerText}>{issues.map(issueMessage).join(' · ')}</Text></NoticeBox> : null}
+      {issues.length > 0 ? <NoticeBox variant="danger" title={"Controleer de waarden voordat u opslaat"} testID="pid-issues"><Text style={styles.dangerText}>{issues.map(issueMessage).join(' · ')}</Text></NoticeBox> : null}
       {/* A terminal failure freezes every control until the values are read
           again - so the way OUT of that state has to be on the page. Without
           it the pilot is left with a disabled screen and no next step. */}
       {status !== undefined ? <NoticeBox variant={status.warning ? 'warning' : 'success'} testID="pid-status">
         <Text style={status.warning ? styles.warningText : styles.successText}>{status.text}</Text>
-        {phase === 'ERROR' ? <Button label="إعادة القراءة" onPress={reload} variant="secondary" icon="refresh-cw" style={styles.inlineAction} testID="pid-status-reload" /> : null}
+        {phase === 'ERROR' ? <Button label={"Opnieuw uitlezen"} onPress={reload} variant="secondary" icon="refresh-cw" style={styles.inlineAction} testID="pid-status-reload" /> : null}
       </NoticeBox> : null}
 
       {/* 6. EVERYTHING ELSE. Nothing here was removed when the page was
           reorganised; it simply stopped being the first thing a beginner
           meets. */}
-      <Disclosure label="الإعدادات المتقدمة" open={advancedOpen} onToggle={() => setAdvancedChoice(!advancedOpen)} tone="card" testID="pid-advanced">
-        <View style={styles.sectionHeading}><Text style={styles.sectionTitle}>المعاملات الأساسية</Text><Text style={styles.sectionHint}>P للتصحيح الحالي، I للخطأ المتراكم، D لتخميد التغير، وF لتتبع الأمر. الحدود من البرنامج الثابت 2025.12.2.</Text></View>
-        {simplifiedGenerating ? <NoticeBox variant="info" testID="pid-generator-owns"><Text style={styles.bodyText}>الضبط المبسّط نشط ويولّد بعض هذه القيم؛ الحقول التي يملكها معطّلة هنا لأن تعديلها سيُلغى عند الحفظ.</Text></NoticeBox> : null}
+      <Disclosure label={"Geavanceerde instellingen."} open={advancedOpen} onToggle={() => setAdvancedChoice(!advancedOpen)} tone="card" testID="pid-advanced">
+        <View style={styles.sectionHeading}><Text style={styles.sectionTitle}>{"Eerste transacties"}</Text><Text style={styles.sectionHint}>{"P voor de huidige correctie, I voor de accumulatie van fouten, D voor het aanpassen van veranderingen en F voor het volgen. De grenzen van firmware 2025.12.2."}</Text></View>
+        {simplifiedGenerating ? <NoticeBox variant="info" testID="pid-generator-owns"><Text style={styles.bodyText}>{"Simplified Adjustment is actief en genereert sommige van deze waarden; De velden die hij heeft zijn hier geblokkeerd, omdat de aanpassing bij behoud wordt ingetrokken."}</Text></NoticeBox> : null}
         <View style={[styles.axisGrid, wide && styles.axisGridWide]}>{AXES.map(axis => <AxisCard key={axis.key} axisKey={axis.key} title={axis.title} subtitle={axis.subtitle} value={draft[axis.key]} disabled={busy} ownedFields={ownedDirectFields} update={update} />)}</View>
 
         {/* THE FEEL CARD. These three bytes are what the official presets
@@ -992,29 +992,29 @@ export default function PidTuningScreen({sessionKey, active, onOpenMotors, onDir
             a race quad - not the P/I/D gains above. Grouped and labelled by
             EFFECT, because "feedforward jitter factor" means nothing to a
             pilot deciding how smooth they want the sticks to feel. */}
-        <View style={styles.card} testID="pid-feel"><Text style={styles.sectionTitle}>إحساس العصا</Text><Text style={styles.sectionHint}>تتحكم في نعومة الاستجابة لا في قوتها. ارفع التنعيم للتصوير، واخفضه للسباق.</Text><View style={styles.fieldsRow}><NumericField label="تجاهل ارتجاف العصا" value={draft.feedforwardJitterFactor} max={FEEDFORWARD_JITTER_FACTOR_MAX} disabled={busy} onChange={next => updateFeel('feedforwardJitterFactor', next)} testID="pid-ff-jitter" /><NumericField label="دفعة الاستجابة" value={draft.feedforwardBoost} max={FEEDFORWARD_BOOST_MAX} disabled={busy} onChange={next => updateFeel('feedforwardBoost', next)} testID="pid-ff-boost" /></View><View style={styles.choiceRow}>{[{value: 0, label: 'بلا تنعيم'}, {value: 1, label: 'نقطتان'}, {value: 2, label: '3 نقاط'}, {value: 3, label: '4 نقاط'}].map(option => <Pressable key={option.value} disabled={busy} onPress={() => updateFeel('feedforwardAveraging', option.value)} style={[styles.choice, draft.feedforwardAveraging === option.value && styles.choiceSelected]} testID={`pid-ff-averaging-${option.value}`} accessibilityState={{selected: draft.feedforwardAveraging === option.value}}><Text style={[styles.choiceText, draft.feedforwardAveraging === option.value && styles.choiceTextSelected]}>{option.label}</Text></Pressable>)}</View></View>
+        <View style={styles.card} testID="pid-feel"><Text style={styles.sectionTitle}>{"Stickrespons"}</Text><Text style={styles.sectionHint}>{"Bepaalt hoe vloeiend de respons is. Gebruik meer filtering voor filmen en minder voor racen."}</Text><View style={styles.fieldsRow}><NumericField label={"Sticktrillingen negeren"} value={draft.feedforwardJitterFactor} max={FEEDFORWARD_JITTER_FACTOR_MAX} disabled={busy} onChange={next => updateFeel('feedforwardJitterFactor', next)} testID="pid-ff-jitter" /><NumericField label={"Feedforward Boost"} value={draft.feedforwardBoost} max={FEEDFORWARD_BOOST_MAX} disabled={busy} onChange={next => updateFeel('feedforwardBoost', next)} testID="pid-ff-boost" /></View><View style={styles.choiceRow}>{[{value: 0, label: "Geen middeling"}, {value: 1, label: "Twee punten."}, {value: 2, label: "3 punten"}, {value: 3, label: "4 punten"}].map(option => <Pressable key={option.value} disabled={busy} onPress={() => updateFeel('feedforwardAveraging', option.value)} style={[styles.choice, draft.feedforwardAveraging === option.value && styles.choiceSelected]} testID={`pid-ff-averaging-${option.value}`} accessibilityState={{selected: draft.feedforwardAveraging === option.value}}><Text style={[styles.choiceText, draft.feedforwardAveraging === option.value && styles.choiceTextSelected]}>{option.label}</Text></Pressable>)}</View></View>
 
-        <View style={styles.card} testID="pid-throttle-rates"><Text style={styles.sectionTitle}>منحنى وحدّ الخانق</Text><Text style={styles.sectionHint}>القيم نسب مئوية كما يخزّنها متحكم الطيران. تغيير حد الخانق قد يقلل الدفع الأقصى.</Text><View style={styles.fieldsRow}><NumericField label="Throttle mid %" value={draft.rates.throttleMid} max={100} disabled={busy} onChange={next => updateThrottle('throttleMid', next)} testID="pid-throttle-mid" /><NumericField label="Throttle expo %" value={draft.rates.throttleExpo} max={100} disabled={busy} onChange={next => updateThrottle('throttleExpo', next)} testID="pid-throttle-expo" /><NumericField label="Hover %" value={draft.rates.throttleHover} max={100} disabled={busy} onChange={next => updateThrottle('throttleHover', next)} testID="pid-throttle-hover" /><NumericField label="Limit %" value={draft.rates.throttleLimitPercent} min={25} max={100} disabled={busy} onChange={next => updateThrottle('throttleLimitPercent', next)} testID="pid-throttle-limit-percent" /></View><View style={styles.choiceRow}>{[{value: 0, label: 'إيقاف'}, {value: 1, label: 'Scale'}, {value: 2, label: 'Clip'}].map(option => <Pressable accessibilityRole="radio" accessibilityState={{selected: draft.rates.throttleLimitType === option.value}} key={option.value} disabled={busy} onPress={() => updateThrottle('throttleLimitType', option.value)} style={[styles.choice, draft.rates.throttleLimitType === option.value && styles.choiceSelected]} testID={`pid-throttle-limit-${option.value}`}><Text style={[styles.choiceText, draft.rates.throttleLimitType === option.value && styles.choiceTextSelected]}>{option.label}</Text></Pressable>)}</View></View>
+        <View style={styles.card} testID="pid-throttle-rates"><Text style={styles.sectionTitle}>{"Eenvoudige gas-curve."}</Text><Text style={styles.sectionHint}>{"Waarden zijn percentages zoals opgeslagen door vluchtcontroller. Verandering van de gas limiet kan de maximale druk verminderen."}</Text><View style={styles.fieldsRow}><NumericField label="Throttle mid %" value={draft.rates.throttleMid} max={100} disabled={busy} onChange={next => updateThrottle('throttleMid', next)} testID="pid-throttle-mid" /><NumericField label="Throttle expo %" value={draft.rates.throttleExpo} max={100} disabled={busy} onChange={next => updateThrottle('throttleExpo', next)} testID="pid-throttle-expo" /><NumericField label="Hover %" value={draft.rates.throttleHover} max={100} disabled={busy} onChange={next => updateThrottle('throttleHover', next)} testID="pid-throttle-hover" /><NumericField label="Limit %" value={draft.rates.throttleLimitPercent} min={25} max={100} disabled={busy} onChange={next => updateThrottle('throttleLimitPercent', next)} testID="pid-throttle-limit-percent" /></View><View style={styles.choiceRow}>{[{value: 0, label: "Stoppen"}, {value: 1, label: 'Scale'}, {value: 2, label: 'Clip'}].map(option => <Pressable accessibilityRole="radio" accessibilityState={{selected: draft.rates.throttleLimitType === option.value}} key={option.value} disabled={busy} onPress={() => updateThrottle('throttleLimitType', option.value)} style={[styles.choice, draft.rates.throttleLimitType === option.value && styles.choiceSelected]} testID={`pid-throttle-limit-${option.value}`}><Text style={[styles.choiceText, draft.rates.throttleLimitType === option.value && styles.choiceTextSelected]}>{option.label}</Text></Pressable>)}</View></View>
 
         {/* DYNAMIC IDLE lives on this page because the value rides in
             MSP_PID_ADVANCED, whose sole writer in this app is this screen's
             transaction. Editing it anywhere else would mean two writers for
             one payload and a way to clobber tuning. */}
-        <View style={styles.card} testID="pid-dynamic-idle"><Text style={styles.sectionTitle}>Dynamic Idle</Text><Text style={styles.sectionHint}>أدنى دوران يحافظ عليه المتحكم بوحدة 100 دورة/دقيقة. يتطلب تفعيل Bidirectional DShot من شاشة المحركات؛ بدون قياس RPM لا يملك المتحكم قراءة يحافظ عليها. القيمة 0 تعني تعطيل الميزة.</Text><View style={styles.fieldsRow}><NumericField label="Dynamic Idle (×100 rpm)" value={draft.idleMinRpm} min={0} max={200} disabled={busy} onChange={next => setDraft(current => current === undefined ? current : {...current, idleMinRpm: next})} testID="pid-idle-min-rpm" /></View></View>
+        <View style={styles.card} testID="pid-dynamic-idle"><Text style={styles.sectionTitle}>Dynamic Idle</Text><Text style={styles.sectionHint}>{"Minimale rotatie wordt gehandhaafd door de 100 controller. Bidirectional DShot moet worden geactiveerd vanaf het motoren-scherm; RPM zonder meting heeft de controller geen leesbehoud. De 0-waarde betekent de functie is uitgeschakeld."}</Text><View style={styles.fieldsRow}><NumericField label="Dynamic Idle (×100 rpm)" value={draft.idleMinRpm} min={0} max={200} disabled={busy} onChange={next => setDraft(current => current === undefined ? current : {...current, idleMinRpm: next})} testID="pid-idle-min-rpm" /></View></View>
 
-        <View style={styles.sectionHeading}><Text style={styles.sectionTitle}>Filters</Text><Text style={styles.sectionHint}>تُعدّل فقط أوضاع الفلاتر النشطة التي أثبتتها القراءة. لا يفعّل التطبيق ميزة غير مثبتة في بناء الـFC ولا يغيّر نوع الفلتر.</Text></View>
-        {!filtersEditable ? <View style={styles.warning}><Text style={styles.warningText}>تعذرت معرفة Gyro/PID loop rate؛ الفلاتر معروضة للقراءة فقط ولن يُسمح بكتابتها دون حد Nyquist موثوق.</Text></View> : <View style={styles.rateEvidence}><Text style={styles.readout}>Gyro Nyquist: {gyroNyquist} Hz</Text><Text style={styles.readout}>D-term Nyquist: {pidNyquist} Hz</Text></View>}
+        <View style={styles.sectionHeading}><Text style={styles.sectionTitle}>Filters</Text><Text style={styles.sectionHint}>{"Alleen de actieve filters die door het lezen zijn aangetoond worden aangepast. De app activeert geen ongemonteerde functie in de FC-constructie en verandert het filtertype niet."}</Text></View>
+        {!filtersEditable ? <View style={styles.warning}><Text style={styles.warningText}>{"Gyro/PID loop rate. De filters zijn alleen te lezen en mogen niet worden geschreven zonder een betrouwbare Nyquist."}</Text></View> : <View style={styles.rateEvidence}><Text style={styles.readout}>Gyro Nyquist: {gyroNyquist} Hz</Text><Text style={styles.readout}>D-term Nyquist: {pidNyquist} Hz</Text></View>}
         <View style={[styles.readOnlyGrid, wide && styles.readOnlyGridWide]}>
-          <View style={[styles.card, wide && styles.cardInRow]} testID="pid-gyro-filter"><Text style={styles.sectionTitle}>Gyro LPF1</Text>{snapshot?.filterConfig.gyroLpf1DynamicMinHz !== undefined && snapshot.filterConfig.gyroLpf1DynamicMinHz > 0 ? <><Text style={styles.sectionHint}>الوضع الديناميكي مثبت من القراءة؛ Min يجب أن يبقى أصغر من Max وحد Nyquist.</Text><View style={styles.fieldsRow}><NumericField label="Dynamic min Hz" value={draft.filters.gyroLpf1DynamicMinHz} min={1} max={1000} disabled={busy || !filtersEditable} onChange={next => updateFilter('gyroLpf1DynamicMinHz', next)} testID="pid-gyro-dynamic-min" /><NumericField label="Dynamic max Hz" value={draft.filters.gyroLpf1DynamicMaxHz} min={1} max={1000} disabled={busy || !filtersEditable} onChange={next => updateFilter('gyroLpf1DynamicMaxHz', next)} testID="pid-gyro-dynamic-max" /></View></> : <><Text style={styles.sectionHint}>الوضع الثابت مثبت من القراءة؛ 0 يعطّل LPF1.</Text><NumericField label="Static cutoff Hz" value={draft.filters.gyroLpf1StaticHz} max={1000} disabled={busy || !filtersEditable} onChange={next => updateFilter('gyroLpf1StaticHz', next)} testID="pid-gyro-static" /></>}</View>
-          <View style={[styles.card, wide && styles.cardInRow]} testID="pid-dterm-filter"><Text style={styles.sectionTitle}>D-term LPF1</Text>{snapshot?.filterConfig.dtermLpf1DynamicMinHz !== undefined && snapshot.filterConfig.dtermLpf1DynamicMinHz > 0 ? <><Text style={styles.sectionHint}>الوضع الديناميكي مثبت من القراءة؛ يحكمه PID loop Nyquist.</Text><View style={styles.fieldsRow}><NumericField label="Dynamic min Hz" value={draft.filters.dtermLpf1DynamicMinHz} min={1} max={1000} disabled={busy || !filtersEditable} onChange={next => updateFilter('dtermLpf1DynamicMinHz', next)} testID="pid-dterm-dynamic-min" /><NumericField label="Dynamic max Hz" value={draft.filters.dtermLpf1DynamicMaxHz} min={1} max={1000} disabled={busy || !filtersEditable} onChange={next => updateFilter('dtermLpf1DynamicMaxHz', next)} testID="pid-dterm-dynamic-max" /></View></> : <><Text style={styles.sectionHint}>الوضع الثابت مثبت من القراءة؛ 0 يعطّل LPF1.</Text><NumericField label="Static cutoff Hz" value={draft.filters.dtermLpf1StaticHz} max={1000} disabled={busy || !filtersEditable} onChange={next => updateFilter('dtermLpf1StaticHz', next)} testID="pid-dterm-static" /></>}</View>
+          <View style={[styles.card, wide && styles.cardInRow]} testID="pid-gyro-filter"><Text style={styles.sectionTitle}>Gyro LPF1</Text>{snapshot?.filterConfig.gyroLpf1DynamicMinHz !== undefined && snapshot.filterConfig.gyroLpf1DynamicMinHz > 0 ? <><Text style={styles.sectionHint}>{"De dynamische status is bevestigd door het lezen; Min moet kleiner blijven dan Max en Nyquist.."}</Text><View style={styles.fieldsRow}><NumericField label="Dynamic min Hz" value={draft.filters.gyroLpf1DynamicMinHz} min={1} max={1000} disabled={busy || !filtersEditable} onChange={next => updateFilter('gyroLpf1DynamicMinHz', next)} testID="pid-gyro-dynamic-min" /><NumericField label="Dynamic max Hz" value={draft.filters.gyroLpf1DynamicMaxHz} min={1} max={1000} disabled={busy || !filtersEditable} onChange={next => updateFilter('gyroLpf1DynamicMaxHz', next)} testID="pid-gyro-dynamic-max" /></View></> : <><Text style={styles.sectionHint}>{"De vaste positie is bevestigd door het lezen; 0 Hij is kapot. LPF1."}</Text><NumericField label="Static cutoff Hz" value={draft.filters.gyroLpf1StaticHz} max={1000} disabled={busy || !filtersEditable} onChange={next => updateFilter('gyroLpf1StaticHz', next)} testID="pid-gyro-static" /></>}</View>
+          <View style={[styles.card, wide && styles.cardInRow]} testID="pid-dterm-filter"><Text style={styles.sectionTitle}>D-term LPF1</Text>{snapshot?.filterConfig.dtermLpf1DynamicMinHz !== undefined && snapshot.filterConfig.dtermLpf1DynamicMinHz > 0 ? <><Text style={styles.sectionHint}>{"De dynamische status is bevestigd door het lezen; Hij wordt geregeerd door PID loop Nyquist."}</Text><View style={styles.fieldsRow}><NumericField label="Dynamic min Hz" value={draft.filters.dtermLpf1DynamicMinHz} min={1} max={1000} disabled={busy || !filtersEditable} onChange={next => updateFilter('dtermLpf1DynamicMinHz', next)} testID="pid-dterm-dynamic-min" /><NumericField label="Dynamic max Hz" value={draft.filters.dtermLpf1DynamicMaxHz} min={1} max={1000} disabled={busy || !filtersEditable} onChange={next => updateFilter('dtermLpf1DynamicMaxHz', next)} testID="pid-dterm-dynamic-max" /></View></> : <><Text style={styles.sectionHint}>{"De vaste positie is bevestigd door het lezen; 0 Hij is kapot. LPF1."}</Text><NumericField label="Static cutoff Hz" value={draft.filters.dtermLpf1StaticHz} max={1000} disabled={busy || !filtersEditable} onChange={next => updateFilter('dtermLpf1StaticHz', next)} testID="pid-dterm-static" /></>}</View>
         </View>
-        <View style={styles.card} testID="pid-dynamic-notch"><Text style={styles.sectionTitle}>Dynamic Notch</Text>{snapshot?.filterConfig.dynamicNotchCount !== undefined && snapshot.filterConfig.dynamicNotchCount > 0 ? <><Text style={styles.sectionHint}>الميزة نشطة ومثبتة من القراءة. لا تسمح هذه المرحلة بتعطيلها أو تفعيلها على بناء لم يثبت دعمه.</Text><View style={styles.fieldsRow}><NumericField label="عدد الفلاتر" value={draft.filters.dynamicNotchCount} min={1} max={7} disabled={busy || !filtersEditable} onChange={next => updateFilter('dynamicNotchCount', next)} testID="pid-notch-count" /><NumericField label="Q ×100" value={draft.filters.dynamicNotchQ} min={1} max={1000} disabled={busy || !filtersEditable} onChange={next => updateFilter('dynamicNotchQ', next)} testID="pid-notch-q" /><NumericField label="Min Hz" value={draft.filters.dynamicNotchMinHz} min={20} max={250} disabled={busy || !filtersEditable} onChange={next => updateFilter('dynamicNotchMinHz', next)} testID="pid-notch-min" /><NumericField label="Max Hz" value={draft.filters.dynamicNotchMaxHz} min={200} max={1000} disabled={busy || !filtersEditable} onChange={next => updateFilter('dynamicNotchMaxHz', next)} testID="pid-notch-max" /></View></> : <Text style={styles.sectionHint}>القراءة الحالية لا تثبت أن Dynamic Notch نشط؛ لذلك لن نخمن دعم البناء أو نرسِل قيم تفعيل.</Text>}</View>
+        <View style={styles.card} testID="pid-dynamic-notch"><Text style={styles.sectionTitle}>Dynamic Notch</Text>{snapshot?.filterConfig.dynamicNotchCount !== undefined && snapshot.filterConfig.dynamicNotchCount > 0 ? <><Text style={styles.sectionHint}>{"De functie is actief en bevestigd door het lezen. Laat deze fase het niet uitschakelen of activeren op een constructie die niet is aangetoond."}</Text><View style={styles.fieldsRow}><NumericField label={"Het aantal filters."} value={draft.filters.dynamicNotchCount} min={1} max={7} disabled={busy || !filtersEditable} onChange={next => updateFilter('dynamicNotchCount', next)} testID="pid-notch-count" /><NumericField label="Q ×100" value={draft.filters.dynamicNotchQ} min={1} max={1000} disabled={busy || !filtersEditable} onChange={next => updateFilter('dynamicNotchQ', next)} testID="pid-notch-q" /><NumericField label="Min Hz" value={draft.filters.dynamicNotchMinHz} min={20} max={250} disabled={busy || !filtersEditable} onChange={next => updateFilter('dynamicNotchMinHz', next)} testID="pid-notch-min" /><NumericField label="Max Hz" value={draft.filters.dynamicNotchMaxHz} min={200} max={1000} disabled={busy || !filtersEditable} onChange={next => updateFilter('dynamicNotchMaxHz', next)} testID="pid-notch-max" /></View></> : <Text style={styles.sectionHint}>{"De huidige lezing bewijst niet dat Dynamic Notch actief is; Dus we zullen geen constructieondersteuning voorspellen of activatiewaarden sturen."}</Text>}</View>
 
         {/* THE EXPERT TIER. Grouped and folded rather than poured onto the
             page: opening «الإعدادات المتقدمة» must not drop forty controls
             into a phone screen (§29). Two balanced columns once the
             viewport can carry them (§27). */}
-        <View style={styles.sectionHeading}><Text style={styles.sectionTitle}>إعدادات الخبراء</Text><Text style={styles.sectionHint}>مجموعات مطويّة، كل واحدة تذكر نطاقها: ما يخصّ هذا الملف وما هو مشترك بين كل الملفات.</Text></View>
+        <View style={styles.sectionHeading}><Text style={styles.sectionTitle}>{"De expertinstellingen"}</Text><Text style={styles.sectionHint}>{"Gekoppelde groepen, elk met zijn domein in herinnering: wat dit bestand betreft en wat alle bestanden gemeen hebben."}</Text></View>
         <AdvancedTuningGroups
           advanced={draft.advanced}
           filters={draft.advancedFilters}
@@ -1051,38 +1051,38 @@ export default function PidTuningScreen({sessionKey, active, onOpenMotors, onDir
           onReset={() => { resetProfile().catch(() => undefined); }}
         />
       </Disclosure>
-    </> : phase === 'LOADING' ? <Text style={styles.loading}>جارٍ قراءة الضبط من متحكم الطيران…</Text> : null}<View style={styles.bottomSpace} />
+    </> : phase === 'LOADING' ? <Text style={styles.loading}>{"De vluchtcontroller is aan het lezen."}</Text> : null}<View style={styles.bottomSpace} />
   </ScrollView>
   {/* 5. COMMIT. The bar names the scopes that changed, so a pilot who edited
       one thing is not told "الإعدادات تغيّرت" and left to guess which. */}
-  <StickyActionBar visible={dirty} summary={dirtyScopes.length === 0 ? 'تغيّرت إعدادات الضبط' : `تغيّر: ${dirtyScopes.join(' · ')}`} details={['تُكتب المجموعات المتغيرة فقط، بالترتيب: خوارزمية Rates ثم القيم ثم الضبط المبسّط، وتُقرأ كل خطوة للتحقق']} saveLabel="حفظ والتحقق" discardLabel="تجاهل" onSave={save} onDiscard={discard} disabledReason={saveBlockedBySession ? blockMessage('SESSION_CHANGED') : blocked ? 'صحح القيم أو حدود Nyquist أولًا.' : undefined} statusMessage={status?.text} statusTone={status?.warning ? 'warning' : 'normal'} busy={phase === 'SAVING'} busyLabel="جارٍ حفظ إعدادات الضبط…" testID="pid-save-bar" /></View>;
+  <StickyActionBar visible={dirty} summary={dirtyScopes.length === 0 ? "De instellingen zijn veranderd." : `Verander: ${dirtyScopes.join(' · ')}`} details={["Je schrijft alleen de veranderlijke groepen in volgorde: Rates-algorithme, dan waarden, dan vereenvoudigde instellingen, en je leest elke stap om te controleren."]} saveLabel={"Bewaar en controleren"} discardLabel={"Verwerpen"} onSave={save} onDiscard={discard} disabledReason={saveBlockedBySession ? blockMessage('SESSION_CHANGED') : blocked ? "Nyquist-waarden of -grenzen eerst corrigeren." : undefined} statusMessage={status?.text} statusTone={status?.warning ? 'warning' : 'normal'} busy={phase === 'SAVING'} busyLabel={"Afstelinstellingen opslaan…"} testID="pid-save-bar" /></View>;
 }
 
 const styles = StyleSheet.create({
   root: {flex: 1, backgroundColor: colors.background},
   content: {width: '100%', alignSelf: 'center', padding: spacing.lg, gap: spacing.md},
   hero: {gap: 4},
-  title: {...typography.title, color: colors.textPrimary, textAlign: 'right'},
-  subtitle: {...typography.body, color: colors.textSecondary, textAlign: 'right', writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+  title: {...typography.title, color: colors.textPrimary, textAlign: 'left'},
+  subtitle: {...typography.body, color: colors.textSecondary, textAlign: 'left', writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   profileBadges: {flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm},
   profileBadge: {flexGrow: 1, flexBasis: 240, borderWidth: 1, borderColor: colors.accentStrong, backgroundColor: colors.accentSoft, borderRadius: radii.lg, padding: spacing.md, gap: 4},
-  profileLabel: {...typography.label, color: colors.accentText, textAlign: 'right'},
-  profileName: {...typography.caption, color: colors.textPrimary, textAlign: 'right'},
-  profileHint: {...typography.caption, color: colors.textMuted, textAlign: 'right', maxWidth: PROSE_MEASURE},
-  profileValue: {...typography.heading, color: colors.accentStrong, textAlign: 'right'},
+  profileLabel: {...typography.label, color: colors.accentText, textAlign: 'left'},
+  profileName: {...typography.caption, color: colors.textPrimary, textAlign: 'left'},
+  profileHint: {...typography.caption, color: colors.textMuted, textAlign: 'left', maxWidth: PROSE_MEASURE},
+  profileValue: {...typography.heading, color: colors.accentStrong, textAlign: 'left'},
   profileChoice: {minHeight: 44, minWidth: 44, alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: colors.borderStrong, borderRadius: radii.md, backgroundColor: colors.backgroundRaised, paddingHorizontal: spacing.sm},
   section: {gap: spacing.sm},
   sectionHeading: {gap: 3},
-  sectionTitle: {...typography.heading, color: colors.textPrimary, textAlign: 'right'},
-  sectionHint: {...typography.caption, color: colors.textMuted, textAlign: 'right', writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
-  bodyText: {...typography.body, color: colors.textSecondary, textAlign: 'right', writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+  sectionTitle: {...typography.heading, color: colors.textPrimary, textAlign: 'left'},
+  sectionHint: {...typography.caption, color: colors.textMuted, textAlign: 'left', writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
+  bodyText: {...typography.body, color: colors.textSecondary, textAlign: 'left', writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   hardwareNotice: {borderRadius: radii.md, borderWidth: 1, borderColor: colors.accentStrong, backgroundColor: colors.accentSoft, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, gap: 2},
-  hardwareTitle: {...typography.eyebrow, color: colors.accentStrong, textAlign: 'right'},
-  hardwareText: {...typography.caption, color: colors.accentText, textAlign: 'right', writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
-  dangerText: {...typography.body, color: colors.error, textAlign: 'right', writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+  hardwareTitle: {...typography.eyebrow, color: colors.accentStrong, textAlign: 'left'},
+  hardwareText: {...typography.caption, color: colors.accentText, textAlign: 'left', writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
+  dangerText: {...typography.body, color: colors.error, textAlign: 'left', writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   disclosureCard: {backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: radii.lg, paddingHorizontal: spacing.md},
   disclosureHeader: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.sm, minHeight: 44},
-  disclosureLabel: {...typography.label, color: colors.accentStrong, textAlign: 'right', flexShrink: 1},
+  disclosureLabel: {...typography.label, color: colors.accentStrong, textAlign: 'left', flexShrink: 1},
   disclosureBody: {gap: spacing.md, paddingBottom: spacing.md},
   sliderRow: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.md, flexWrap: 'wrap', borderRadius: radii.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, padding: spacing.md},
   sliderCopy: {flexGrow: 1, flexBasis: 200, gap: 2},
@@ -1091,19 +1091,19 @@ const styles = StyleSheet.create({
   filterCard: {flex: 1, gap: spacing.sm, borderRadius: radii.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, padding: spacing.md},
   filterHead: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.md},
   filterCopy: {flexShrink: 1, gap: 2},
-  effectiveRange: {...typography.label, color: colors.accentStrong, textAlign: 'right', fontVariant: ['tabular-nums']},
+  effectiveRange: {...typography.label, color: colors.accentStrong, textAlign: 'left', fontVariant: ['tabular-nums']},
   overwrite: {borderRadius: radii.md, borderWidth: 1, borderColor: colors.warning, backgroundColor: colors.warningSoft, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, gap: 2},
-  overwriteTitle: {...typography.label, color: colors.warning, textAlign: 'right', writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+  overwriteTitle: {...typography.label, color: colors.warning, textAlign: 'left', writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   overwriteFields: {...typography.caption, color: colors.warning, textAlign: 'right', writingDirection: 'ltr'},
   axisGrid: {gap: spacing.md},
   axisGridWide: {flexDirection: 'row'},
   axisCard: {flex: 1, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: radii.lg, padding: spacing.lg, gap: spacing.md},
-  axisTitle: {...typography.title, color: colors.accentStrong, textAlign: 'right'},
-  axisSubtitle: {...typography.caption, color: colors.textMuted, textAlign: 'right', maxWidth: PROSE_MEASURE},
+  axisTitle: {...typography.title, color: colors.accentStrong, textAlign: 'left'},
+  axisSubtitle: {...typography.caption, color: colors.textMuted, textAlign: 'left', maxWidth: PROSE_MEASURE},
   fieldsRow: {flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm},
   numericField: {flexGrow: 1, flexBasis: 156, minWidth: 156, gap: 5},
-  fieldLabel: {...typography.label, color: colors.textPrimary, textAlign: 'right'},
-  fieldNote: {...typography.caption, color: colors.textMuted, textAlign: 'right', writingDirection: 'rtl'},
+  fieldLabel: {...typography.label, color: colors.textPrimary, textAlign: 'left'},
+  fieldNote: {...typography.caption, color: colors.textMuted, textAlign: 'left', writingDirection: 'ltr'},
   /* A range is left-to-right by nature. It is ONE string node here for the
      same reason: as three nodes inside a right-to-left box the parts laid
      out right to left and "0 - 200" painted as "200 - 0". */
@@ -1123,7 +1123,7 @@ const styles = StyleSheet.create({
    */
   card: {backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: radii.lg, padding: spacing.lg, gap: spacing.sm},
   cardInRow: {flex: 1},
-  readout: {...typography.body, color: colors.textSecondary, textAlign: 'right', fontVariant: ['tabular-nums'], maxWidth: PROSE_MEASURE},
+  readout: {...typography.body, color: colors.textSecondary, textAlign: 'left', fontVariant: ['tabular-nums'], maxWidth: PROSE_MEASURE},
   choiceRow: {flexDirection: 'row', gap: spacing.sm, flexWrap: 'wrap'},
   choice: {minHeight: 44, minWidth: 88, alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: colors.borderStrong, borderRadius: radii.md, backgroundColor: colors.backgroundRaised, paddingHorizontal: spacing.md},
   choiceSelected: {borderColor: colors.accentStrong, backgroundColor: colors.accentSoft},
@@ -1131,8 +1131,8 @@ const styles = StyleSheet.create({
   choiceTextSelected: {color: colors.accentStrong},
   rateEvidence: {flexDirection: 'row', justifyContent: 'flex-end', gap: spacing.lg, flexWrap: 'wrap', borderRadius: radii.md, borderWidth: 1, borderColor: colors.success, backgroundColor: colors.successSoft, padding: spacing.sm},
   warning: {borderRadius: radii.md, borderWidth: 1, borderColor: colors.warning, backgroundColor: colors.warningSoft, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, gap: spacing.sm},
-  warningText: {...typography.body, color: colors.warning, textAlign: 'right', writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
-  successText: {...typography.body, color: colors.success, textAlign: 'right', maxWidth: PROSE_MEASURE},
+  warningText: {...typography.body, color: colors.warning, textAlign: 'left', writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
+  successText: {...typography.body, color: colors.success, textAlign: 'left', maxWidth: PROSE_MEASURE},
   inlineAction: {alignSelf: 'flex-start'},
   loading: {...typography.body, color: colors.textSecondary, textAlign: 'center', padding: spacing.xl},
   /* No extra room is reserved for the save bar, and that is deliberate:

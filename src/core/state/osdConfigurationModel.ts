@@ -120,25 +120,25 @@ export function validateOsdDraft(draft: OsdConfigurationDraft, snapshot: MspOsdS
  * ever acquires a telemetry source.
  */
 export const OSD_ELEMENT_NAMES_AR: readonly string[] = Object.freeze([
-  'قوة الإشارة RSSI', 'جهد البطارية', 'علامة المنتصف', 'الأفق الاصطناعي', 'جوانب الأفق',
-  'المؤقت 1', 'المؤقت 2', 'وضع الطيران', 'اسم الطائرة', 'الخانق', 'قناة VTX', 'التيار',
-  'السعة المستهلكة', 'سرعة GPS', 'أقمار GPS', 'الارتفاع', 'PID Roll', 'PID Pitch', 'PID Yaw',
-  'القدرة', 'ملف المعدلات', 'التحذيرات', 'متوسط جهد الخلية', 'خط طول GPS', 'خط عرض GPS',
-  'Debug', 'زاوية Pitch', 'زاوية Roll', 'استخدام البطارية', 'DISARMED', 'اتجاه المنزل', 'المسافة للمنزل',
-  'الاتجاه الرقمي', 'معدل الصعود', 'شريط البوصلة', 'حرارة ESC', 'RPM المحرك', 'الوقت المتبقي',
-  'التاريخ والوقت', 'نطاق الضبط', 'حرارة المتحكم', 'Anti Gravity', 'قوة G', 'تشخيص المحركات',
-  'حالة السجل', 'سهم القلب', 'جودة الرابط', 'مسافة الرحلة', 'عصي التحكم اليسرى', 'عصي التحكم اليمنى',
-  'اسم الطيار', 'تردد RPM', 'اسم ملف المعدلات', 'اسم ملف PID', 'اسم ملف OSD', 'RSSI dBm',
-  'قنوات RC', 'إطار الكاميرا', 'الكفاءة', 'إجمالي الرحلات', 'مرجع أعلى/أسفل', 'قدرة إرسال الرابط',
-  'واط-ساعة مستهلكة', 'قيمة AUX', 'وضع الجاهزية', 'RSNR', 'جهد النظارة', 'جهد VTX', 'معدل البت',
-  'تأخير الفيديو', 'مسافة النظام', 'جودة رابط النظام', 'DVR النظارة', 'DVR VTX', 'تحذيرات النظام',
-  'حرارة VTX', 'سرعة المروحة',
-  'زمن اللفة الحالية', 'زمن اللفة السابقة', 'أفضل ثلاث لفات',
-  'Debug 2', 'رسالة مخصصة 1', 'رسالة مخصصة 2', 'رسالة مخصصة 3', 'رسالة مخصصة 4', 'مسافة الليدار',
-  'نص تسلسلي مخصص', 'اسم ملف البطارية',
+  "RSSI-signaalsterkte", "Accuspanning", "Middenmarkering", "Kunstmatige horizon", "Horizonmarkeringen",
+  "Timer 1", "Timer 2", "Vliegmodus", "Naam van het toestel", "Gas", "VTX-kanaal", "Stroom",
+  "Verbruikte capaciteit", "GPS-snelheid", "GPS-satellieten", "Hoogte", 'PID Roll', 'PID Pitch', 'PID Yaw',
+  "Vermogen", "Rateprofiel", "Waarschuwingen", "Gemiddelde celspanning", "GPS-lengtegraad", "GPS-breedtegraad",
+  'Debug', "Pitchhoek", "Rolhoek", "Accuverbruik", 'DISARMED', "Richting naar thuispositie", "Afstand tot thuispositie",
+  "Digitale koers", "Stijgsnelheid", "Kompasbalk", "ESC-temperatuur", "Motortoerental", "Resterende tijd",
+  "Datum en tijd", "Instelbereik", "Temperatuur vluchtcontroller", 'Anti Gravity', "G-kracht", "Motordiagnose",
+  "Logstatus", "Flip-pijl", "Verbindingskwaliteit", "Vliegafstand", "Linker sticks", "Rechter sticks",
+  "Naam van de piloot", "RPM-frequentie", "Naam rateprofiel", "Naam PID-profiel", "Naam OSD-profiel", 'RSSI dBm',
+  "RC-kanalen", "Camerakader", "Efficiëntie", "Totaal aantal vluchten", "Referentie boven/onder", "Zendvermogen besturingsverbinding",
+  "Verbruikte wattuur", "AUX-waarde", "Gereedheidsmodus", 'RSNR', "Spanning videobril", "VTX-spanning", "Bitsnelheid",
+  "Videovertraging", "Systeemafstand", "Verbindingskwaliteit systeem", "DVR videobril", 'DVR VTX', "Systeemwaarschuwingen",
+  "VTX-temperatuur", "Ventilatortoerental",
+  "Huidige rondetijd", "Vorige rondetijd", "Beste drie ronden",
+  'Debug 2', "Eigen bericht 1", "Eigen bericht 2", "Eigen bericht 3", "Eigen bericht 4", "Lidarafstand",
+  "Eigen seriële tekst", "Naam accuprofiel",
 ]);
 
-export function osdElementName(index: number): string {return OSD_ELEMENT_NAMES_AR[index] ?? `عنصر OSD ${index + 1}`;}
+export function osdElementName(index: number): string {return OSD_ELEMENT_NAMES_AR[index] ?? `OSD-element ${index + 1}`;}
 
 /**
  * The short ASCII token the PREVIEW draws for each element.

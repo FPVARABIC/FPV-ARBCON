@@ -14,7 +14,7 @@
  * React/RN/Android dependency" guarantee intact.
  *
  * As with every other error code in this project: no Arabic text lives in
- * src/core: translations live only in src/i18n/locales/ar.json, under the
+ * src/core: translations live only in src/i18n/locales/nl.json, under the
  * same flat `errors.*` namespace transportErrors.ts's codes already use.
  */
 export const MSP_CLIENT_ERROR_CODES = [

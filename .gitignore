@@ -94,3 +94,6 @@ native-coverage-verdict.txt
 # Python bytecode from running the scripts in scripts/ci locally.
 __pycache__/
 *.pyc
+
+e2e/flight-guides/dist/
+**/.images-next/

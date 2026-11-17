@@ -321,7 +321,7 @@ describe('the layer priority list', () => {
        place. */
     const alignments = new Set(byId.values());
     expect(alignments.size).toBe(1);
-    expect([...alignments][0]).toBe('right');
+    expect([...alignments][0]).toBe('left');
     act(() => tree.unmount());
   }, 30000);
 });

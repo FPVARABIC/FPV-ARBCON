@@ -300,7 +300,7 @@ describe('cancel and late bytes', () => {
 
     // Model the runtime's own behaviour on abort: the pending read
     // rejects with an AbortError.
-    const aborting = new Error('أُلغيت العملية.');
+    const aborting = new Error("De bewerking is geannuleerd.");
     aborting.name = 'AbortError';
     const failing = {
       ...response,

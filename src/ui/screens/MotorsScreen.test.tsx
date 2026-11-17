@@ -28,7 +28,7 @@ import {
   endMotorTestSessionSafely,
 } from './MotorsScreen';
 import '../../i18n';
-import ar from '../../i18n/locales/ar.json';
+import ar from '../../i18n/locales/nl.json';
 import i18n from '../../i18n';
 import type {
   MotorTestActivationBlockReason,
@@ -424,7 +424,7 @@ describe('MotorsScreen - state presentation', () => {
     );
     const emergency = rendered.find('motors-emergency-text');
     expect(emergency.props.children).toBe(
-      'تعذّر تأكيد توقف المحرك — افصل بطارية LiPo فورًا',
+      "Het stoppen van de motor is niet bevestigd — koppel de LiPo-accu onmiddellijk los",
     );
     expect(rendered.query('motors-new-session-text')).toBeDefined();
     rendered.unmount();
@@ -466,9 +466,9 @@ describe('MotorsScreen - state presentation', () => {
     // The session did end, and the screen says so - without inventing a
     // battery emergency.
     expect(rendered.query('motors-fault-notice')).toBeDefined();
-    expect(texts(rendered)).toContain('انتهت جلسة الاختبار.');
+    expect(texts(rendered)).toContain("De testsessie is beëindigd.");
     expect(texts(rendered)).not.toContain(
-      'تعذّر تأكيد توقف المحرك — افصل بطارية LiPo فورًا',
+      "Het stoppen van de motor is niet bevestigd — koppel de LiPo-accu onmiddellijk los",
     );
     rendered.unmount();
   });
@@ -585,7 +585,7 @@ describe('MotorsScreen - state presentation', () => {
     expect(
       rendered.query('motors-block-REQUIRES_NEW_CONNECTION'),
     ).toBeUndefined();
-    expect(texts(rendered)).toContain('وحدة التحكم مسلّحة؛ الاختبار ممنوع.');
+    expect(texts(rendered)).toContain("De vluchtcontroller is ARMED. Schakel ARM uit voordat u instellingen opslaat.");
     rendered.unmount();
   });
 
@@ -603,11 +603,11 @@ describe('MotorsScreen - state presentation', () => {
       rendered.query('motors-block-ARMED_STATE_UNKNOWN_OR_STALE'),
     ).toBeDefined();
     expect(texts(rendered)).toContain(
-      'تعذّرت قراءة حالة التسليح أو أصبحت القراءة قديمة.',
+      "De armstatus kon niet worden gelezen of is verouderd.",
     );
     // ... and never reported as an armed aircraft, which it is not.
     expect(texts(rendered)).not.toContain(
-      'وحدة التحكم مسلّحة؛ الاختبار ممنوع.',
+      "De vluchtcontroller is ARMED. Schakel ARM uit voordat u instellingen opslaat.",
     );
     rendered.unmount();
   });
@@ -647,7 +647,7 @@ describe('MotorsScreen - state presentation', () => {
     rendered.press('motors-advanced-verification-toggle');
     expect(rendered.query('motors-readiness-blocked-detail')).toBeDefined();
     expect(texts(rendered)).toContain(
-      'توقف فحص الجاهزية عند FIRST_OBSERVATION (رمز التشخيص: FIRST_OBSERVATION_UNAVAILABLE). لم يُرسل التطبيق أمر تشغيل للمحرك.',
+      "De gereedheidscontrole stopte bij FIRST_OBSERVATION (diagnosecode: FIRST_OBSERVATION_UNAVAILABLE). De app heeft geen motorstartopdracht verzonden.",
     );
     rendered.unmount();
   });
@@ -680,10 +680,10 @@ describe('MotorsScreen - state presentation', () => {
     rendered.press('motors-advanced-verification-toggle');
     expect(rendered.query('motors-readiness-blocked-detail')).toBeDefined();
     expect(texts(rendered)).toContain(
-      'توقف فحص الجاهزية عند READY (رمز التشخيص: ARMED_STATE_UNKNOWN_OR_STALE). لم يُرسل التطبيق أمر تشغيل للمحرك.',
+      "De gereedheidscontrole stopte bij READY (diagnosecode: ARMED_STATE_UNKNOWN_OR_STALE). De app heeft geen motorstartopdracht verzonden.",
     );
     expect(texts(rendered)).toContain(
-      'أغلق جلسة الاختبار، افصل USB وأعد توصيله، ثم ابدأ جلسة جديدة بعد معالجة السبب أعلاه.',
+      "Sluit de testsessie, koppel USB los en sluit opnieuw aan. Start een nieuwe sessie nadat de bovenstaande oorzaak is verholpen.",
     );
     expect(rendered.find('motors-hold-button').props.disabled).toBe(true);
     rendered.unmount();
@@ -705,7 +705,7 @@ describe('MotorsScreen - state presentation', () => {
     // The sentence says WHAT IS MISSING - the two active endpoints - not
     // that "3D is unsupported", which was never true of digital 3D.
     expect(texts(rendered)).toContain(
-      'وضع 3D التماثلي: حدود الاتجاهين غير متاحة عبر MSP، فلا يمكن تمييز الأمام من الخلف.',
+      "Analoge 3D-modus: MSP geeft de grenzen voor beide draairichtingen niet door. Vooruit en achteruit kunnen niet worden onderscheiden.",
     );
     rendered.unmount();
   });
@@ -1147,8 +1147,8 @@ describe('MotorsScreen - safety dominance', () => {
     expect(rendered.find('motors-hold-button').props.disabled).toBe(true);
     // No success wording of any kind survives into a fault presentation.
     const rendering = texts(rendered);
-    expect(rendering).not.toContain('تم الإيقاف');
-    expect(rendering).not.toContain('نجح');
+    expect(rendering).not.toContain("Gestopt");
+    expect(rendering).not.toContain("Geslaagd");
     rendered.unmount();
   });
 
@@ -1291,8 +1291,8 @@ describe('MotorsScreen - expected reference is labelled as expected', () => {
     // wording is keyed to the catalogue rather than copied.
     const notice = rendered.find('motors-diagram-caption');
     expect(notice.props.children).toBe(ar.motorsScreen.diagramCaption);
-    expect(ar.motorsScreen.diagramCaption).toContain('جدول المازج');
-    expect(ar.motorsScreen.diagramCaption).toContain('لا يُقرأ');
+    expect(ar.motorsScreen.diagramCaption).toContain('mixertabel');
+    expect(ar.motorsScreen.diagramCaption).toContain('wordt niet uit de vluchtcontroller gelezen');
     rendered.unmount();
   });
 
@@ -1471,10 +1471,10 @@ describe('an unproven armed state locks the screen', () => {
     const rendered = render(new FakeOperator(monitorBlocked()));
     const node = rendered.find('motors-block-ARMED_STATE_UNKNOWN_OR_STALE');
     expect(JSON.stringify(node.props.children)).toContain(
-      'تعذّرت قراءة حالة التسليح أو أصبحت القراءة قديمة.',
+      "De armstatus kon niet worden gelezen of is verouderd.",
     );
     expect(texts(rendered)).toContain(
-      'تعذّرت قراءة حالة التسليح أو أصبحت القراءة قديمة.',
+      "De armstatus kon niet worden gelezen of is verouderd.",
     );
     rendered.unmount();
   });
@@ -1705,7 +1705,7 @@ describe('MotorsScreen - direction handling', () => {
   it('removes the obsolete unsupported-direction copy', () => {
     const rendered = render(new FakeOperator(snapshotFor({ allowed: true })));
     const rendering = texts(rendered);
-    expect(rendering).not.toContain('عكس اتجاه المحرك غير متاح حاليًا');
+    expect(rendering).not.toContain("Motor omkeren is momenteel niet beschikbaar");
     expect(rendering).not.toContain('Betaflight');
     rendered.unmount();
   });
@@ -1864,7 +1864,7 @@ describe('P3 - sticky professional STOP', () => {
         ),
       ).toHaveLength(0);
     }
-    expect(JSON.stringify(renderer.toJSON())).toContain('إيقاف المحركات');
+    expect(JSON.stringify(renderer.toJSON())).toContain("Stop motoren.");
   });
 
   it('is still pinned with motor control inactive - and is still not duplicated', () => {
@@ -1910,8 +1910,8 @@ describe('P3 - final page organization', () => {
   it('labels configuration under إعدادات المحركات and tools under التحقق والأدوات', () => {
     const rendered = render(new FakeOperator(snapshotFor({ allowed: true })));
     const body = JSON.stringify(rendered.tree.toJSON());
-    expect(body).toContain('إعدادات المحركات');
-    expect(body).toContain('التحقق والأدوات');
+    expect(body).toContain("motoren instellingen");
+    expect(body).toContain("Verificatie en instrumenten");
     rendered.unmount();
   });
 
@@ -1920,7 +1920,7 @@ describe('P3 - final page organization', () => {
     const body = JSON.stringify(rendered.tree.toJSON());
     // Exact banner sentence once; the tools bench step may mention props
     // in its own instructions without being a second page warning.
-    expect(body.split('أزل المراوح قبل اختبار المحركات.').length - 1).toBe(1);
+    expect(body.split("Verwijder de propellers voordat u de motoren test.").length - 1).toBe(1);
     // The old checklist/acknowledgement block is gone from the page.
     expect(
       rendered.tree.root.findAll(

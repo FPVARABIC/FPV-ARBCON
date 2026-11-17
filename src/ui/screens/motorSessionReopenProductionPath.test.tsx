@@ -120,7 +120,7 @@ const SESSION_ID = 'reopen-production-session';
  * cable instruction with the cable still attached - and a rename that
  * kept the instruction would be the same bug. */
 const USB_RECONNECT_MESSAGE =
-  'الجلسة انتهت. افصل كابل USB وأعد توصيله لبدء جلسة جديدة.';
+  "De sessie is voorbij. Sluit de USB-kabel uit en maak de verbinding klaar om een nieuwe sessie te starten.";
 
 let transport: FakeMspTransport;
 let fc: ScriptedMotorFc;

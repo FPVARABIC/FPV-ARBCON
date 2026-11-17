@@ -256,7 +256,7 @@ describe('the preset catalogue belongs to the aircraft it was built for', () => 
     /* THE SUBJECT EXISTS: it really did fetch, and the answer really was
        empty. */
     expect(indexFetches).toBeGreaterThan(0);
-    expect(textOf(tree)).toContain('لا توجد حزم');
+    expect(textOf(tree)).toContain("geen pakketten");
     /* AND IT ASKED ONCE. */
     expect({indexFetches}).toEqual({indexFetches: 1});
     await act(async () => tree.unmount());

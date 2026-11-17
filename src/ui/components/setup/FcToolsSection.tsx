@@ -220,7 +220,7 @@ export default function FcToolsSection({
               accessibilityRole="button"
               accessibilityState={{ disabled: !availability.enabled }}
               accessibilityLabel={
-                reasonText === undefined ? name : `${name}، ${reasonText}`
+                reasonText === undefined ? name : `${name}, ${reasonText}.`
               }
               accessibilityHint={
                 availability.enabled ? t('fcTools.hint') : undefined

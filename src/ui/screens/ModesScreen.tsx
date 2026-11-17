@@ -58,31 +58,31 @@ function valueOf<T>(value: TelemetryValue<T>): T | undefined {
 
 function blockMessage(reason: ModesBlockReason): string {
   return ({
-    DISCONNECTED: 'انتهى الاتصال بمتحكم الطيران. أعد الاتصال ثم أعد القراءة.',
-    IDENTIFYING: 'ما زال التطبيق يتحقق من هوية متحكم الطيران.',
-    UNSUPPORTED_FIRMWARE: 'إصدار البرنامج الثابت في هذه اللوحة غير مدعوم لهذه الشاشة. حدّث البرنامج الثابت.',
-    APP_BACKGROUNDED: 'أعد التطبيق إلى الواجهة قبل القراءة أو الحفظ.',
-    LINK_RECOVERING: 'الرابط التسلسلي يتعافى. انتظر قليلًا ثم أعد القراءة.',
-    FC_ARMED: 'رُفض الحفظ لأن متحكم الطيران ARMED. انزع المراوح ثم افصل التسليح.',
-    ARMED_STATE_UNKNOWN: 'تعذر إثبات أن متحكم الطيران DISARMED؛ لم تُرسل أي كتابة.',
-    MOTOR_TEST_ACTIVE: 'جلسة اختبار المحركات نشطة. افتح المحركات واضغط «إنهاء جلسة الاختبار» ثم أعد القراءة.',
-    CONFIGURATION_BUSY: 'توجد معاملة إعدادات أخرى قيد التنفيذ.',
-    STALE_BASE: 'تغيرت الأوضاع في المتحكم منذ القراءة. أعد القراءة وراجع القيم.',
-    INVALID_CONFIGURATION: 'يوجد شرط وضع غير صالح. راجع AUX والنطاق والربط.',
-    SESSION_CHANGED: 'تغيّرت جلسة المتحكم منذ إنشاء هذه التعديلات. أعد تحميل الإعدادات قبل الحفظ.',
+    DISCONNECTED: "Verbinding met de vluchtcontroller beëindigd. Verbind opnieuw en lees opnieuw uit.",
+    IDENTIFYING: "De app controleert de identiteit van de vluchtcontroller nog.",
+    UNSUPPORTED_FIRMWARE: "Deze firmwareversie wordt niet ondersteund voor dit scherm. Werk de firmware bij.",
+    APP_BACKGROUNDED: "Breng de app naar de voorgrond voordat u uitleest of opslaat.",
+    LINK_RECOVERING: "Seriële verbinding wordt hersteld. Wacht even en lees opnieuw uit.",
+    FC_ARMED: "Opslaan geweigerd: de vluchtcontroller is ARMED. Verwijder de propellers en disarm daarna.",
+    ARMED_STATE_UNKNOWN: "DISARMED niet bevestigd. Er is geen schrijfopdracht verzonden.",
+    MOTOR_TEST_ACTIVE: "Motortestsessie actief. Open Motoren, beëindig de testsessie en lees opnieuw uit.",
+    CONFIGURATION_BUSY: "Er loopt al een andere configuratietransactie.",
+    STALE_BASE: "De vliegmodi zijn sinds het uitlezen gewijzigd. Lees opnieuw uit en controleer de waarden.",
+    INVALID_CONFIGURATION: "Ongeldige modusvoorwaarde. Controleer het AUX-kanaal, het bereik en de koppeling.",
+    SESSION_CHANGED: "De controllersessie is gewijzigd sinds deze aanpassingen zijn gemaakt. Lees de instellingen opnieuw uit voordat u opslaat.",
   } as const)[reason];
 }
 
 function saveMessage(outcome: ModesSaveOutcome): {text: string; warning: boolean} {
   switch (outcome.kind) {
-    case 'NO_CHANGES': return {text: 'لا توجد تغييرات لإرسالها.', warning: false};
-    case 'SAVED_VERIFIED': return {text: 'حُفظت جميع شروط الأوضاع وتطابقت القراءة الراجعة من متحكم الطيران.', warning: false};
-    case 'SAVED_UNVERIFIED': return {text: 'أقرّ المتحكم الحفظ، لكن تعذر إثبات القيم بالقراءة الراجعة. أعد الاتصال واقرأ قبل تعديل آخر.', warning: true};
-    case 'UNCONFIRMED': return {text: outcome.stage.kind === 'EEPROM' ? 'نتيجة الحفظ في ذاكرة المتحكم غير مؤكدة. لا تكرر الحفظ؛ أعد الاتصال واقرأ أولًا.' : `نتيجة كتابة خانة الوضع ${outcome.stage.index + 1} غير مؤكدة. لا تكرر العملية؛ أعد الاتصال واقرأ أولًا.`, warning: true};
+    case 'NO_CHANGES': return {text: "Geen wijzigingen om te verzenden.", warning: false};
+    case 'SAVED_VERIFIED': return {text: "Alle modusvoorwaarden opgeslagen en door teruglezen uit de vluchtcontroller bevestigd.", warning: false};
+    case 'SAVED_UNVERIFIED': return {text: "Opslaan bevestigd, maar de waarden zijn niet door teruglezen geverifieerd. Verbind opnieuw en lees uit vóór een nieuwe wijziging.", warning: true};
+    case 'UNCONFIRMED': return {text: outcome.stage.kind === 'EEPROM' ? "Permanent opslaan niet bevestigd. Sla niet opnieuw op. Verbind opnieuw en lees eerst uit." : `Schrijven van modusplaats ${outcome.stage.index + 1} niet bevestigd. Herhaal de bewerking niet. Verbind opnieuw en lees eerst uit.`, warning: true};
     /* U-R1. RAM moved and flash did not - never «فشل الحفظ». */
     case 'PARTIAL_UNPERSISTED': return {text: partialApplyMessage(outcome.failedStage.kind === 'EEPROM'), warning: true};
-    case 'SESSION_ENDED': return {text: 'انتهت جلسة الاتصال أثناء العملية. أعد الاتصال واقرأ القيم.', warning: true};
-    case 'FAILED': return {text: 'فشلت العملية قبل اكتمال التحقق.', warning: true};
+    case 'SESSION_ENDED': return {text: "De sessie is tijdens de bewerking beëindigd. Verbind opnieuw en lees de waarden uit.", warning: true};
+    case 'FAILED': return {text: "De bewerking mislukte voordat de verificatie voltooid was.", warning: true};
     case 'REJECTED': return {text: blockMessage(outcome.reason), warning: true};
   }
 }
@@ -127,7 +127,7 @@ const ModeActiveBadge = React.memo(function ModeActiveBadge({sessionKey, active,
   const enabled = snapshot !== undefined && modeIsActive(definition, snapshot.flightModeFlagsLow32, snapshot.readiness.extraFlightModeFlagBytes);
   return <View style={[styles.activeBadge, enabled && styles.activeBadgeOn]} testID={`modes-active-${definition.permanentId}`}>
     <View style={[styles.activeDot, enabled && styles.activeDotOn]} />
-    <Text style={[styles.activeText, enabled && styles.activeTextOn]}>{enabled ? 'نشط الآن' : 'غير نشط'}</Text>
+    <Text style={[styles.activeText, enabled && styles.activeTextOn]}>{enabled ? "Nu actief" : "Inactief"}</Text>
   </View>;
 });
 
@@ -173,7 +173,7 @@ const RangeLiveValue = React.memo(function RangeLiveValue({sessionKey, active, c
         a switch position is still worth seeing - but «القيمة الحية»
         beside a frozen number told the operator the transmitter was
         still saying this. The poller already knows it is not. */}
-    <Text style={[styles.liveRangeText, inside && styles.liveRangeTextInside]}>القيمة الحية: {value ?? '—'}{inside ? ' · داخل النطاق' : ''}{telemetry.status === 'STALE' ? ` · القراءة غير محدثة` : ''}</Text>
+    <Text style={[styles.liveRangeText, inside && styles.liveRangeTextInside]}>{"Actuele waarde:"}{value ?? '—'}{inside ? " · Binnen bereik" : ''}{telemetry.status === 'STALE' ? " · Meting verouderd" : ''}</Text>
   </View>;
 });
 
@@ -188,7 +188,7 @@ function Stepper({label, value, min, max, step, disabled, onChange, testID}: {la
 
 function LogicToggle({value, disabled, onChange}: {value: 0 | 1; disabled: boolean; onChange: (value: 0 | 1) => void}) {
   return <View style={styles.logicRow}>
-    <Text style={styles.fieldLabel}>المنطق</Text>
+    <Text style={styles.fieldLabel}>{"Logica"}</Text>
     <View style={styles.segmented}>
       {([{value: 0 as const, label: 'OR'}, {value: 1 as const, label: 'AND'}]).map(option => <Pressable accessibilityRole="radio" accessibilityState={{selected: value === option.value}} key={option.value} disabled={disabled} onPress={() => onChange(option.value)} style={[styles.segment, value === option.value && styles.segmentSelected]}><Text style={[styles.segmentText, value === option.value && styles.segmentTextSelected]}>{option.label}</Text></Pressable>)}
     </View>
@@ -197,11 +197,11 @@ function LogicToggle({value, disabled, onChange}: {value: 0 | 1; disabled: boole
 
 function RangeConditionRow({index, condition, modeName, sessionKey, active, disabled, onChange, onRemove}: {index: number; condition: Extract<ModeConditionDraft, {kind: 'RANGE'}>; modeName: string; sessionKey?: SetupUiSessionKey; active: boolean; disabled: boolean; onChange: (value: ModeConditionDraft) => void; onRemove: () => void}) {
   return <View style={styles.condition} testID={`modes-condition-${index}`}>
-    <View style={styles.conditionHeader}><View><Text style={styles.conditionType}>نطاق AUX</Text><Text style={styles.conditionHint}>يُفعّل عندما تدخل القناة النطاق المحدد.</Text></View><Pressable disabled={disabled} onPress={onRemove} style={styles.removeButton}><Text style={styles.removeText}>حذف</Text></Pressable></View>
+    <View style={styles.conditionHeader}><View><Text style={styles.conditionType}>{"AUX-bereik"}</Text><Text style={styles.conditionHint}>{"Wordt actief zodra de kanaalwaarde in het ingestelde bereik ligt."}</Text></View><Pressable disabled={disabled} onPress={onRemove} style={styles.removeButton}><Text style={styles.removeText}>{"Verwijderen"}</Text></Pressable></View>
     <View style={styles.fieldsRow}>
-      <Stepper label="قناة AUX" value={condition.auxChannelIndex + 1} min={1} max={MODES_AUX_CHANNEL_COUNT} step={1} disabled={disabled} onChange={value => onChange({...condition, auxChannelIndex: value - 1})} testID={`modes-aux-${index}`} />
-      <Stepper label="البداية µs" value={condition.start} min={MODE_RANGE_MIN} max={condition.end - MODE_RANGE_STEP} step={MODE_RANGE_STEP} disabled={disabled} onChange={value => onChange({...condition, start: value})} testID={`modes-start-${index}`} />
-      <Stepper label="النهاية µs" value={condition.end} min={condition.start + MODE_RANGE_STEP} max={MODE_RANGE_MAX} step={MODE_RANGE_STEP} disabled={disabled} onChange={value => onChange({...condition, end: value})} testID={`modes-end-${index}`} />
+      <Stepper label={"AUX-kanaal"} value={condition.auxChannelIndex + 1} min={1} max={MODES_AUX_CHANNEL_COUNT} step={1} disabled={disabled} onChange={value => onChange({...condition, auxChannelIndex: value - 1})} testID={`modes-aux-${index}`} />
+      <Stepper label={"Begin (µs)"} value={condition.start} min={MODE_RANGE_MIN} max={condition.end - MODE_RANGE_STEP} step={MODE_RANGE_STEP} disabled={disabled} onChange={value => onChange({...condition, start: value})} testID={`modes-start-${index}`} />
+      <Stepper label={"Eind (µs)"} value={condition.end} min={condition.start + MODE_RANGE_STEP} max={MODE_RANGE_MAX} step={MODE_RANGE_STEP} disabled={disabled} onChange={value => onChange({...condition, end: value})} testID={`modes-end-${index}`} />
       <LogicToggle value={condition.logic} disabled={disabled} onChange={logic => onChange({...condition, logic})} />
     </View>
     <RangeLiveValue sessionKey={sessionKey} active={active} condition={condition} modeName={modeName} />
@@ -218,9 +218,9 @@ function LinkConditionRow({index, condition, definitions, disabled, onChange, on
     onChange({...condition, linkedTo: next.permanentId});
   };
   return <View style={styles.condition} testID={`modes-condition-${index}`}>
-    <View style={styles.conditionHeader}><View><Text style={styles.conditionType}>ربط بوضع آخر</Text><Text style={styles.conditionHint}>يتبع حالة وضع موجود بدل قراءة قناة AUX مباشرة.</Text></View><Pressable disabled={disabled} onPress={onRemove} style={styles.removeButton}><Text style={styles.removeText}>حذف</Text></Pressable></View>
+    <View style={styles.conditionHeader}><View><Text style={styles.conditionType}>{"Koppelen aan een andere modus"}</Text><Text style={styles.conditionHint}>{"Volgt de status van een bestaande modus in plaats van een AUX-kanaal rechtstreeks uit te lezen."}</Text></View><Pressable disabled={disabled} onPress={onRemove} style={styles.removeButton}><Text style={styles.removeText}>{"Verwijderen"}</Text></Pressable></View>
     <View style={styles.fieldsRow}>
-      <View style={styles.linkField}><Text style={styles.fieldLabel}>الوضع المرتبط</Text><View style={styles.linkCycler}><IconButton icon="chevron-back" accessibilityLabel="الوضع السابق" onPress={() => cycle(-1)} disabled={disabled || targets.length < 2} appearance="outlined" /><Text style={styles.linkValue}>{target === undefined ? 'لا يوجد هدف صالح' : modeArabicName(target.name)}</Text><IconButton icon="chevron-forward" accessibilityLabel="الوضع التالي" onPress={() => cycle(1)} disabled={disabled || targets.length < 2} appearance="outlined" /></View></View>
+      <View style={styles.linkField}><Text style={styles.fieldLabel}>{"Gekoppelde modus"}</Text><View style={styles.linkCycler}><IconButton icon="chevron-back" accessibilityLabel={"Vorige modus"} onPress={() => cycle(-1)} disabled={disabled || targets.length < 2} appearance="outlined" /><Text style={styles.linkValue}>{target === undefined ? "Geen geldig koppeldoel" : modeArabicName(target.name)}</Text><IconButton icon="chevron-forward" accessibilityLabel={"Volgende modus"} onPress={() => cycle(1)} disabled={disabled || targets.length < 2} appearance="outlined" /></View></View>
       <LogicToggle value={condition.logic} disabled={disabled} onChange={logic => onChange({...condition, logic})} />
     </View>
   </View>;
@@ -252,12 +252,12 @@ function ModeCard({definition, snapshot, draft, sessionKey, active, disabled, on
   >
     {configured ? <View style={[styles.modeMark, {backgroundColor: colour}]} testID={`modes-mode-mark-${definition.permanentId}`} /> : null}
     <View style={styles.modeHeader}><View style={styles.modeTitleGroup}><Text style={styles.modeTitle}>{name}</Text><Text style={styles.modeRaw}>{definition.name} · ID {definition.permanentId}</Text></View><ModeActiveBadge sessionKey={sessionKey} active={active} definition={definition} /></View>
-    {rows.length === 0 ? <Text style={styles.emptyMode}>لا يوجد شرط لهذا الوضع.</Text> : rows.map(({condition, index}) => condition.kind === 'RANGE'
+    {rows.length === 0 ? <Text style={styles.emptyMode}>{"Geen voorwaarde voor deze modus."}</Text> : rows.map(({condition, index}) => condition.kind === 'RANGE'
       ? <RangeConditionRow key={index} index={index} condition={condition} modeName={name} sessionKey={sessionKey} active={active} disabled={disabled} onChange={next => onUpdate(index, next)} onRemove={() => onRemove(index)} />
       : <LinkConditionRow key={index} index={index} condition={condition} definitions={snapshot.definitions} disabled={disabled} onChange={next => onUpdate(index, next)} onRemove={() => onRemove(index)} />)}
     <View style={styles.addRow}>
-      <Pressable disabled={disabled || !canAdd} onPress={() => onAdd({kind: 'RANGE', permanentId: definition.permanentId, auxChannelIndex: 0, start: 1300, end: 1700, logic: 0})} style={[styles.addButton, (disabled || !canAdd) && styles.buttonDisabled]} testID={`modes-add-range-${definition.permanentId}`}><Text style={styles.addButtonText}>+ إضافة نطاق AUX</Text></Pressable>
-      {definition.permanentId !== 0 && linkTargets.length > 0 ? <Button label="ربط بوضع" onPress={() => onAdd({kind: 'LINK', permanentId: definition.permanentId, linkedTo: linkTargets[0].permanentId, logic: 0})} variant="secondary" icon="plus" disabled={disabled || !canAdd} testID={`modes-add-link-${definition.permanentId}`} /> : null}
+      <Pressable disabled={disabled || !canAdd} onPress={() => onAdd({kind: 'RANGE', permanentId: definition.permanentId, auxChannelIndex: 0, start: 1300, end: 1700, logic: 0})} style={[styles.addButton, (disabled || !canAdd) && styles.buttonDisabled]} testID={`modes-add-range-${definition.permanentId}`}><Text style={styles.addButtonText}>{"+ AUX-bereik toevoegen"}</Text></Pressable>
+      {definition.permanentId !== 0 && linkTargets.length > 0 ? <Button label={"Aan modus koppelen"} onPress={() => onAdd({kind: 'LINK', permanentId: definition.permanentId, linkedTo: linkTargets[0].permanentId, logic: 0})} variant="secondary" icon="plus" disabled={disabled || !canAdd} testID={`modes-add-link-${definition.permanentId}`} /> : null}
     </View>
   </View>;
 }
@@ -342,9 +342,9 @@ export default function ModesScreen({sessionKey, active, onOpenMotors, onDirtyCh
   const reload = useCallback(() => {
     const perform = () => setReloadToken(value => value + 1);
     if (!dirty) return perform();
-    Alert.alert('تجاهل تغييرات الأوضاع؟', 'ستُستبدل الشروط الحالية بقراءة جديدة من متحكم الطيران.', [
-      {text: 'إلغاء', style: 'cancel'},
-      {text: 'إعادة القراءة', style: 'destructive', onPress: perform},
+    Alert.alert("Wijzigingen aan vliegmodi verwerpen?", "De huidige voorwaarden worden vervangen door een nieuwe uitlezing uit de vluchtcontroller.", [
+      {text: "Annuleren", style: 'cancel'},
+      {text: "Opnieuw uitlezen", style: 'destructive', onPress: perform},
     ]);
   }, [dirty]);
 
@@ -371,9 +371,9 @@ export default function ModesScreen({sessionKey, active, onOpenMotors, onDirtyCh
   const loadingMessage = loadOutcome?.kind === 'REJECTED'
     ? blockMessage(loadOutcome.reason)
     : loadOutcome?.kind === 'FAILED'
-      ? 'تعذرت قراءة جدول الأوضاع من متحكم الطيران.'
+      ? "De modustabel kon niet uit de vluchtcontroller worden gelezen."
       : loadOutcome?.kind === 'SESSION_ENDED'
-        ? 'انتهت جلسة الاتصال.'
+        ? "De verbindingssessie is beëindigd."
         : undefined;
   const normalizedSearch = search.trim().toLowerCase();
   const visibleDefinitions = snapshot === undefined || draft === undefined ? [] : snapshot.definitions.filter(definition => {
@@ -383,19 +383,19 @@ export default function ModesScreen({sessionKey, active, onOpenMotors, onDirtyCh
 
   return <View style={styles.root} testID="modes-screen">
     <ScrollView contentContainerStyle={[styles.content, {maxWidth}]}>
-      <View style={styles.hero}><View style={styles.heroCopy}><Text style={styles.title}>الأوضاع ومفاتيح AUX</Text><Text style={styles.subtitle}>أنشئ نطاقات القنوات واربط الأوضاع ببعضها، مع حالة حية من متحكم الطيران وحفظ كامل لجدول الشروط ثم قراءة تحقق.</Text></View>{snapshot !== undefined && draft !== undefined ? <View style={styles.capacityBadge}><Text style={styles.capacityLabel}>خانات مستخدمة</Text><Text style={styles.capacityValue}>{draft.conditions.length} / {snapshot.capacity}</Text></View> : null}</View>
-      <View style={styles.hardwareNotice}><Text style={styles.hardwareTitle}>{t('hardwareVerification.behaviourTitle')}</Text><Text style={styles.hardwareText}>القراءة والكتابة والتحقق مختبرة آليًا، لكن يجب تحريك مفاتيح جهاز الإرسال ومشاهدة القيمة والحالة الحية على FC حقيقي بعد نزع المراوح.</Text></View>
-      <View style={styles.warning}><Text style={styles.warningTitle}>لا تختبر ARM والمراوح مركبة</Text><Text style={styles.warningText}>المؤشر الحي يصف علم الوضع الذي يرسله متحكم الطيران؛ لا يعني أن الاقتراب من الطائرة آمن.</Text></View>
-      {loadingMessage !== undefined ? <View style={styles.loadError} testID="modes-load-message"><Text style={styles.loadErrorText}>{loadingMessage}</Text>{loadOutcome?.kind === 'REJECTED' && loadOutcome.reason === 'MOTOR_TEST_ACTIVE' ? <Button label="فتح شاشة المحركات" onPress={onOpenMotors} variant="secondary" icon="fan" style={styles.inlineAction} testID="modes-open-motors" /> : <Button label="إعادة القراءة" onPress={reload} variant="secondary" icon="refresh-cw" style={styles.inlineAction} testID="modes-reload" />}</View> : null}
+      <View style={styles.hero}><View style={styles.heroCopy}><Text style={styles.title}>{"Vliegmodi en AUX-schakelaars"}</Text><Text style={styles.subtitle}>{"Stel kanaalbereiken en koppelingen tussen vliegmodi in. Bekijk de actuele status uit de vluchtcontroller en verifieer de volledige configuratie na het opslaan."}</Text></View>{snapshot !== undefined && draft !== undefined ? <View style={styles.capacityBadge}><Text style={styles.capacityLabel}>{"Gebruikte plaatsen"}</Text><Text style={styles.capacityValue}>{draft.conditions.length} / {snapshot.capacity}</Text></View> : null}</View>
+      <View style={styles.hardwareNotice}><Text style={styles.hardwareTitle}>{t('hardwareVerification.behaviourTitle')}</Text><Text style={styles.hardwareText}>{"Lezen, schrijven en teruglezen zijn in software getest. Controleer de zenderschakelaars, kanaalwaarden en actuele status op een echte vluchtcontroller met verwijderde propellers."}</Text></View>
+      <View style={styles.warning}><Text style={styles.warningTitle}>{"Test ARM nooit met gemonteerde propellers"}</Text><Text style={styles.warningText}>{"De live-indicator toont de modusstatus die de vluchtcontroller meldt. Dit betekent niet dat u het toestel veilig kunt benaderen."}</Text></View>
+      {loadingMessage !== undefined ? <View style={styles.loadError} testID="modes-load-message"><Text style={styles.loadErrorText}>{loadingMessage}</Text>{loadOutcome?.kind === 'REJECTED' && loadOutcome.reason === 'MOTOR_TEST_ACTIVE' ? <Button label={"Motorscherm openen"} onPress={onOpenMotors} variant="secondary" icon="fan" style={styles.inlineAction} testID="modes-open-motors" /> : <Button label={"Opnieuw uitlezen"} onPress={reload} variant="secondary" icon="refresh-cw" style={styles.inlineAction} testID="modes-reload" />}</View> : null}
       {snapshot !== undefined && draft !== undefined ? <>
-        <View style={[styles.toolbar, wide && styles.toolbarWide]}><TextInput value={search} onChangeText={setSearch} placeholder="ابحث باسم الوضع…" placeholderTextColor={colors.textMuted} style={styles.search} testID="modes-search" /><View style={styles.showUnused}><Text style={styles.showUnusedText}>إظهار الأوضاع بلا شروط</Text><ToggleSwitch value={showUnused} onValueChange={setShowUnused} accessibilityLabel="إظهار الأوضاع بلا شروط" /></View><Button label="إعادة القراءة" onPress={reload} variant="secondary" icon="refresh-cw" /></View>
-        {visibleDefinitions.length === 0 ? <View style={styles.emptySearch}><Text style={styles.emptySearchText}>لا توجد أوضاع تطابق البحث أو المرشح.</Text></View> : visibleDefinitions.map(definition => <ModeCard key={definition.permanentId} definition={definition} snapshot={snapshot} draft={draft} sessionKey={sessionKey} active={active} disabled={phase !== 'READY'} onAdd={addCondition} onUpdate={updateCondition} onRemove={removeCondition} />)}
-        {issues.length > 0 ? <View style={styles.loadError}><Text style={styles.loadErrorText}>راجع الشروط: {issues.join(' · ')}</Text></View> : null}
+        <View style={[styles.toolbar, wide && styles.toolbarWide]}><TextInput value={search} onChangeText={setSearch} placeholder={"Zoeken op modusnaam…"} placeholderTextColor={colors.textMuted} style={styles.search} testID="modes-search" /><View style={styles.showUnused}><Text style={styles.showUnusedText}>{"Modi zonder voorwaarden tonen"}</Text><ToggleSwitch value={showUnused} onValueChange={setShowUnused} accessibilityLabel={"Modi zonder voorwaarden tonen"} /></View><Button label={"Opnieuw uitlezen"} onPress={reload} variant="secondary" icon="refresh-cw" /></View>
+        {visibleDefinitions.length === 0 ? <View style={styles.emptySearch}><Text style={styles.emptySearchText}>{"Geen modi gevonden voor deze zoekopdracht of dit filter."}</Text></View> : visibleDefinitions.map(definition => <ModeCard key={definition.permanentId} definition={definition} snapshot={snapshot} draft={draft} sessionKey={sessionKey} active={active} disabled={phase !== 'READY'} onAdd={addCondition} onUpdate={updateCondition} onRemove={removeCondition} />)}
+        {issues.length > 0 ? <View style={styles.loadError}><Text style={styles.loadErrorText}>{"Controleer de voorwaarden:"}{issues.join(' · ')}</Text></View> : null}
         {statusCopy !== undefined ? <View style={statusCopy.warning ? styles.loadError : styles.success}><Text style={statusCopy.warning ? styles.loadErrorText : styles.successText}>{statusCopy.text}</Text></View> : null}
-      </> : phase === 'LOADING' ? <Text style={styles.loading}>جارٍ قراءة أسماء الأوضاع وجدول الشروط والروابط…</Text> : null}
+      </> : phase === 'LOADING' ? <Text style={styles.loading}>{"Modusnamen, voorwaarden en koppelingen uitlezen…"}</Text> : null}
       <View style={styles.bottomSpace} />
     </ScrollView>
-    <StickyActionBar visible={dirty} summary="تغيّرت شروط الأوضاع" details={[`سيُعاد إرسال جدول الشروط كاملًا (${snapshot?.capacity ?? 20} خانة) ثم الحفظ والتحقق`]} saveLabel="حفظ والتحقق" discardLabel="تجاهل" onSave={save} onDiscard={() => snapshot !== undefined && setDraft(createModesConfigurationDraft(snapshot))} disabledReason={saveBlockedBySession ? blockMessage('SESSION_CHANGED') : issues.length > 0 ? 'صحح شروط AUX أو الربط أولًا.' : undefined} statusMessage={statusCopy?.text} statusTone={statusCopy?.warning ? 'warning' : 'normal'} busy={phase === 'SAVING'} busyLabel="جارٍ حفظ الأوضاع…" testID="modes-save-bar" />
+    <StickyActionBar visible={dirty} summary={"Modusvoorwaarden gewijzigd"} details={[`De volledige tabel met ${snapshot?.capacity ?? 20} plaatsen wordt verzonden, opgeslagen en geverifieerd`]} saveLabel={"Opslaan en verifiëren"} discardLabel={"Verwerpen"} onSave={save} onDiscard={() => snapshot !== undefined && setDraft(createModesConfigurationDraft(snapshot))} disabledReason={saveBlockedBySession ? blockMessage('SESSION_CHANGED') : issues.length > 0 ? "Corrigeer eerst de AUX-voorwaarden of koppelingen." : undefined} statusMessage={statusCopy?.text} statusTone={statusCopy?.warning ? 'warning' : 'normal'} busy={phase === 'SAVING'} busyLabel={"Vliegmodi opslaan…"} testID="modes-save-bar" />
   </View>;
 }
 
@@ -405,25 +405,25 @@ const styles = StyleSheet.create({
   hero: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: spacing.lg, flexWrap: 'wrap'},
   heroCopy: {flex: 1, minWidth: 280, gap: 4},
   eyebrow: {...typography.eyebrow, color: colors.accentStrong},
-  title: {...typography.title, color: colors.textPrimary, textAlign: 'right'},
-  subtitle: {...typography.body, color: colors.textSecondary, textAlign: 'right', writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+  title: {...typography.title, color: colors.textPrimary, textAlign: 'left'},
+  subtitle: {...typography.body, color: colors.textSecondary, textAlign: 'left', writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   capacityBadge: {borderWidth: 1, borderColor: colors.accentStrong, backgroundColor: colors.accentSoft, borderRadius: radii.lg, padding: spacing.md, minWidth: 150},
-  capacityLabel: {...typography.caption, color: colors.textMuted, textAlign: 'right'},
-  capacityValue: {...typography.heading, color: colors.accentStrong, textAlign: 'right', fontVariant: ['tabular-nums']},
+  capacityLabel: {...typography.caption, color: colors.textMuted, textAlign: 'left'},
+  capacityValue: {...typography.heading, color: colors.accentStrong, textAlign: 'left', fontVariant: ['tabular-nums']},
   hardwareNotice: {borderRadius: radii.lg, borderWidth: 1, borderColor: colors.accentStrong, backgroundColor: colors.accentSoft, padding: spacing.md, gap: 3},
   hardwareTitle: {...typography.eyebrow, color: colors.accentStrong},
-  hardwareText: {...typography.caption, color: colors.accentText, textAlign: 'right', writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+  hardwareText: {...typography.caption, color: colors.accentText, textAlign: 'left', writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   warning: {...noticeSurface, borderColor: colors.error, backgroundColor: colors.errorSoft, gap: 3},
-  warningTitle: {...typography.caption, fontWeight: '700', color: colors.error, textAlign: 'right', maxWidth: PROSE_MEASURE},
-  warningText: {...typography.caption, color: colors.error, textAlign: 'right', writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+  warningTitle: {...typography.caption, fontWeight: '700', color: colors.error, textAlign: 'left', maxWidth: PROSE_MEASURE},
+  warningText: {...typography.caption, color: colors.error, textAlign: 'left', writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   loadError: {...noticeSurface, borderColor: colors.warning, backgroundColor: colors.warningSoft, gap: spacing.sm},
-  loadErrorText: {...typography.caption, color: colors.warning, textAlign: 'right', writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+  loadErrorText: {...typography.caption, color: colors.warning, textAlign: 'left', writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   success: {...noticeSurface, borderColor: colors.success, backgroundColor: colors.successSoft},
-  successText: {...typography.caption, color: colors.success, textAlign: 'right', maxWidth: PROSE_MEASURE},
+  successText: {...typography.caption, color: colors.success, textAlign: 'left', maxWidth: PROSE_MEASURE},
   inlineAction: {alignSelf: 'flex-start'},
   toolbar: {gap: spacing.sm, padding: spacing.md, borderRadius: radii.lg, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.borderSoft},
   toolbarWide: {flexDirection: 'row', alignItems: 'center'},
-  search: {flex: 1, minHeight: 44, borderRadius: radii.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.backgroundRaised, paddingHorizontal: spacing.md, color: colors.textPrimary, textAlign: 'right', writingDirection: 'rtl'},
+  search: {flex: 1, minHeight: 44, borderRadius: radii.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.backgroundRaised, paddingHorizontal: spacing.md, color: colors.textPrimary, textAlign: 'left', writingDirection: 'ltr'},
   showUnused: {flexDirection: 'row', alignItems: 'center', gap: spacing.sm},
   showUnusedText: {...typography.body, color: colors.textSecondary},
   modeCard: {position: 'relative', overflow: 'hidden', backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.borderSoft, borderRadius: radii.lg, padding: spacing.lg, gap: spacing.md},
@@ -435,10 +435,10 @@ const styles = StyleSheet.create({
   modeMark: {position: 'absolute', start: 0, top: 0, bottom: 0, width: 5},
   rangeLegend: {flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginTop: 4},
   rangeSwatch: {width: 14, height: 14, borderRadius: 4},
-  rangeLegendText: {...typography.caption, color: colors.textSecondary, writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+  rangeLegendText: {...typography.caption, color: colors.textSecondary, writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   modeHeader: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: spacing.md, flexWrap: 'wrap'},
   modeTitleGroup: {gap: 2},
-  modeTitle: {...typography.heading, color: colors.textPrimary, textAlign: 'right'},
+  modeTitle: {...typography.heading, color: colors.textPrimary, textAlign: 'left'},
   modeRaw: {...typography.caption, color: colors.textMuted, writingDirection: 'ltr'},
   activeBadge: {flexDirection: 'row', alignItems: 'center', gap: 6, borderRadius: radii.pill, borderWidth: 1, borderColor: colors.border, paddingHorizontal: spacing.sm, paddingVertical: 5},
   activeBadgeOn: {borderColor: colors.success, backgroundColor: colors.successSoft},
@@ -446,11 +446,11 @@ const styles = StyleSheet.create({
   activeDotOn: {backgroundColor: colors.success},
   activeText: {...typography.caption, color: colors.textMuted, fontWeight: '700'},
   activeTextOn: {color: colors.success},
-  emptyMode: {...typography.body, color: colors.textMuted, textAlign: 'right', maxWidth: PROSE_MEASURE},
+  emptyMode: {...typography.body, color: colors.textMuted, textAlign: 'left', maxWidth: PROSE_MEASURE},
   condition: {borderRadius: radii.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.backgroundRaised, padding: spacing.md, gap: spacing.md},
   conditionHeader: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: spacing.md},
-  conditionType: {...typography.heading, color: colors.textPrimary, textAlign: 'right'},
-  conditionHint: {...typography.caption, color: colors.textMuted, textAlign: 'right', maxWidth: PROSE_MEASURE},
+  conditionType: {...typography.heading, color: colors.textPrimary, textAlign: 'left'},
+  conditionHint: {...typography.caption, color: colors.textMuted, textAlign: 'left', maxWidth: PROSE_MEASURE},
   /* 44, not 38. Measured 46x38 - but only in a Modes state that has a
      configured AUX range, which no swept QA fixture had, so the global
      excavation never rendered this control and never flagged it. It is
@@ -460,7 +460,7 @@ const styles = StyleSheet.create({
   fieldsRow: {flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, alignItems: 'flex-end'},
   stepperField: {flexGrow: 1, flexBasis: 150, gap: 5},
   linkField: {flexGrow: 1, flexBasis: 250, gap: 5},
-  fieldLabel: {...typography.caption, color: colors.textSecondary, textAlign: 'right', fontWeight: '700'},
+  fieldLabel: {...typography.caption, color: colors.textSecondary, textAlign: 'left', fontWeight: '700'},
   /* The link cycler keeps a bespoke row because its centre is a WORD
      (the linked mode's Arabic name), not a number, so the numeric
      Stepper would be the wrong control. Targets and states come from the
@@ -478,7 +478,7 @@ const styles = StyleSheet.create({
   selectedRange: {position: 'absolute', top: 0, bottom: 0, backgroundColor: colors.accentSoft, borderColor: colors.accentStrong, borderWidth: 1},
   liveMarker: {position: 'absolute', top: 0, width: 4, height: 12, backgroundColor: colors.warning},
   liveMarkerInside: {backgroundColor: colors.success},
-  liveRangeText: {...typography.caption, color: colors.textMuted, textAlign: 'right', fontVariant: ['tabular-nums'], maxWidth: PROSE_MEASURE},
+  liveRangeText: {...typography.caption, color: colors.textMuted, textAlign: 'left', fontVariant: ['tabular-nums'], maxWidth: PROSE_MEASURE},
   liveRangeTextInside: {color: colors.success, fontWeight: '700'},
   addRow: {flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm},
   /* 44, not 42. Measured 146x42 at every width. */

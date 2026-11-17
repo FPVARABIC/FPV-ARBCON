@@ -349,7 +349,7 @@ describe('§57 a magnetometer calibration started from the screen', () => {
 
     const outcome = textOf(renderer, 'sensors-calibrate-mag-outcome');
     expect(outcome).toContain(t('sensorsScreen.calibration.outcome.OBSERVATION_CANCELLED'));
-    expect(outcome).not.toContain('تم إلغاء المعايرة');
+    expect(outcome).not.toContain("Kalibratie geannuleerd");
     // The firmware has no "stop calibrating" command, and none was invented.
     expect(fc.requested.filter(command => command === MSP_MAG_CALIBRATION)).toHaveLength(1);
   });

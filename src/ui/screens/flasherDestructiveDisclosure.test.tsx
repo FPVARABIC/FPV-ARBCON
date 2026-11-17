@@ -284,12 +284,12 @@ async function mountReadyToFlash(client: UsbSerialTransportClient): Promise<Rend
   await settle();
   expect(press(renderer, 'toggle-advanced-flash-options')).toBe(true);
   await settle();
-  expect(pressLabel(renderer, 'بدون تسلسل إعادة تشغيل')).toBe(true);
+  expect(pressLabel(renderer, "Zonder herstartprocedure")).toBe(true);
   await settle();
   expect(press(renderer, 'confirm-props-removed')).toBe(true);
   expect(press(renderer, 'confirm-usb-power-only')).toBe(true);
   await settle();
-  expect(pressLabel(renderer, 'تحققت يدوياً من Target والـ bootloader')).toBe(true);
+  expect(pressLabel(renderer, "Ik heb de Target en bootloader handmatig gecontroleerd.")).toBe(true);
   await settle();
   return renderer;
 }
@@ -315,7 +315,7 @@ describe('post-erase disclosure', () => {
   it('a PRE-erase refusal says what went wrong and adds NO erase advisory', async () => {
     const {renderer, transcript} = await runToTerminal({chipIdCountMinusOne: 2});
     expect(transcript.eraseCommandSent).toBe(false);
-    expect(readTestId(renderer, 'flash-result-title')).toBe('✕ فشل التفليش');
+    expect(readTestId(renderer, 'flash-result-title')).toBe("✕ Flashen mislukt");
     expect(readTestId(renderer, 'flash-result-reason')).toBe(
       i18n.t('firmwareFlasher.reason.STM32_GET_ID_SHAPE_INVALID'),
     );
@@ -361,7 +361,7 @@ describe('post-erase disclosure', () => {
   it('a completed flash still succeeds, with the same ERASE/WRITE/GO transcript', async () => {
     const {renderer, transcript} = await runToTerminal({});
     expect(readTestId(renderer, 'flash-result-title')).toBe(
-      '✓ تمت كتابة Firmware والتحقق منه بنجاح',
+      "✓ Firmware geschreven en geverifieerd",
     );
     expect(transcript.events).toEqual(
       expect.arrayContaining(['SYNC', 'GET', 'GET_ID', 'ERASE_CMD', 'ERASE_DONE', 'GO_ADDR']),
@@ -492,7 +492,7 @@ describe('cancellation at the destructive boundary', () => {
      * gone and the real outcome stands. */
     expect(hostsWithTestId(renderer, 'cancel-flash-confirm')).toHaveLength(0);
     expect(readTestId(renderer, 'flash-result-title')).toBe(
-      '✓ تمت كتابة Firmware والتحقق منه بنجاح',
+      "✓ Firmware geschreven en geverifieerd",
     );
     await unmount(renderer);
   }, 60_000);
@@ -610,9 +610,9 @@ describe('localized failure text', () => {
     /* The MSP layer's codes already had Arabic; the flasher simply never
      * looked there. These are the exact catalogue strings. */
     expect(i18n.t('errors.MSP_TIMEOUT')).toBe(
-      'انتهت مهلة انتظار استجابة من وحدة التحكم بالطيران.',
+      "Het wachten op een reactie van de vliegbesturing is voorbij.",
     );
-    expect(i18n.t('errors.UNKNOWN')).toBe('حدث خطأ غير متوقع أثناء الاتصال.');
+    expect(i18n.t('errors.UNKNOWN')).toBe("Er is een onverwachte fout tijdens de oproep.");
     expect(i18n.t('errors.MSP_TIMEOUT')).not.toBe(RAW_ENGLISH_MSP_TIMEOUT);
   });
 
@@ -682,7 +682,7 @@ describe('localized failure text', () => {
   it('the SIMPLE screen renders a TRUSTED app-authored message from its key', () => {
     const carrier = new OperatorMessageError(
       {key: 'bootloader.e11', values: {v0: 'STM32F405', v1: 'SPEEDYBEEF405V3'}},
-      'Target المحدد STM32F405 لا يطابق المتحكم SPEEDYBEEF405V3.',
+      "Target specifiek STM32F405 niet overeenkomt met SPEEDYBEEF405V3 controller.",
     );
     expect(operatorDetail(carrier, 'SERIAL')).toBe(
       i18n.t('bootloader.e11', {v0: 'STM32F405', v1: 'SPEEDYBEEF405V3'}),

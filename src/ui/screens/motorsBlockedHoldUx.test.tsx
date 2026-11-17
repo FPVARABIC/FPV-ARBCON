@@ -33,7 +33,7 @@ import React from 'react';
 import ReactTestRenderer, {act} from 'react-test-renderer';
 
 import '../../i18n';
-import ar from '../../i18n/locales/ar.json';
+import ar from '../../i18n/locales/nl.json';
 
 const HOLD = 'motors-hold-button';
 const BLOCKED = 'motors-hold-blocked';

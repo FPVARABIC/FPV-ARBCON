@@ -40,9 +40,9 @@ import type {UsbSerialTransportClient} from '../../platforms/react-native/transp
 type Renderer = ReactTestRenderer.ReactTestRenderer;
 
 const IMAGE = makeHexImage(64);
-const SUCCESS_TITLE = '✓ تمت كتابة Firmware والتحقق منه بنجاح';
+const SUCCESS_TITLE = "✓ Firmware geschreven en geverifieerd";
 const NEVER_STARTED =
-  'انقطع التقدّم قبل بدء أي نقل بيانات؛ لم يُمس محتوى اللوحة. افصل USB وأعد توصيله ثم ابدأ من جديد.';
+  "De voortgang stopte voordat gegevens werden overgedragen. De inhoud van de printplaat is niet gewijzigd. Koppel USB los, sluit opnieuw aan en start opnieuw.";
 
 async function flush(ms = 0, rounds = 12): Promise<void> {
   for (let round = 0; round < rounds; round += 1) {
@@ -169,12 +169,12 @@ describe('a stale attempt cannot overwrite the active one', () => {
     await flush(1);
     expect(press(renderer, 'toggle-advanced-flash-options')).toBe(true);
     await flush(1);
-    expect(pressLabel(renderer, 'بدون تسلسل إعادة تشغيل')).toBe(true);
+    expect(pressLabel(renderer, "Zonder herstartprocedure")).toBe(true);
     await flush(1);
     expect(press(renderer, 'confirm-props-removed')).toBe(true);
     expect(press(renderer, 'confirm-usb-power-only')).toBe(true);
     await flush(1);
-    expect(pressLabel(renderer, 'تحققت يدوياً من Target والـ bootloader')).toBe(true);
+    expect(pressLabel(renderer, "Ik heb de Target en bootloader handmatig gecontroleerd.")).toBe(true);
     await flush(1);
 
     /* ---- attempt 1 stalls before any transfer ---- */

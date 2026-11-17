@@ -85,7 +85,7 @@ const MAX_INCLUDED_FILES = 64;
 
 function record(value: unknown): Record<string, unknown> {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error('فهرس Presets ليس كائن JSON صالحًا.');
+    throw new Error("De Presets-index is geen geldig JSON-object.");
   }
   return value as Record<string, unknown>;
 }
@@ -129,10 +129,10 @@ export function parseFirmwarePresetIndex(value: unknown): FirmwarePresetIndex {
     !Number.isInteger(root.minorVersion) ||
     (root.minorVersion as number) < 0
   ) {
-    throw new Error('إصدار فهرس Presets غير مدعوم.');
+    throw new Error("Presets-uitgifte is niet ondersteund.");
   }
   if (!Array.isArray(root.presets) || root.presets.length > MAX_INDEX_PRESETS) {
-    throw new Error('قائمة Presets مفقودة أو أكبر من الحد الآمن.');
+    throw new Error("De Presets-lijst is vermist of groter dan de veilige limiet.");
   }
   let rejectedCount = 0;
   const presets: FirmwarePresetSummary[] = [];
@@ -264,10 +264,10 @@ export function parseFirmwarePresetDocument(
   text: string,
 ): FirmwarePresetDocument {
   if (text.length > 1024 * 1024)
-    throw new Error('ملف Preset أكبر من الحد الآمن.');
+    throw new Error("Het Preset-bestand is groter dan de beveiliging.");
   const lines = text.replace(/\r/g, '').split('\n');
   if (lines.length > MAX_PRESET_LINES)
-    throw new Error('ملف Preset يحتوي أسطرًا أكثر من الحد الآمن.');
+    throw new Error("Het Preset-bestand bevat meer lijnen dan de veilige limiet.");
   const descriptions: string[] = [];
   const includeWarnings: string[] = [];
   const includeDisclaimers: string[] = [];
@@ -304,7 +304,7 @@ export function parseFirmwarePresetDocument(
         item.value ||
         item.key.replace(/^OPTION BEGIN\s*(?:\((?:UN)?CHECKED\))?/i, '').trim();
       if (!name || (!checked && !unchecked))
-        throw new Error('تعريف خيار Preset غير صالح.');
+        throw new Error("De definitie van de optie Preset is niet geldig.");
       options.push(
         Object.freeze({
           name,
@@ -339,7 +339,7 @@ export async function expandFirmwarePresetIncludes(
   visited = new Set<string>(),
 ): Promise<readonly string[]> {
   if (depth > MAX_INCLUDE_DEPTH)
-    throw new Error('تداخل INCLUDE في Preset أعمق من الحد الآمن.');
+    throw new Error("INCLUDE gaat in de Preset dieper over dan de veiligheidsgrens.");
   const result: string[] = [];
   for (const line of lines) {
     const path = includePath(line);
@@ -348,10 +348,10 @@ export async function expandFirmwarePresetIncludes(
       continue;
     }
     if (!isSafePresetPath(path))
-      throw new Error(`مسار INCLUDE غير آمن: ${path}`);
-    if (visited.has(path)) throw new Error(`حلقة INCLUDE مكتشفة: ${path}`);
+      throw new Error(`INCLUDE spoor onveilig: ${path}`);
+    if (visited.has(path)) throw new Error(`INCLUDE-ring ontdekt: ${path}`);
     if (visited.size >= MAX_INCLUDED_FILES)
-      throw new Error('عدد ملفات INCLUDE أكبر من الحد الآمن.');
+      throw new Error("Het aantal INCLUDE-bestanden is groter dan de veiligheidsgrens.");
     visited.add(path);
     const nested = parseFirmwarePresetDocument(await load(path));
     result.push(

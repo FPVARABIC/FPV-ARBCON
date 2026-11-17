@@ -108,19 +108,19 @@ describe('buildFlashReport', () => {
       60_000,
       {buildIdentity: 'abc1234', lastErrorCode: 'DFU_TRANSFER_FAILED'},
     );
-    expect(report).toContain('الطريقة: DFU_WEBUSB');
-    expect(report).toContain('المرحلة: MANIFESTING');
-    expect(report).toContain('رقم الكتلة: 812');
-    expect(report).toContain('آخر عملية مكتملة: verify block 811');
+    expect(report).toContain("De methode: DFU_WEBUSB");
+    expect(report).toContain("Stage: MANIFESTING");
+    expect(report).toContain("Massasnummer: 812");
+    expect(report).toContain("Het laatste proces voltooid: verify block 811.");
     expect(report).toContain('STM32 BOOTLOADER 0483:df11');
-    expect(report).toContain('آخر كود خطأ: DFU_TRANSFER_FAILED');
-    expect(report).toContain('البنية: abc1234');
+    expect(report).toContain("De laatste foutcode: DFU_TRANSFER_FAILED");
+    expect(report).toContain("Structuur: abc1234");
   });
 
   it('states explicitly that a pending WebUSB transfer cannot be cancelled', () => {
     const report = buildFlashReport(snapshotOf(), 20_000);
-    expect(report).toContain('قد يكون نقل المتصفح ما زال معلّقًا: نعم');
-    expect(report).toContain('لا يمكن إلغاء نقل WebUSB');
+    expect(report).toContain("Het is mogelijk dat de browser overdracht nog niet is voltooid: Ja");
+    expect(report).toContain("Opmerking: WebUSB-transmissie in werking kan niet worden geannuleerd; De bovenstaande classificatie beschrijft de interface-status van het apparaat.");
   });
 
   it('prints an unavailable fact as unavailable, never as a plausible zero', () => {
@@ -128,9 +128,9 @@ describe('buildFlashReport', () => {
       snapshotOf({blockNumber: undefined, targetIdentity: undefined}),
       20_000,
     );
-    expect(report).toContain('رقم الكتلة: غير متاح');
-    expect(report).toContain('الجهاز الهدف: غير متاح');
-    expect(report).not.toContain('رقم الكتلة: 0');
+    expect(report).toContain("Massasnummer: Niet beschikbaar");
+    expect(report).toContain("Doel: Niet beschikbaar.");
+    expect(report).not.toContain("Massasnummer: 0");
   });
 
   it('carries no firmware content and no payload bytes - it is counters and codes only', () => {

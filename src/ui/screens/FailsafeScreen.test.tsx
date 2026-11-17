@@ -124,16 +124,16 @@ describe('the GPS Rescue card', () => {
     const screen = await render(loader(snapshot));
 
     // 120 m return altitude, straight from the payload.
-    expect(screen.stepper('failsafe-gps-return-altitude').value).toBe('120 م');
+    expect(screen.stepper('failsafe-gps-return-altitude').value).toBe("120 m");
     // 850 cm/s on the wire is 8.5 m/s to a pilot - the conversion
     // Betaflight's own UI makes, and the one that stops a return speed
     // from reading like a satellite count.
-    expect(screen.stepper('failsafe-gps-ground-speed').value).toBe('8.5 م/ث');
-    expect(screen.stepper('failsafe-gps-ascend-rate').value).toBe('6.4 م/ث');
+    expect(screen.stepper('failsafe-gps-ground-speed').value).toBe("8.5 m/s");
+    expect(screen.stepper('failsafe-gps-ascend-rate').value).toBe("6.4 m/s");
     // 155 cm/s is 1.55 m/s, NOT 1.6. Rounding a rate to one decimal
     // turned the firmware's own 25 cm/s floor into "0.3 m/s" - a number
     // the board would refuse.
-    expect(screen.stepper('failsafe-gps-descend-rate').value).toBe('1.55 م/ث');
+    expect(screen.stepper('failsafe-gps-descend-rate').value).toBe("1.55 m/s");
     screen.unmount();
   });
 
@@ -196,14 +196,14 @@ describe('the GPS Rescue card', () => {
     const wide: MspFailsafeSnapshot = {...snapshot, gpsRescue: decodeGpsRescue(gpsRescuePayload({minStartDistM: 100}))};
     const controller = loader(wide);
     const screen = await render(controller);
-    expect(screen.stepper('failsafe-gps-min-start-distance').value).toBe('100 م');
+    expect(screen.stepper('failsafe-gps-min-start-distance').value).toBe("100 m");
 
     await ReactTestRenderer.act(async () => {
       screen.stepper('failsafe-gps-min-start-distance').onDecrement();
       await Promise.resolve();
     });
 
-    expect(screen.stepper('failsafe-gps-min-start-distance').value).toBe('30 م');
+    expect(screen.stepper('failsafe-gps-min-start-distance').value).toBe("30 m");
     screen.unmount();
   });
 });
@@ -222,16 +222,16 @@ describe('failsafe timings read as seconds and save as deciseconds', () => {
     const screen = await render(loader(snapshot));
 
     // 15 deciseconds IS 1.5 seconds. The old copy said "15 ×0.1s".
-    expect(screen.stepper('failsafe-delay').value).toBe('1.5 ثانية');
+    expect(screen.stepper('failsafe-delay').value).toBe("1.5 seconden");
     // 100 deciseconds is a round 10 seconds - and must not read "10.0".
-    expect(screen.stepper('failsafe-throttle-low-delay').value).toBe('10 ثانية');
+    expect(screen.stepper('failsafe-throttle-low-delay').value).toBe("10 seconden");
     screen.unmount();
   });
 
   it('states the range in seconds too, so the label and the value agree', async () => {
     const screen = await render(loader(snapshot));
     const shown = JSON.stringify(screen.renderer.toJSON());
-    expect(shown).toContain('0.1–20 ثانية');
+    expect(shown).toContain("0.1–20 seconden");
     expect(shown).not.toContain('×0.1s');
     screen.unmount();
   });
@@ -248,7 +248,7 @@ describe('failsafe timings read as seconds and save as deciseconds', () => {
       screen.stepper('failsafe-delay').onIncrement();
       await Promise.resolve();
     });
-    expect(screen.stepper('failsafe-delay').value).toBe('1.6 ثانية');
+    expect(screen.stepper('failsafe-delay').value).toBe("1.6 seconden");
 
     await ReactTestRenderer.act(async () => {
       await screen.find('failsafe-save-bar').props.onSave();
@@ -267,7 +267,7 @@ describe('failsafe timings read as seconds and save as deciseconds', () => {
     // to whole seconds would make the floor unreachable.
     const low = {...snapshot, config: {...snapshot.config, delayDeciseconds: 1}};
     const screen = await render(loader(low));
-    expect(screen.stepper('failsafe-delay').value).toBe('0.1 ثانية');
+    expect(screen.stepper('failsafe-delay').value).toBe("0.1 seconden");
     screen.unmount();
   });
 });

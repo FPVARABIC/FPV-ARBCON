@@ -56,11 +56,11 @@ describe('Button', () => {
   it('fires onPress and carries the button role and label', () => {
     const onPress = jest.fn();
     const tree = create(
-      <Button label="حفظ" onPress={onPress} variant="primary" testID="b" />,
+      <Button label="Opslaan" onPress={onPress} variant="primary" testID="b" />,
     );
     const pressable = findHost(tree, 'b');
     expect(pressable.props.accessibilityRole).toBe('button');
-    expect(pressable.props.accessibilityLabel).toBe('حفظ');
+    expect(pressable.props.accessibilityLabel).toBe("Opslaan");
     press(tree, 'b');
     expect(onPress).toHaveBeenCalledTimes(1);
     act(() => tree.unmount());
@@ -69,7 +69,7 @@ describe('Button', () => {
   it('reports disabled through accessibilityState and blocks presses', () => {
     const onPress = jest.fn();
     const tree = create(
-      <Button label="حفظ" onPress={onPress} disabled testID="b" />,
+      <Button label="Opslaan" onPress={onPress} disabled testID="b" />,
     );
     expect(findHost(tree, 'b').props.accessibilityState).toEqual({
       disabled: true,
@@ -89,7 +89,7 @@ describe('IconButton', () => {
     const tree = create(
       <IconButton
         icon="x"
-        accessibilityLabel="إغلاق"
+        accessibilityLabel="Sluiten"
         onPress={() => {}}
         size={18}
         testID="ib"
@@ -137,7 +137,7 @@ describe('Stepper', () => {
         onDecrement={dec}
         onIncrement={inc}
         decrementDisabled
-        accessibilityLabel="عدد الخلايا"
+        accessibilityLabel="Aantal cellen"
         testID="st"
       />,
     );
@@ -161,7 +161,7 @@ describe('ChoiceChips', () => {
         ]}
         selectedKey="b"
         onSelect={() => {}}
-        accessibilityLabel="الخيارات"
+        accessibilityLabel="Keuzes."
         testID="cc"
       />,
     );
@@ -176,7 +176,7 @@ describe('ChoiceChips', () => {
 describe('SelectField', () => {
   const OPTIONS = [
     {key: 'gps', label: 'GPS'},
-    {key: 'none', label: 'بدون'},
+    {key: 'none', label: "Geen"},
   ] as const;
 
   it('opens a MODAL sheet (never an anchored overlay) and selects', () => {

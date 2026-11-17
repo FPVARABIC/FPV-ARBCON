@@ -485,8 +485,8 @@ testOwningRenderer('a cold start is HOME and only Home - no configuration UI exi
   expect(isOnSetupScreen(renderer)).toBe(false);
   // The spies were installed above the module-scope load of ../App, so
   // these still assert on App.tsx's own one-time module-scope RTL forcing.
-  expect(allowRTLSpy).toHaveBeenCalledWith(true);
-  expect(forceRTLSpy).toHaveBeenCalledWith(true);
+  expect(allowRTLSpy).toHaveBeenCalledWith(false);
+  expect(forceRTLSpy).toHaveBeenCalledWith(false);
 });
 
 describe('App - Pass 7.7B: coverage lifecycle', () => {

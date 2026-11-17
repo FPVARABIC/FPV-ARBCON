@@ -67,7 +67,7 @@ describe('FirmwarePresetRepository', () => {
       'presets/2025.12/tune/test.txt': `${main}\nset injected = 1`,
     });
     const catalog = await repo.loadIndex();
-    await expect(repo.loadPreset(catalog.presets[0])).rejects.toThrow(/بصمة/);
+    await expect(repo.loadPreset(catalog.presets[0])).rejects.toThrow(new RegExp("Preset-filtring niet overeenkomt met de officiële index; Er worden geen ongedocumenteerde orders gegeven\\."));
   });
 
   it('checks HTTP status and response size instead of parsing an error page', async () => {

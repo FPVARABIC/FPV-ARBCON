@@ -559,15 +559,15 @@ const styles = StyleSheet.create({
   eyebrow: {
     ...typography.eyebrow,
     color: colors.accentStrong,
-    writingDirection: 'rtl'},
+    writingDirection: 'ltr'},
   title: {
     ...typography.sectionTitle,
     color: colors.textPrimary,
-    writingDirection: 'rtl'},
+    writingDirection: 'ltr'},
   caption: {
     ...typography.caption,
     color: colors.textSecondary,
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   rows: { gap: spacing.xs },
   row: {
     flexDirection: 'row',
@@ -598,11 +598,11 @@ const styles = StyleSheet.create({
   rowRelation: {
     ...typography.caption,
     color: colors.textSecondary,
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   rowResource: {
     ...typography.body,
     color: colors.textPrimary,
-    writingDirection: 'rtl',
+    writingDirection: 'ltr',
     flexShrink: 1, maxWidth: PROSE_MEASURE},
   editor: {
     gap: spacing.sm,
@@ -617,26 +617,26 @@ const styles = StyleSheet.create({
     ...typography.body,
     color: colors.textPrimary,
     fontWeight: '700',
-    writingDirection: 'rtl'},
+    writingDirection: 'ltr'},
   pending: {
     ...typography.caption,
     color: colors.warning,
     fontWeight: '600',
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   error: {
     ...typography.body,
     color: colors.error,
     fontWeight: '700',
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   resultGood: {
     ...typography.body,
     color: colors.success,
     fontWeight: '700',
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   progress: {
     ...typography.body,
     color: colors.accentStrong,
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   primaryButton: {
     minHeight: 48,
     alignSelf: 'flex-start',
@@ -650,7 +650,7 @@ const styles = StyleSheet.create({
   primaryButtonText: {
     ...typography.label,
     color: colors.accentText,
-    writingDirection: 'rtl'},
+    writingDirection: 'ltr'},
   buttonDisabled: { backgroundColor: colors.surfaceAlt },
   secondaryButton: {
     minHeight: 44,
@@ -665,5 +665,5 @@ const styles = StyleSheet.create({
   secondaryButtonText: {
     ...typography.label,
     color: colors.textPrimary,
-    writingDirection: 'rtl'},
+    writingDirection: 'ltr'},
 });

@@ -44,7 +44,7 @@ export class ReactNativeSerialPort {
   private terminalError: Error | null = null;
   private deviceLostCallback: (() => void) | null = null;
   private readonly handleAbort = () => {
-    this.fail(new RawSerialError('أُلغيَت عملية Firmware.', 'SERIAL_OPERATION_CANCELLED'));
+    this.fail(new RawSerialError("Operatie Firmware. is geannuleerd.", 'SERIAL_OPERATION_CANCELLED'));
   };
 
   constructor(
@@ -123,7 +123,7 @@ export class ReactNativeSerialPort {
     });
     this.unsubscribeDetached = this.client.onSessionDetached(event => {
       if (event.sessionId === sessionId) {
-        this.fail(new RawSerialError('تم فصل جهاز USB أثناء عملية Firmware.', 'SERIAL_DEVICE_DETACHED'));
+        this.fail(new RawSerialError("Het USB is ontkoppeld tijdens Firmware..", 'SERIAL_DEVICE_DETACHED'));
         this.deviceLostCallback?.();
       }
     });
@@ -144,7 +144,7 @@ export class ReactNativeSerialPort {
     this.unsubscribeDetached?.();
     this.unsubscribeData = null;
     this.unsubscribeDetached = null;
-    this.rejectWaiter(new RawSerialError('تم إغلاق جلسة Firmware.', 'SERIAL_SESSION_CLOSED'));
+    this.rejectWaiter(new RawSerialError("Firmware. is afgesloten.", 'SERIAL_SESSION_CLOSED'));
     if (sessionId !== null) {
       await this.client.stopReading(sessionId).catch(() => undefined);
       await this.client.closeSession(sessionId);
@@ -174,7 +174,7 @@ export class ReactNativeSerialPort {
       }
       const remaining = deadline - Date.now();
       if (remaining <= 0) {
-        throw new RawSerialError('انتهت مهلة انتظار حزمة ESP bootloader.');
+        throw new RawSerialError("ESP bootloader. wachttijd is voorbij.");
       }
       await this.waitForData(remaining);
     }
@@ -186,7 +186,7 @@ export class ReactNativeSerialPort {
       this.throwIfUnavailable();
       const remaining = deadline - Date.now();
       if (remaining <= 0) {
-        throw new RawSerialError(`انتهت مهلة استقبال ${length} بايت من bootloader.`);
+        throw new RawSerialError(`${length} byte van bootloader. is uit.`);
       }
       await this.waitForData(remaining);
     }
@@ -270,10 +270,10 @@ export class ReactNativeSerialPort {
         continue;
       }
       index += 1;
-      if (index >= framed.length) throw new RawSerialError('حزمة SLIP تنتهي بمحرف escape ناقص.');
+      if (index >= framed.length) throw new RawSerialError("Het SLIP-pakket eindigt met een minus escape.");
       if (framed[index] === 0xdc) decoded.push(0xc0);
       else if (framed[index] === 0xdd) decoded.push(0xdb);
-      else throw new RawSerialError('حزمة SLIP تحتوي escape غير صالح.');
+      else throw new RawSerialError("Het SLIP pakket bevat escape niet geldig.");
     }
     return Uint8Array.from(decoded);
   }
@@ -281,7 +281,7 @@ export class ReactNativeSerialPort {
   private append(bytes: Uint8Array): void {
     if (bytes.length === 0 || this.closed) return;
     if (this.rawBuffer.length + bytes.length > MAX_BUFFERED_BYTES) {
-      this.fail(new RawSerialError('تجاوز مخزن الاستقبال الحد الآمن أثناء التفليش.'));
+      this.fail(new RawSerialError("De ontvangstruimte is tijdens flashen overschreden."));
       return;
     }
     const combined = new Uint8Array(this.rawBuffer.length + bytes.length);
@@ -298,12 +298,12 @@ export class ReactNativeSerialPort {
 
   private waitForData(timeout: number): Promise<void> {
     if (this.waiter !== null) {
-      return Promise.reject(new RawSerialError('لا يُسمح بقراءتين متوازيتين من جلسة Firmware.'));
+      return Promise.reject(new RawSerialError("Twee parallelle lezingen van Firmware. zijn niet toegestaan."));
     }
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         if (this.waiter?.timer === timer) this.waiter = null;
-        reject(new RawSerialError('انتهت مهلة استقبال بيانات bootloader.'));
+        reject(new RawSerialError("bootloader.-gegevens zijn af."));
       }, timeout);
       this.waiter = {resolve, reject, timer};
     });
@@ -324,12 +324,12 @@ export class ReactNativeSerialPort {
   }
 
   private requireSession(): string {
-    if (this.sessionId === null) throw new RawSerialError('جلسة Firmware غير مفتوحة.');
+    if (this.sessionId === null) throw new RawSerialError("Firmware is niet open.");
     return this.sessionId;
   }
 
   private throwIfUnavailable(): void {
-    if (this.signal?.aborted) throw new RawSerialError('أُلغيَت عملية Firmware.', 'SERIAL_OPERATION_CANCELLED');
+    if (this.signal?.aborted) throw new RawSerialError("Operatie Firmware. is geannuleerd.", 'SERIAL_OPERATION_CANCELLED');
     if (this.terminalError !== null) throw this.terminalError;
   }
 }

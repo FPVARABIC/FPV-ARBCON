@@ -102,10 +102,9 @@ if (IS_PREVIEW_BUILD) {
 // src/navigation/tabs.ts on tab order). react-native-web reads this the
 // same way React Native does, and index.html carries dir="rtl" so the
 // document itself agrees before the first paint.
-if (!I18nManager.isRTL) {
-  I18nManager.allowRTL(true);
-  I18nManager.forceRTL(true);
-}
+// Dutch must also start LTR on devices previously configured for RTL.
+I18nManager.allowRTL(false);
+I18nManager.forceRTL(false);
 
 // Module scope, not an effect: a screen that alerts during its very first
 // render must find the real implementation already installed.

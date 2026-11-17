@@ -20,7 +20,7 @@ import {
   verifySelectedDfuDevice,
 } from './bootloaderTransition';
 import type {DfuIdentity, PendingBootloaderFlash} from './bootloaderTransition';
-import ar from '../../i18n/locales/ar.json';
+import ar from '../../i18n/locales/nl.json';
 
 const PENDING: PendingBootloaderFlash = Object.freeze({
   operationId: 'flash-1',
@@ -146,7 +146,7 @@ describe('every state and refusal reason is translated', () => {
   it('the permission copy states plainly that nothing is re-sent or re-written', () => {
     const body = (ar.firmwareFlasher as unknown as Record<string, string>)
       .permissionNeededBody;
-    expect(body).toContain('لن يُعاد إرسال أمر إعادة التشغيل');
-    expect(body).toContain('مسح');
+    expect(body).toContain("De herstartopdracht is verzonden en de vluchtcontroller verschijnt in DFU-modus. De browser vereist dat u het apparaat de eerste keer handmatig kiest. De herstartopdracht wordt niet opnieuw verzonden; wissen en schrijven zijn nog niet gestart.");
+    expect(body).toContain("De herstartopdracht is verzonden en de vluchtcontroller verschijnt in DFU-modus. De browser vereist dat u het apparaat de eerste keer handmatig kiest. De herstartopdracht wordt niet opnieuw verzonden; wissen en schrijven zijn nog niet gestart.");
   });
 });

@@ -24,18 +24,18 @@ describe('parseIntelHex', () => {
 
   it('rejects bad checksums, missing EOF, and overlapping address ranges', () => {
     expect(() => parseIntelHex(':0100000001FF\n:00000001FF')).toThrow(IntelHexError);
-    expect(() => parseIntelHex(record(0, 0, [1]))).toThrow(/نهاية/);
+    expect(() => parseIntelHex(record(0, 0, [1]))).toThrow(new RegExp("Intel HEX heeft geen eindregister\\."));
     expect(() => parseIntelHex([
       record(0, 4, [0x08, 0x00]),
       record(0, 0, [1, 2]),
       record(1, 0, [3]),
       record(0, 1, []),
-    ].join('\n'))).toThrow(/متداخلة/);
+    ].join('\n'))).toThrow(new RegExp("Het Intel HEX bestand bevat overlappende geheugengebieden\\."));
   });
 
   it('rejects data after EOF and unsupported record types', () => {
-    expect(() => parseIntelHex(`${record(0, 1, [])}\n${record(0, 0, [1])}`)).toThrow(/بعد سجل/);
-    expect(() => parseIntelHex(`${record(0, 6, [1])}\n${record(0, 1, [])}`)).toThrow(/غير مدعوم/);
+    expect(() => parseIntelHex(`${record(0, 1, [])}\n${record(0, 0, [1])}`)).toThrow(/na het eindregister/);
+    expect(() => parseIntelHex(`${record(0, 6, [1])}\n${record(0, 1, [])}`)).toThrow(/niet[- ]ondersteund/);
   });
 
   it('merges thousands of normal short records into one contiguous region', () => {

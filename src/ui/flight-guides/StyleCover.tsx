@@ -75,7 +75,7 @@ export function StyleCover({
         style={styles.image}
         resizeMode={fit}
         accessible
-        accessibilityLabel={`صورة ${titleAr}`}
+        accessibilityLabel={`Afbeelding ${titleAr}`}
       />
     </View>
   );

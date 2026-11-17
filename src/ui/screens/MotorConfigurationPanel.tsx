@@ -922,19 +922,19 @@ const styles = StyleSheet.create({
   eyebrow: {
     ...typography.eyebrow,
     color: colors.accentStrong,
-    writingDirection: 'rtl'},
+    writingDirection: 'ltr'},
   title: {
     ...typography.title,
     color: colors.textPrimary,
-    writingDirection: 'rtl'},
+    writingDirection: 'ltr'},
   caption: {
     ...typography.caption,
     color: colors.textSecondary,
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   infoText: {
     ...typography.body,
     color: colors.accentStrong,
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   section: {
     gap: spacing.md,
     backgroundColor: colors.backgroundRaised,
@@ -947,7 +947,7 @@ const styles = StyleSheet.create({
   sectionTitle: {
     ...typography.sectionTitle,
     color: colors.textPrimary,
-    writingDirection: 'rtl'},
+    writingDirection: 'ltr'},
   settingRow: {
     minHeight: MIN_TOUCH_TARGET,
     flexDirection: 'row',
@@ -961,7 +961,7 @@ const styles = StyleSheet.create({
     ...typography.body,
     color: colors.textPrimary,
     fontWeight: '700',
-    writingDirection: 'rtl'},
+    writingDirection: 'ltr'},
   protocolGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs },
   protocolChip: {
     minHeight: MIN_TOUCH_TARGET,
@@ -1033,7 +1033,7 @@ const styles = StyleSheet.create({
     ...typography.body,
     color: colors.accentText,
     fontWeight: '700',
-    writingDirection: 'rtl'},
+    writingDirection: 'ltr'},
   secondaryButton: {
     flex: 1,
     minHeight: MIN_TOUCH_TARGET + 4,
@@ -1048,22 +1048,22 @@ const styles = StyleSheet.create({
     ...typography.body,
     color: colors.textPrimary,
     fontWeight: '700',
-    writingDirection: 'rtl'},
+    writingDirection: 'ltr'},
   confirmation: {...noticeSurface, gap: spacing.md,
     borderColor: colors.warning,
     backgroundColor: colors.warningSoft},
   confirmationTitle: {
     ...typography.sectionTitle,
     color: colors.warning,
-    writingDirection: 'rtl'},
+    writingDirection: 'ltr'},
   errorNotice: {...noticeSurface, backgroundColor: colors.errorSoft},
   errorText: {
     ...typography.body,
     color: colors.error,
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   successNotice: {...noticeSurface, backgroundColor: colors.successSoft},
   successText: {
     ...typography.body,
     color: colors.success,
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
 });

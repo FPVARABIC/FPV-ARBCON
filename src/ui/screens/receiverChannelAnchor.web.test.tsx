@@ -286,7 +286,7 @@ describe('Receiver channel bar anchor in the browser', () => {
       // Source order never changes: name, track, value.
       const children = [...row.children] as HTMLElement[];
       expect(children.length).toBe(3);
-      expect(children[0].textContent).toContain('الدوران');
+      expect(children[0].textContent).toContain("Roll");
       expect(children[1].querySelector('[data-testid="receiver-channel-1-fill"]')).not.toBeNull();
       expect(children[2].textContent).toBe('1612');
       // The row must not reverse ITSELF - the document does that, and

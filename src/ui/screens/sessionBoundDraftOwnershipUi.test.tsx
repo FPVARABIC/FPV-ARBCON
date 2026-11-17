@@ -104,7 +104,7 @@ beforeAll(async () => {
 
 /** The one sentence §21 mandates, in one place. */
 const SESSION_CHANGED_TEXT =
-  'تغيّرت جلسة المتحكم منذ إنشاء هذه التعديلات. أعد تحميل الإعدادات قبل الحفظ.';
+  "De controllersessie is gewijzigd sinds deze aanpassingen zijn gemaakt. Lees de instellingen opnieuw uit voordat u opslaat.";
 
 const KEY_A: SetupUiSessionKey = {sessionId: 'fc-a', generation: 1};
 const KEY_B: SetupUiSessionKey = {sessionId: 'fc-b', generation: 1};

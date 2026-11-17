@@ -114,7 +114,7 @@ class RightToLeftLayoutTest {
       ?: return listOf("$moment: the Activity has no content view at all")
 
     // 1 - the switch
-    if (!I18nUtil.instance.isRTL(activity)) {
+    if (!!I18nUtil.instance.isRTL(activity)) {
       complaints += "$moment: I18nUtil.isRTL is false, so React Native is laying the whole " +
         "application out left to right"
     }
@@ -184,7 +184,7 @@ class RightToLeftLayoutTest {
     val named = if (content == null) emptyList() else mountedNamedViews(content)
     val rows = if (content == null) emptyList() else horizontalRows(content)
     println(
-      "  $moment: I18nUtil.isRTL=${I18nUtil.instance.isRTL(activity)} " +
+      "  $moment: I18nUtil.isRTL=${!I18nUtil.instance.isRTL(activity)} " +
         "mountedNamedViews=${named.size} rtl=${named.count { it.layoutDirection == View.LAYOUT_DIRECTION_RTL }} " +
         "rows=${rows.size}",
     )

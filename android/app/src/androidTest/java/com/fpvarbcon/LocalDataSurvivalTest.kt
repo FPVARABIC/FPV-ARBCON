@@ -127,10 +127,10 @@ class LocalDataSurvivalTest {
    */
   @Test
   fun theLayoutDirectionPreferenceIsNotClearedByTheBackupConfiguration() {
-    applyArabicLayoutDirection(context)
+    applyDutchLayoutDirection(context)
     val preferences = context.getSharedPreferences(RN_RTL_PREFERENCES, Context.MODE_PRIVATE)
     assertTrue(
-      "$RN_RTL_PREFERENCES does not hold $RN_RTL_KEY_FORCE after applyArabicLayoutDirection",
+      "$RN_RTL_PREFERENCES does not hold $RN_RTL_KEY_FORCE after applyDutchLayoutDirection",
       preferences.contains(RN_RTL_KEY_FORCE),
     )
 
@@ -144,8 +144,8 @@ class LocalDataSurvivalTest {
       after.contains(RN_RTL_KEY_FORCE),
     )
     assertTrue(
-      "$RN_RTL_KEY_FORCE is no longer true, so the next launch would come back left-to-right",
-      after.getBoolean(RN_RTL_KEY_FORCE, false),
+      "$RN_RTL_KEY_FORCE is no longer false, so the next launch would come back right-to-left",
+      !after.getBoolean(RN_RTL_KEY_FORCE, true),
     )
   }
 }

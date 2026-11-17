@@ -696,24 +696,24 @@ describe('the partial-apply vocabulary distinguishes the two RAM-moved cases', (
   it('never says the save failed, and never says it succeeded', () => {
     for (const text of [everything, some]) {
       /* «فشل الحفظ» means nothing happened. Something did. */
-      expect(text).not.toContain('فشل الحفظ');
+      expect(text).not.toContain("Opslaan mislukt");
       /* «تم الحفظ» claims permanence that does not exist. */
-      expect(text).not.toContain('تم الحفظ');
+      expect(text).not.toContain("Opgeslagen");
     }
   });
 
   it('names working memory against permanent storage in both', () => {
     for (const text of [everything, some]) {
-      expect(text).toContain('الذاكرة العاملة');
-      expect(text).toContain('لا تكرر الحفظ');
+      expect(text).toContain('werkgeheugen');
+      expect(text).toContain('Sla niet opnieuw op');
     }
   });
 
   it('separates "all of it is live" from "some of it is live"', () => {
     expect(everything).not.toBe(some);
     // Only the mixed case may warn about a mixture.
-    expect(some).toContain('خليط');
-    expect(everything).not.toContain('خليط');
+    expect(some).toContain('mix');
+    expect(everything).not.toContain('mix');
   });
 });
 

@@ -262,7 +262,7 @@ describe('firmware preset catalog', () => {
         ['#$ INCLUDE: presets/cycle.txt'],
         async path => files[path],
       ),
-    ).rejects.toThrow(/حلقة/);
+    ).rejects.toThrow(/INCLUDE-ring/);
   });
 
   it('matches published SHA-256 vectors without platform crypto APIs', () => {

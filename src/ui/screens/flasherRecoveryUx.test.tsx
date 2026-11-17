@@ -222,7 +222,7 @@ describe('a failed download offers the retry its own sentence promises', () => {
 
     // The defect state: the notice is up and the catalogue is empty.
     expect(exists(renderer, 'simple-problem-notice')).toBe(true);
-    expect(screenText(renderer)).toContain('تعذّر تحميل قائمة اللوحات');
+    expect(screenText(renderer)).toContain("De lijst met printplaten kon niet worden geladen");
     expect(api.targetsCalls()).toBe(1);
 
     // The control the sentence implies exists, and does what it says.
@@ -232,7 +232,7 @@ describe('a failed download offers the retry its own sentence promises', () => {
 
     expect(api.targetsCalls()).toBe(2);
     expect(exists(renderer, 'simple-problem-notice')).toBe(false);
-    expect(screenText(renderer)).not.toContain('تعذّر تحميل قائمة اللوحات');
+    expect(screenText(renderer)).not.toContain("De lijst met printplaten kon niet worden geladen");
 
     // And the retry actually produced the catalogue, not just a cleared
     // banner: the boards are selectable now.
@@ -267,7 +267,7 @@ describe('every numbered step says what it is waiting for', () => {
     const {renderer} = await renderScreen();
 
     expect(exists(renderer, 'simple-release-placeholder')).toBe(true);
-    expect(screenText(renderer)).toContain('اختر اللوحة أولًا لعرض الإصدارات المتاحة.');
+    expect(screenText(renderer)).toContain("Kies eerst een printplaat om de beschikbare versies te zien.");
 
     await press(renderer, 'simple-target-selector');
     await press(renderer, 'simple-target-KAKUTEH7');
@@ -288,7 +288,7 @@ describe('every numbered step says what it is waiting for', () => {
 
     expect(exists(renderer, 'simple-release-placeholder')).toBe(true);
     expect(screenText(renderer)).toContain(
-      'لا توجد إصدارات معروضة لهذه اللوحة في القناة الحالية.',
+      "Geen versies voor deze printplaat in het huidige kanaal.",
     );
     act(() => renderer.unmount());
   });
@@ -364,14 +364,14 @@ describe('advice that has been followed stops being shown', () => {
     await flush(24);
 
     expect(exists(renderer, 'simple-detection-note')).toBe(true);
-    expect(screenText(renderer)).toContain('اختر Target يدويًا');
+    expect(screenText(renderer)).toContain("Kies Target handmatig");
 
     await press(renderer, 'simple-target-selector');
     await press(renderer, 'simple-target-KAKUTEH7');
     await flush(24);
 
     expect(exists(renderer, 'simple-detection-note')).toBe(false);
-    expect(screenText(renderer)).not.toContain('اختر Target يدويًا');
+    expect(screenText(renderer)).not.toContain("Kies Target handmatig");
     act(() => renderer.unmount());
   });
 });

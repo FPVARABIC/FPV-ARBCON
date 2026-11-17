@@ -63,18 +63,18 @@ function expectedLine(step) {
   const options = step.targets.filter(t => t.kind === 'option' && t.expect === 'selected').length;
   const switches = step.targets.filter(t => t.kind === 'switch' && t.expect === 'on').length;
   const extra = [];
-  if (options > 0) extra.push(`${options} خيار محدَّد`);
-  if (switches > 0) extra.push(`${switches} مفتاح مفعّل`);
+  if (options > 0) extra.push(`${options} is een gespecificeerde optie.`);
+  if (switches > 0) extra.push(`${switches} is geactiveerd.`);
   return [...shown, ...extra].join(' · ');
 }
 
 /** The verdict table, so one sheet answers "did you forget anything?". */
 const LABEL = {
-  STEP: 'خطوة',
-  ACTION: 'إجراء',
-  PILOT_PREFERENCE: 'تفضيل الطيار',
-  KEEP_DEFAULT: 'اتركه كما هو',
-  NOT_APPLICABLE: 'لا ينطبق',
+  STEP: "Stap",
+  ACTION: "Actie",
+  PILOT_PREFERENCE: "Voorkeur van de piloot",
+  KEEP_DEFAULT: "Ongewijzigd laten",
+  NOT_APPLICABLE: "Niet van toepassing",
 };
 const TONE = {
   STEP: 'step', ACTION: 'act', PILOT_PREFERENCE: 'pref',
@@ -96,17 +96,7 @@ for (const style of STYLES) {
     // open the file itself.
     const size = pngSize(file);
     const tall = size.h / size.w > 3;
-    return `
-    <figure class="${tall ? 'tall' : ''}">
-      <img src="${dataUri(file, 'image/png')}" alt="">
-      <figcaption>
-        <b class="step">الخطوة ${step.n} — ${label(step.titleAr)}</b>
-        <span class="screen">${label(step.screen)}</span>
-        ${values ? `<span class="values">الموصى به: ${label(values)}</span>` : ''}
-        ${sources ? `<span class="src">${label(sources)}</span>` : ''}
-        <code>${escape(`${style.id}/images/${step.n}-${step.shot}.png`)} · ${size.w}×${size.h}</code>
-      </figcaption>
-    </figure>`;
+    return `<figure class="${tall ? 'tall' : ''}">       <img src="${dataUri(file, 'image/png')}" alt="">       <figcaption> < b class =" step De stap. ${step.n}  —  ${label(step.titleAr)} </ b >         <span class="screen">${label(step.screen)}</span>         ${values ? `span class values ${label(values)} span` : ''}         ${sources ? `<span class="src">${label(sources)}</span>` : ''}         <code>${escape(`${style.id}/images/${step.n}-${step.shot}.png`)} · ${size.w}×${size.h}</code>       </figcaption>     </figure>`;
   }).join('');
 
   const decisions = DECISIONS[style.id] ?? [];
@@ -115,56 +105,7 @@ for (const style of STYLES) {
         <td><span class="tag ${TONE[d.kind]}">${LABEL[d.kind]}</span></td>
         <td class="detail">${label(d.detail)}</td></tr>`).join('');
 
-  const html = `<!doctype html><html lang="ar" dir="rtl"><meta charset="utf-8"><style>
-    ${CAIRO}
-    :root{--ink:#12211f;--muted:#5d706e;--line:#ddd6c8;--accent:#0f6b6b;--paper:#faf8f3}
-    *{box-sizing:border-box}
-    body{margin:0;padding:34px 30px 40px;background:var(--paper);color:var(--ink);
-         font-family:Cairo,system-ui,'Segoe UI',Tahoma,sans-serif;font-size:15px;line-height:1.7}
-    h1{font-size:30px;font-weight:700;margin:0 0 2px;letter-spacing:-.2px}
-    .sub{margin:0 0 6px;color:var(--muted);font-size:14px}
-    .note{margin:0 0 26px;color:var(--accent);font-size:13px;font-weight:600}
-    .grid{display:flex;flex-wrap:wrap;gap:24px;align-items:flex-start}
-    figure{margin:0;width:326px;background:#fff;border:1px solid var(--line);
-           border-radius:16px;overflow:hidden;box-shadow:0 1px 2px rgba(0,0,0,.04)}
-    /* contain, not cover: a cropped thumbnail hides the very number the
-       caption promises. Tall cards scale down and stay complete. */
-    img{display:block;width:100%;height:auto;max-height:1000px;object-fit:contain;
-        object-position:top center;background:#fff;border-bottom:1px solid #efe9dc}
-    figure.tall{width:404px}
-    figure.tall img{max-height:2400px}
-    figcaption{padding:14px 16px 16px}
-    .step{display:block;font-size:16px;font-weight:700;color:var(--accent);margin-bottom:3px}
-    .screen{display:block;font-size:14px;color:var(--ink)}
-    .values{display:block;margin-top:7px;font-size:14px;font-weight:700}
-    .src{display:block;margin-top:3px;font-size:12.5px;color:var(--muted)}
-    code{display:block;margin-top:9px;font-size:11.5px;color:var(--muted);
-         direction:ltr;text-align:left;font-family:Cairo,ui-monospace,monospace}
-    h2{font-size:20px;font-weight:700;margin:38px 0 4px}
-    .h2sub{margin:0 0 14px;color:var(--muted);font-size:13.5px}
-    table{border-collapse:collapse;width:100%;max-width:1040px;background:#fff;
-          border:1px solid var(--line);border-radius:14px;overflow:hidden}
-    td{padding:10px 14px;border-top:1px solid #efe9dc;font-size:13.5px;vertical-align:top}
-    tr:first-child td{border-top:0}
-    td:first-child{font-weight:700;width:23%}
-    .detail{color:#33403f}
-    .tag{display:inline-block;padding:2px 10px;border-radius:999px;font-size:12.5px;
-         font-weight:700;white-space:nowrap}
-    .tag.step{background:#dff0ee;color:#0f6b6b}
-    .tag.act{background:#e3ecf7;color:#245080}
-    .tag.pref{background:#f6ecd8;color:#7a5714}
-    .tag.keep{background:#e8eae4;color:#4a544a}
-    .tag.na{background:#f0e6e6;color:#7a3b3b}
-  </style>
-  <h1>${label(style.titleAr)}</h1>
-  <p class="sub">${style.steps.length} خطوة · ورقة مراجعة هذا الركن وحده · لقطات من البناء الحالي</p>
-  <p class="note">القيم الظاهرة داخل كل صورة هي القيم التي يوصي بها هذا الدليل — مفحوصة على حالة عنصر التحكم نفسه، لا على وجود النص.</p>
-  <div class="grid">${cards}</div>
-  ${verdicts === '' ? '' : `
-  <h2>بقية الإعدادات — قرار لكل واحد</h2>
-  <p class="h2sub">ما لا تغيّره الخطوات أعلاه، وقرارُه في هذا النمط تحديدًا.</p>
-  <table>${verdicts}</table>`}
-  </html>`;
+  const html = `<!doctype html><html lang="ar" dir="rtl"><meta charset="utf-8"><style>     ${CAIRO}:root{--ink:#12211f;--muted:#5d706e;--line:#ddd6c8;--accent:#0f6b6b;--paper:#faf8f3}     *{box-sizing:border-box}     body{margin:0;padding:34px 30px 40px;background:var(--paper);color:var(--ink);          font-family:Cairo,system-ui,'Segoe UI',Tahoma,sans-serif;font-size:15px;line-height:1.7}     h1{font-size:30px;font-weight:700;margin:0 0 2px;letter-spacing:-.2px}.sub{margin:0 0 6px;color:var(--muted);font-size:14px}.note{margin:0 0 26px;color:var(--accent);font-size:13px;font-weight:600}.grid{display:flex;flex-wrap:wrap;gap:24px;align-items:flex-start}     figure{margin:0;width:326px;background:#fff;border:1px solid var(--line);            border-radius:16px;overflow:hidden;box-shadow:0 1px 2px rgba(0,0,0,.04)}     /* contain, not cover: a cropped thumbnail hides the very number the        caption promises. Tall cards scale down and stay complete. */     img{display:block;width:100%;height:auto;max-height:1000px;object-fit:contain;         object-position:top center;background:#fff;border-bottom:1px solid #efe9dc}     figure.tall{width:404px}     figure.tall img{max-height:2400px}     figcaption{padding:14px 16px 16px}.step{display:block;font-size:16px;font-weight:700;color:var(--accent);margin-bottom:3px}.screen{display:block;font-size:14px;color:var(--ink)}.values{display:block;margin-top:7px;font-size:14px;font-weight:700}.src{display:block;margin-top:3px;font-size:12.5px;color:var(--muted)}     code{display:block;margin-top:9px;font-size:11.5px;color:var(--muted);          direction:ltr;text-align:left;font-family:Cairo,ui-monospace,monospace}     h2{font-size:20px;font-weight:700;margin:38px 0 4px}.h2sub{margin:0 0 14px;color:var(--muted);font-size:13.5px}     table{border-collapse:collapse;width:100%;max-width:1040px;background:#fff;           border:1px solid var(--line);border-radius:14px;overflow:hidden}     td{padding:10px 14px;border-top:1px solid #efe9dc;font-size:13.5px;vertical-align:top}     tr:first-child td{border-top:0}     td:first-child{font-weight:700;width:23%}.detail{color:#33403f}.tag{display:inline-block;padding:2px 10px;border-radius:999px;font-size:12.5px;          font-weight:700;white-space:nowrap}.tag.step{background:#dff0ee;color:#0f6b6b}.tag.act{background:#e3ecf7;color:#245080}.tag.pref{background:#f6ecd8;color:#7a5714}.tag.keep{background:#e8eae4;color:#4a544a}.tag.na{background:#f0e6e6;color:#7a3b3b}   </style>   <h1>${label(style.titleAr)}</h1> < p class =" sub "> ${style.steps.length} Stap · Review sheet alleen deze hoek · Foto's van de huidige bouw</a> p > <p class="note">De waarden die binnen elke afbeelding verschijnen, zijn de waarden die dit gids aanbeveelt  —  gecontroleerd op de status van het beheerder zelf, niet op de aanwezigheid van de tekst.</p>   <div class="grid">${cards}</div>   ${verdicts === '' ? '' : `< h2 >Other settings  —  een besluit voor iedereen</ h2 > < p class =" h2sub ">Wat de stappen hierboven niet veranderen, zijn beslissingen in dit specifieke patroon. p >   <table>${verdicts}</table>`}   </html>`;
 
   const page = await browser.newPage({viewport: {width: 1120, height: 900}, deviceScaleFactor: 2});
   await page.setContent(html, {waitUntil: 'load'});
@@ -178,6 +119,6 @@ for (const style of STYLES) {
 }
 await browser.close();
 for (const m of made) {
-  console.log(`${m.style.padEnd(12)} ${m.steps} خطوة · ${m.verdicts} قرار  ${m.file}`);
+  console.log(`${m.style.padEnd(12)} ${m.steps} stap · ${m.verdicts} beslissing ${m.file}`);
 }
 console.log(`\n${made.length} contact sheets, one per corner`);

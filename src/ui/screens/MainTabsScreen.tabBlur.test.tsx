@@ -259,8 +259,8 @@ describe('Leaving the Motors tab triggers the existing stop/release path', () =>
     // may leave open indefinitely.
     expect(fires).toEqual(['blur']);
     expect(alert).toHaveBeenCalledTimes(1);
-    expect(alert.mock.calls[0][0]).toBe('تغييرات غير محفوظة');
-    expect(alert.mock.calls[0][1]).toContain('طُلِب إيقاف جلسة المحركات فوراً');
+    expect(alert.mock.calls[0][0]).toBe("Niet-opgeslagen wijzigingen");
+    expect(alert.mock.calls[0][1]).toContain("De motoren-zitting wordt onmiddellijk beëindigd. Je hebt niet opgeslagen veranderingen. Ga terug om ze te bewaren of ga verder na het bevestigen van de stop zonder bewaren.");
 
     const buttons = alert.mock.calls[0][2];
     ReactTestRenderer.act(() => buttons?.[1]?.onPress?.());
@@ -332,8 +332,8 @@ describe('Leaving the Motors tab triggers the existing stop/release path', () =>
 
     expect(fires).toEqual([]);
     expect(alert).toHaveBeenCalledWith(
-      'تعذر الانتقال بأمان',
-      expect.stringContaining('الإيقاف الطارئ'),
+      "Het is onmogelijk om veilig over te stappen.",
+      expect.stringContaining("motoren's stopbaan is niet voltooid. Gebruik de noodstop en probeer opnieuw."),
       expect.any(Array),
     );
     const motorsPanel = shell.renderer.root.findByProps({
@@ -358,8 +358,8 @@ describe('Raw CLI navigation guard', () => {
 
     shell.press('main-tab-SETUP');
     expect(alert).toHaveBeenCalledWith(
-      'جلسة CLI نشطة',
-      expect.stringContaining('احفظ أو ألغِ'),
+      "CLI is actief.",
+      expect.stringContaining("Bewaar of verwijder de sessie van het huidige scherm voordat je overgaat."),
     );
     expect(
       shell.renderer.root.findByProps({ testID: 'main-tab-panel-CLI' }).props
@@ -458,7 +458,7 @@ describe('Leaving Motors waits for the bounded stop result', () => {
     expect(motorsVisible(shell)).toBe(true);
     expect(alert).toHaveBeenCalledTimes(1);
     const [title, body] = alert.mock.calls[0];
-    expect(title).toContain('لم يتأكد إيقاف المحركات');
+    expect(title).toContain("motoren is nog niet bevestigd.");
     expect(String(body)).toContain('LiPo');
     shell.unmount();
   });

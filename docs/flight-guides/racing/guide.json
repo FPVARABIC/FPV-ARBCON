@@ -1,15 +1,15 @@
 {
   "id": "racing",
   "kind": "FLIGHT_STYLE",
-  "title_ar": "السباق",
+  "title_ar": "Racen",
   "title_en": "Racing",
-  "description_ar": "أقصر زمن حول مسار. كل شيء يُقاس بالتأخير.",
+  "description_ar": "De kortste tijd rond een baan. Alles wordt gemeten door vertraging.",
   "description_en": "Fastest lap around a track. Everything is measured in latency.",
   "difficulty": "advanced",
-  "difficulty_ar": "متقدم",
+  "difficulty_ar": "Geavanceerd",
   "intended_aircraft": [
-    "5 إنش على 6S",
-    "5 إنش على 4S"
+    "5 inch op 6S",
+    "5 inch op 4S"
   ],
   "required_screens": [
     "PidTuningScreen",
@@ -23,9 +23,9 @@
     "ModesScreen"
   ],
   "hardware_requirements": [
-    "ESC يدعم DShot600 و DShot ثنائي الاتجاه",
-    "إطار مخدوم — الضبط الحاد يكشف عيوب البناء",
-    "هوائي مرسل فيديو مركّب"
+    "ESC ondersteunt DShot600 en DShot bi-directief",
+    "De scherpe reglementering onthult de nadelen van de bouw.",
+    "Ik ben een videoverzender."
   ],
   "hardware_verification_status": "NOT VERIFIED — DEFERRED",
   "verification_level": "SOFTWARE / REFERENCE VERIFIED",
@@ -38,8 +38,8 @@
   "steps": [
     {
       "n": 1,
-      "title_ar": "المستقبل",
-      "screen": "المستقبل · بطاقة تنعيم الإشارة",
+      "title_ar": "Ontvanger",
+      "screen": "Ontvanger · Signaalfiltering",
       "screenshot": "images/1-receiver-smoothing.png",
       "targets": [
         {
@@ -58,8 +58,8 @@
     },
     {
       "n": 2,
-      "title_ar": "إحساس العصا",
-      "screen": "ضبط PID · بطاقة إحساس العصا",
+      "title_ar": "Stickrespons",
+      "screen": "PID-afstelling · Stickrespons",
       "screenshot": "images/2-pid-feel.png",
       "targets": [
         {
@@ -84,8 +84,8 @@
     },
     {
       "n": 3,
-      "title_ar": "المحركات",
-      "screen": "المحركات · إعدادات ESC",
+      "title_ar": "Motoren",
+      "screen": "Motoren · ESC-instellingen",
       "screenshot": "images/3-motors.png",
       "targets": [
         {
@@ -105,7 +105,7 @@
     {
       "n": 4,
       "title_ar": "Dynamic Idle",
-      "screen": "ضبط PID · بطاقة Dynamic Idle",
+      "screen": "PID-afstelling · Dynamic Idle",
       "screenshot": "images/4-dynamic-idle.png",
       "targets": [
         {
@@ -119,7 +119,7 @@
     {
       "n": 5,
       "title_ar": "Failsafe",
-      "screen": "Failsafe · إجراء المرحلة 2",
+      "screen": "Failsafe · Actie in fase 2",
       "screenshot": "images/5-failsafe.png",
       "targets": [
         {
@@ -133,7 +133,7 @@
     {
       "n": 6,
       "title_ar": "OSD",
-      "screen": "OSD · بطاقة التنبيهات",
+      "screen": "OSD · Waarschuwingen",
       "screenshot": "images/6-osd-alarms.png",
       "targets": [
         {
@@ -146,8 +146,8 @@
     },
     {
       "n": 7,
-      "title_ar": "مرسل الفيديو — قناتك ووضع الانتظار",
-      "screen": "مرسل الفيديو · القناة والطاقة",
+      "title_ar": "Videozender — Kanaal en stand-bymodus",
+      "screen": "Videozender · Kanaal en zendvermogen",
       "screenshot": "images/7-vtx.png",
       "targets": [
         {
@@ -174,45 +174,45 @@
   "step_count": 7,
   "decisions": [
     {
-      "requirement": "ترددا القطع (setpoint · الخانق)",
+      "requirement": "Afkapfrequenties (setpoint · gas)",
       "decision": "KEEP_DEFAULT",
-      "detail": "اتركهما 0. إعداد السباق الرسمي يخفض المعاملين التلقائيين إلى 25 بدل استعمال ترددات قطع ثابتة.",
+      "detail": "Laat ze 0. De officiële race-opstelling verlaagt de automatische processors naar 25 in plaats van het gebruik van vaste snijfrequenties.",
       "source": "S1.13"
     },
     {
       "requirement": "Rates",
       "decision": "PILOT_PREFERENCE",
-      "detail": "لا توجد Rates رسمية باسم «سباق». المكتبة تعرض ملفات مؤلفين كخيارات لا كقاعدة. المبدأ: expo أقل من الحر، لأن الدقة حول المنتصف أهم من مدى الطرف — والرقم يبقى اختيارك.",
+      "detail": "Er is geen officiële Rates als race. De bibliotheek laat auteursbestanden zien als opties, niet als regel. Beginsel: expo is minder vrij, omdat de nauwkeurigheid rond het midden belangrijker is dan de reikwijdte  —  en het getal blijft uw keuze.",
       "source": null
     },
     {
-      "requirement": "قيم PID (P · I · D)",
+      "requirement": "PID-waarden (P · I · D)",
       "decision": "KEEP_DEFAULT",
-      "detail": "إعداد السباق الرسمي يضبط PID عبر منزلقات simplified ثم `simplified_tuning apply`، وهي غير معروضة في التطبيق. لا تحاكِ النتيجة بتعديل P/I/D يدويًا.",
+      "detail": "PID wordt geconfigureerd via de simplified-slippers en vervolgens `simplified_tuning apply`, die niet in de app worden weergegeven. P/I/D niet handmatig aanpassen.",
       "source": "S1.9"
     },
     {
-      "requirement": "الفلاتر (Gyro LPF · D-term LPF · Dynamic Notch)",
+      "requirement": "Gyro LPF · D-term LPF · Dynamic Notch",
       "decision": "KEEP_DEFAULT",
-      "detail": "اتبع حزمة الضبط. القيم المرجعية (سقف 650Hz، أدنى 125Hz لبناء نظيف) في قسم «اختياري».",
+      "detail": "Volg het aanpassingspakket. Referentiewaarden (dak 650Hz, minimum 125Hz voor schone bouw) in de sectie  — voorkeur —.",
       "source": "S1.9"
     },
     {
-      "requirement": "الأوضاع (Modes)",
+      "requirement": "Vliegmodi (Modes)",
       "decision": "PILOT_PREFERENCE",
-      "detail": "مفتاح ARM إلزامي. Turtle مفيد في السباق؛ بقية الأوضاع تفضيلك.",
+      "detail": "De ARM-sleutel is verplicht. Turtle is nuttig in de race; De rest is jouw keuze.",
       "source": null
     },
     {
-      "requirement": "الطاقة والبطارية",
+      "requirement": "Voeding en accu",
       "decision": "PILOT_PREFERENCE",
-      "detail": "اضبطها على حزمتك. السباق لا يفرض حدود بطارية، لكن تحذير الخلية يجب أن يصلك قبل نهاية اللفة لا بعدها.",
+      "detail": "Zet ze op je pak. De race stelt geen accu-grens op, maar de cel moet je waarschuwen voor het einde van roll en niet later.",
       "source": null
     },
     {
       "requirement": "`thrust_linear` · `tpa_*`",
       "decision": "NOT_APPLICABLE",
-      "detail": "يضبطهما الإعداد الرسمي (thrust_linear 20 · tpa_rate 70 · tpa_breakpoint 1250) ولا يعرضهما هذا التطبيق.",
+      "detail": "Ze worden geregeld door de officiële opstelling (thrust_linear 20 · tpa_rate 70 · tpa_breakpoint 1250) en worden niet getoond door deze toepassing.",
       "source": "S1.9"
     }
   ]

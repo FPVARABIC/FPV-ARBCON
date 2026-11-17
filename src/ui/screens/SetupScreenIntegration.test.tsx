@@ -68,24 +68,24 @@ const ARABIC = {
   region1Title: 'إعداد الطائرة',
   /* SETUP R9 markers: the compact status area's own column/section
      titles, used as order probes now that the four cards are gone. */
-  orientationTitle: 'حركة متزامنة مع متحكم الطيران',
-  statusColumnTitle: 'الحالة',
-  region4Title: 'التشخيص والجاهزية',
-  region5Title: 'أدوات وحدة التحكم',
-  disconnected: 'غير متصل',
-  blockersUnconfirmed: 'لا يمكن تأكيد موانع التسليح في الوقت الحالي',
-  sensorsUnconfirmed: 'لا يمكن تأكيد المستشعرات في الوقت الحالي',
-  toolDisconnected: 'غير متاح: لا يوجد اتصال نشط',
-  toolArmed: 'غير متاح: الطائرة مسلّحة',
-  toolBackgrounded: 'غير متاح: التطبيق ليس في المقدمة',
-  toolIncompatible: 'غير متاح مع إصدار البرنامج الثابت في هذه اللوحة.',
-  toolArmedUnknown: 'غير متاح: تعذّر تأكيد أن الطائرة غير مسلّحة',
-  confirmAction: 'نعم، المراوح مفكوكة — تابع',
+  orientationTitle: "Beweging gesynchroniseerd met de vluchtcontroller",
+  statusColumnTitle: "Status",
+  region4Title: "Diagnose en gereedheid",
+  region5Title: "Vluchtcontrollertools",
+  disconnected: "Niet verbonden",
+  blockersUnconfirmed: "Armblokkeringsredenen kunnen momenteel niet worden bevestigd",
+  sensorsUnconfirmed: "Sensoren kunnen momenteel niet worden bevestigd",
+  toolDisconnected: "Niet beschikbaar: geen actieve verbinding",
+  toolArmed: "Niet beschikbaar: toestel is gearmd",
+  toolBackgrounded: "Niet beschikbaar: app staat op de achtergrond",
+  toolIncompatible: "Niet beschikbaar voor de firmwareversie op deze printplaat",
+  toolArmedUnknown: "Niet beschikbaar: DISARMED kon niet worden bevestigd",
+  confirmAction: "Ja, de propellers zijn verwijderd",
 };
 
 /** The exact truthful acknowledgement copy (Pass 7.7 commit 13). */
 const TRUTHFUL_ACK =
-  'استلم التطبيق ردًا صالحًا من متحكم الطيران على أمر المعايرة، لكن هذا لا يؤكد أن المعايرة بدأت أو اكتملت أو حُفظت.';
+  "De app ontving een positief antwoord op de kalibratieopdracht. Dit bevestigt niet dat de kalibratie is gestart, voltooid of opgeslagen.";
 
 function ascii(text: string): number[] {
   return text.split('').map(c => c.charCodeAt(0));
@@ -650,7 +650,7 @@ describe('Setup screen - integrated acceptance (Regions 1-5)', () => {
 
   /** The observed-completion copy the migrated Setup shows for the
    *  accelerometer. Not an acknowledgement - a result. */
-  const ACC_CALIBRATION_COMPLETED = 'اكتملت معايرة مقياس التسارع.';
+  const ACC_CALIBRATION_COMPLETED = "Kalibratie van de versnellingsmeter voltooid.";
 
   /**
    * A-6, per the PASS 7.7B.1R causal audit: this test carries an explicit
@@ -692,9 +692,9 @@ describe('Setup screen - integrated acceptance (Regions 1-5)', () => {
          (Region 5). Every probe below is a string the assembled screen
          actually renders, and every one must be found. */
       const orderedProbes = [
-        'البطارية', // status chip label - FIRST content
+        "Accu", // status chip label - FIRST content
         ARABIC.orientationTitle, // the model's own title
-        'معايرة مقياس التسارع', // calibration action beside the model
+        "Versnellingsmeter kalibreren", // calibration action beside the model
         ARABIC.statusColumnTitle, // the information grid, after the model
         ARABIC.region4Title,
         ARABIC.region5Title,
@@ -746,7 +746,7 @@ describe('Setup screen - integrated acceptance (Regions 1-5)', () => {
       const text = allText(renderer);
       // Region 1 identity, Region 3 live cards, Region 4 compatibility,
       // Region 5 enabled controls - all from the same session.
-      expect(text).toContain('متوافق مع هذا الإصدار');
+      expect(text).toContain("Compatibel met deze versie");
       /* Region 3's live values now read from the information grid: the
          FC status counters are its CPU and cycle rows. */
       expect(hasTestID(renderer, 'setup-info-status-cpu')).toBe(true);
@@ -754,7 +754,7 @@ describe('Setup screen - integrated acceptance (Regions 1-5)', () => {
       // SETUP P1: sensors are named with their own detection state, and
       // R9 moved that naming ABOVE the model into the status chips.
       expect(text).toEqual(
-        expect.arrayContaining(['ACC — مكتشف', 'GYRO — مكتشف']),
+        expect.arrayContaining(["ACC — Gedetecteerd", "GYRO — Gedetecteerd"]),
       );
       for (const token of ['ACC', 'GYRO']) {
         expect(hasTestID(renderer, `setup-status-sensor-${token}`)).toBe(true);
@@ -771,7 +771,7 @@ describe('Setup screen - integrated acceptance (Regions 1-5)', () => {
       const text = allText(renderer);
       expect(text).toContain(ARABIC.toolIncompatible);
       expect(text).toContain(
-        'واجهة غير مُتحقَّق منها في هذا الإصدار؛ تُعرض القراءات فقط',
+        "Interface niet geverifieerd voor deze versie; alleen metingen beschikbaar",
       );
       for (const tool of ['ACC_CALIBRATION', 'MAG_CALIBRATION', 'REBOOT']) {
         expect(
@@ -853,9 +853,9 @@ describe('Setup screen - integrated acceptance (Regions 1-5)', () => {
       // SETUP P1: an exhaustive list makes this assertion STRONGER - the
       // replacement generation's mask must show GYRO detected AND ACC
       // explicitly not detected, rather than merely omitting ACC.
-      expect(sensorText).toContain('GYRO — مكتشف');
-      expect(sensorText).toContain('ACC — غير مكتشف');
-      expect(sensorText).not.toContain('ACC — مكتشف');
+      expect(sensorText).toContain("GYRO — Gedetecteerd");
+      expect(sensorText).toContain("ACC — Niet gedetecteerd");
+      expect(sensorText).not.toContain("ACC — Gedetecteerd");
 
       // The dead client emitting a late frame changes nothing.
       const beforeLateFrame = allText(renderer);
@@ -884,7 +884,7 @@ describe('Setup screen - integrated acceptance (Regions 1-5)', () => {
       // Region 4 still has its own live reading...
       expect(hasTestID(renderer, 'diagnostics-section')).toBe(true);
       expect(allText(renderer)).toContain(
-        'لم يُبلِّغ متحكم الطيران عن أي مانع في هذه القراءة',
+        "De vluchtcontroller meldt in deze meting geen armblokkeringen",
       );
       // ...and Region 5's controls are still enabled and still work.
       // Exactly one BOXIDS request per composite identity: the first
@@ -1260,8 +1260,8 @@ describe('Setup screen - integrated acceptance (Regions 1-5)', () => {
        * observed and "اكتملت" would claim the opposite. The only fact is
        * that the start was never confirmed.
        */
-      expect(text).toContain('لم نتمكن من تأكيد بدء المعايرة.');
-      expect(text).not.toContain('تعذّر إتمام المعايرة.');
+      expect(text).toContain("Start van de kalibratie niet bevestigd.");
+      expect(text).not.toContain("Kalibratie kon niet worden voltooid.");
       expect(text).not.toContain(ACC_CALIBRATION_COMPLETED);
       expect(text).not.toContain(TRUTHFUL_ACK);
       expect(client.countOf(MSP_ACC_CALIBRATION)).toBe(1);
@@ -1588,7 +1588,7 @@ describe('Setup screen - layout and accessibility', () => {
         expect(node.props.accessible).toBe(true);
         const label = String(node.props.accessibilityLabel);
         expect(label.length).toBeGreaterThan(0);
-        const heading = label.split('،')[0];
+        const heading = label.split(',')[0];
         const index = text.indexOf(heading);
         expect(index).toBeGreaterThan(previous);
         previous = index;

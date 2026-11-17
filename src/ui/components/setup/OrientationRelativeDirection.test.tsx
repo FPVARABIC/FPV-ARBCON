@@ -112,7 +112,7 @@ describe('the yaw dial makes no magnetic claim', () => {
     const renderer = render({ ...LIVE, headingDeg: 42 });
     const title = i18n.t('flightInstruments.compass');
     expect(texts(renderer)).toContain(title);
-    expect(title).not.toContain('بوصلة');
+    expect(title).not.toContain("magnetisch kompas");
   });
 
   it('states in words that this is not a magnetic bearing', () => {
@@ -120,8 +120,8 @@ describe('the yaw dial makes no magnetic claim', () => {
     // duplicate under the dials), so this asserts the STRING is honest
     // rather than where it is painted.
     const note = i18n.t('flightInstruments.relativeNote');
-    expect(note).toContain('نسبي');
-    expect(note).toContain('مغناطيسي');
+    expect(note).toContain("De koers is relatief aan het huidige nulpunt van de vluchtcontroller en is geen magnetische koers.");
+    expect(note).toContain("De koers is relatief aan het huidige nulpunt van de vluchtcontroller en is geen magnetische koers.");
   });
 });
 
@@ -166,8 +166,8 @@ describe('the yaw dial rotates correctly', () => {
       const label = renderer.root.findByProps({ testID: 'direction-compass' })
         .props.accessibilityLabel;
       expect(label).toContain(String(yaw));
-      expect(label).toContain('النسبي');
-      expect(label).not.toContain('بوصلة');
+      expect(label).toContain("Relatieve koers");
+      expect(label).not.toContain("magnetisch kompas");
     }
   });
 });
@@ -176,7 +176,7 @@ describe('the instrument panel no longer duplicates the hero', () => {
   it('carries no status pill and no second section title', () => {
     const renderer = render({ ...LIVE, headingDeg: 10 });
     const rendered = texts(renderer);
-    expect(rendered).not.toContain('مباشر');
+    expect(rendered).not.toContain("Live");
     expect(rendered).not.toContain(i18n.t('flightInstruments.title'));
     expect(rendered).not.toContain(i18n.t('flightInstruments.eyebrow'));
   });

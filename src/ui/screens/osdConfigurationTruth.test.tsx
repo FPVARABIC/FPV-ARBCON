@@ -117,8 +117,8 @@ describe('the element list is the firmware answer, not a catalogue', () => {
   it('names an element beyond the known table neutrally instead of guessing', () => {
     // A firmware that reports more elements than this build knows names
     // for must not have them labelled with somebody else's meaning.
-    expect(osdElementName(0)).toBe('قوة الإشارة RSSI');
-    expect(osdElementName(4096)).toBe('عنصر OSD 4097');
+    expect(osdElementName(0)).toBe("RSSI-signaalsterkte");
+    expect(osdElementName(4096)).toBe("OSD-element 4097");
   });
 
   it('draws only the elements visible in the active profile', async () => {
@@ -127,7 +127,7 @@ describe('the element list is the firmware answer, not a catalogue', () => {
     const {renderer} = await renderScreen(snapshotWith());
     expect(renderer.root.findAllByProps({testID: 'osd-canvas-item-0'}).length).toBeGreaterThan(0);
     expect(renderer.root.findAllByProps({testID: 'osd-canvas-item-1'})).toHaveLength(0);
-    expect(caption(renderer)).toContain('العناصر الظاهرة 2');
+    expect(caption(renderer)).toContain("Zichtbare elementen 2");
     act(() => renderer.unmount());
   });
 });

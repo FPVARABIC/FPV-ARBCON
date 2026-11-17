@@ -127,5 +127,5 @@ export function describeConnectOption(
       : `USB ${device.vendorId.toString(16).padStart(4, '0')}:${device.productId
           .toString(16)
           .padStart(4, '0')}`;
-  return multiplePorts ? `${name} — منفذ ${portIndex + 1}` : name;
+  return multiplePorts ? `${name}  —  ${portIndex + 1}-poort` : name;
 }

@@ -70,8 +70,8 @@ const styles = StyleSheet.create({
   body: {
     ...typography.body,
     color: colors.textSecondary,
-    textAlign: 'right',
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    textAlign: 'left',
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   strong: {fontWeight: '700', color: colors.textPrimary},
   /* An identifier the reader will type. Left-to-right because that is
      what it is, and it must not be reordered by the Arabic around it. */

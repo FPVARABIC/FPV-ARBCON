@@ -772,7 +772,7 @@ export default function PortsScreen({
       lines.push(
         roles.length === 0
           ? `${name}: ${t('portsConfiguration.none')}`
-          : `${name}: ${roles.map(role => t(roleLabelKey(role))).join('، ')}`,
+          : `${name}: ${roles.map(role => t(roleLabelKey(role))).join(", ")}`,
       );
     }
     return lines;
@@ -880,7 +880,7 @@ export default function PortsScreen({
                               SERIAL_BAUD_RATES[port.gpsBaudIndex] ?? '?'
                             }`,
                         )
-                        .join('، ')
+                        .join(", ")
                     : t('portsConfiguration.gpsNotAssigned')}
                 </Text>
               </View>
@@ -1116,24 +1116,24 @@ const styles = StyleSheet.create({
   eyebrow: {
     ...typography.eyebrow,
     color: colors.accentStrong,
-    textAlign: 'right',
-    writingDirection: 'rtl'},
+    textAlign: 'left',
+    writingDirection: 'ltr'},
   title: {
     ...typography.display,
     color: colors.textPrimary,
-    textAlign: 'right',
-    writingDirection: 'rtl'},
+    textAlign: 'left',
+    writingDirection: 'ltr'},
   subtitle: {
     ...typography.body,
     color: colors.textSecondary,
-    textAlign: 'right',
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    textAlign: 'left',
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   stateText: {
     ...typography.body,
     color: colors.textSecondary,
     textAlign: 'center',
     padding: spacing.xl,
-    writingDirection: 'rtl',
+    writingDirection: 'ltr',
   },
   errorCard: {...noticeSurface, backgroundColor: colors.errorSoft,
     borderColor: colors.error,
@@ -1141,8 +1141,8 @@ const styles = StyleSheet.create({
   errorText: {
     ...typography.body,
     color: colors.error,
-    textAlign: 'right',
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    textAlign: 'left',
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   summaryCard: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -1157,17 +1157,17 @@ const styles = StyleSheet.create({
   summaryTitle: {
     ...typography.caption,
     color: colors.textMuted,
-    textAlign: 'right',
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    textAlign: 'left',
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   summaryValue: {
     ...typography.title,
     color: colors.textPrimary,
-    textAlign: 'right'},
+    textAlign: 'left'},
   summaryStatus: {
     ...typography.sectionTitle,
     color: colors.success,
-    textAlign: 'right',
-    writingDirection: 'rtl'},
+    textAlign: 'left',
+    writingDirection: 'ltr'},
   summaryDirty: { color: colors.warning },
   gpsIntegrationCard: {
     flexDirection: 'row',
@@ -1185,21 +1185,21 @@ const styles = StyleSheet.create({
     ...typography.body,
     color: colors.textPrimary,
     marginTop: spacing.xs,
-    textAlign: 'right',
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    textAlign: 'left',
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   validationCard: {...noticeSurface, backgroundColor: colors.warningSoft,
     borderColor: colors.warning,
     gap: spacing.xs},
   validationTitle: {
     ...typography.sectionTitle,
     color: colors.warning,
-    textAlign: 'right',
-    writingDirection: 'rtl'},
+    textAlign: 'left',
+    writingDirection: 'ltr'},
   validationText: {
     ...typography.caption,
     color: colors.textPrimary,
-    textAlign: 'right',
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    textAlign: 'left',
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   portCard: {
     backgroundColor: colors.surface,
     borderWidth: 1,
@@ -1226,7 +1226,7 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.textMuted,
     textAlign: 'left',
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   roleCountBadge: {
     backgroundColor: colors.accentSoft,
     borderRadius: radii.pill,
@@ -1236,7 +1236,7 @@ const styles = StyleSheet.create({
   roleCountText: {
     ...typography.caption,
     color: colors.accentStrong,
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   expandRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1245,12 +1245,12 @@ const styles = StyleSheet.create({
   expandText: {
     ...typography.label,
     color: colors.accentStrong,
-    writingDirection: 'rtl'},
+    writingDirection: 'ltr'},
   roleSummary: {
     ...typography.caption,
     color: colors.textSecondary,
-    textAlign: 'right',
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    textAlign: 'left',
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   baudSummary: {
     ...typography.caption,
     color: colors.accentStrong,
@@ -1267,8 +1267,8 @@ const styles = StyleSheet.create({
   preservedText: {
     ...typography.caption,
     color: colors.warning,
-    textAlign: 'right',
-    writingDirection: 'rtl',
+    textAlign: 'left',
+    writingDirection: 'ltr',
     flex: 1, maxWidth: PROSE_MEASURE},
   preservedMask: { ...typography.mono, color: colors.warning },
   primaryControls: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md },
@@ -1287,20 +1287,20 @@ const styles = StyleSheet.create({
   controlLabel: {
     ...typography.sectionTitle,
     color: colors.textPrimary,
-    textAlign: 'right',
-    writingDirection: 'rtl'},
+    textAlign: 'left',
+    writingDirection: 'ltr'},
   controlGroup: { gap: spacing.sm },
   groupLabel: {
     ...typography.sectionTitle,
     color: colors.textPrimary,
-    textAlign: 'right',
-    writingDirection: 'rtl'},
+    textAlign: 'left',
+    writingDirection: 'ltr'},
   baudSection: { gap: spacing.xs, paddingTop: spacing.xs },
   baudLabel: {
     ...typography.caption,
     color: colors.textMuted,
-    textAlign: 'right',
-    writingDirection: 'rtl'},
+    textAlign: 'left',
+    writingDirection: 'ltr'},
   ltr: { writingDirection: 'ltr' },
   disabled: { opacity: 0.42 },
   outcomeCard: {
@@ -1314,8 +1314,8 @@ const styles = StyleSheet.create({
   outcomeText: {
     ...typography.body,
     color: colors.success,
-    textAlign: 'right',
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    textAlign: 'left',
+    writingDirection: 'ltr', maxWidth: PROSE_MEASURE},
   actions: {
     flexDirection: 'row',
     flexWrap: 'wrap',

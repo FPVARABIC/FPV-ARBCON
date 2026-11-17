@@ -46,7 +46,7 @@ export class BuildApiError extends Error {
 function sameOriginUrl(path: string): string {
   const url = new URL(path, BUILD_ORIGIN);
   if (url.origin !== BUILD_ORIGIN || url.protocol !== 'https:') {
-    throw new BuildApiError('تم رفض عنوان تنزيل Firmware خارج خادم البناء الموثوق.');
+    throw new BuildApiError("Het downloadadres van Firmware is geweigerd buiten de betrouwbare bouwserver.");
   }
   return url.toString();
 }
@@ -62,7 +62,7 @@ function contentLength(response: Response): number | undefined {
 
 async function ensureResponse(response: Response): Promise<void> {
   if (!response.ok) {
-    throw new BuildApiError(`خادم Firmware أعاد HTTP ${response.status}.`, response.status);
+    throw new BuildApiError(`De Firmware server heeft HTTP ${response.status} teruggezet.`, response.status);
   }
 }
 
@@ -158,7 +158,7 @@ export class BetaflightBuildApi {
       if (outcome.status === 'TIMED_OUT') {
         deadlineController.abort();
         throw new BuildApiError(
-          'لم يستجب خادم البناء خلال المهلة. تحقّق من الاتصال بالإنترنت ثم أعد المحاولة.',
+          "De bouwmeester reageerde niet binnen de deadline. Controleer de internetverbinding en probeer het opnieuw.",
         );
       }
       throw outcome.reason;
@@ -168,7 +168,7 @@ export class BetaflightBuildApi {
          controller's abort; report it as the abort it is so the screen's
          aborted-check still holds. */
       if (init?.signal?.aborted === true) {
-        const aborted = new Error('أُلغيت العملية.');
+        const aborted = new Error("De bewerking is geannuleerd.");
         aborted.name = 'AbortError';
         throw aborted;
       }
@@ -185,7 +185,7 @@ export class BetaflightBuildApi {
         );
       }
       throw new BuildApiError(
-        'تعذّر الوصول إلى خادم البناء من هذه الصفحة. تحقّق من الاتصال بالإنترنت ثم أعد المحاولة.',
+        "De buildserver is vanaf deze pagina niet bereikbaar. Controleer de internetverbinding en probeer het opnieuw.",
       );
     } finally {
       if (!detached) init?.signal?.removeEventListener('abort', abortOnDeadline);
@@ -207,14 +207,14 @@ export class BetaflightBuildApi {
     if (outcome.status === 'TOO_LARGE') throw new BuildApiError(tooLarge);
     if (outcome.status === 'STALLED') {
       throw new BuildApiError(
-        'توقّف تنزيل البيانات من خادم البناء. تحقّق من الاتصال بالإنترنت ثم أعد المحاولة.',
+        "Stop met het downloaden van de buildserver. Controleer de internetverbinding en probeer het opnieuw.",
       );
     }
     /* A rejected read after the caller cancelled is the cancellation,
        not a server fault - the screen's aborted-check must still see it
        as an abort. */
     if (signal?.aborted === true) {
-      const aborted = new Error('أُلغيت العملية.');
+      const aborted = new Error("De bewerking is geannuleerd.");
       aborted.name = 'AbortError';
       throw aborted;
     }
@@ -225,7 +225,7 @@ export class BetaflightBuildApi {
       throw outcome.reason;
     }
     throw new BuildApiError(
-      'انقطع تنزيل البيانات من خادم البناء قبل اكتماله.',
+      "Stop met het downloaden van de buildserver voordat het klaar is.",
     );
   }
 
@@ -235,7 +235,7 @@ export class BetaflightBuildApi {
       await ensureResponse(response);
       const declared = contentLength(response);
       if (declared !== undefined && declared > MAX_JSON_BYTES) {
-        throw new BuildApiError('استجابة خادم البناء أكبر من الحد الآمن.');
+        throw new BuildApiError("De reactie van de bouwserver is groter dan de veiligheidsgrens.");
       }
       const text = this.settleBody(
         await readTextBounded(response, {
@@ -244,13 +244,13 @@ export class BetaflightBuildApi {
           expectedBytes: declared,
           abort,
         }),
-        'استجابة خادم البناء أكبر من الحد الآمن.',
+        "De reactie van de bouwserver is groter dan de veiligheidsgrens.",
         init?.signal,
       );
       try {
         return JSON.parse(text) as T;
       } catch {
-        throw new BuildApiError('خادم البناء أعاد JSON غير صالح.');
+        throw new BuildApiError("De bouwserver heeft de JSON niet geldig gemaakt.");
       }
     } finally {
       detach();
@@ -260,7 +260,7 @@ export class BetaflightBuildApi {
   async loadTargets(signal?: AbortSignal): Promise<readonly BetaflightTarget[]> {
     const result = await this.json<unknown>('/api/targets', {signal});
     if (!Array.isArray(result)) {
-      throw new BuildApiError('قائمة Targets من الخادم غير صالحة.');
+      throw new BuildApiError("De Targets-lijst van de server is ongeldig.");
     }
     return result.filter(
       (item): item is BetaflightTarget =>
@@ -314,7 +314,7 @@ export class BetaflightBuildApi {
       await ensureResponse(response);
       const declared = contentLength(response);
       if (declared !== undefined && declared > MAX_BUILD_LOG_BYTES) {
-        throw new BuildApiError('سجل Build أكبر من الحد الآمن للعرض داخل التطبيق.');
+        throw new BuildApiError("Het Build record is groter dan de veilige limiet voor weergave binnen de app.");
       }
       return this.settleBody(
         await readTextBounded(response, {
@@ -323,7 +323,7 @@ export class BetaflightBuildApi {
           expectedBytes: declared,
           abort,
         }),
-        'سجل Build أكبر من الحد الآمن للعرض داخل التطبيق.',
+        "Het Build record is groter dan de veilige limiet voor weergave binnen de app.",
         signal,
       );
     } finally {
@@ -337,7 +337,7 @@ export class BetaflightBuildApi {
       await ensureResponse(response);
       const declared = contentLength(response);
       if (declared !== undefined && declared > MAX_BINARY_BYTES) {
-        throw new BuildApiError('ملف Firmware من الخادم أكبر من الحد الآمن.');
+        throw new BuildApiError("Het Firmware-bestand van de server is groter dan de beveiliging.");
       }
       const bytes = this.settleBody(
         await readBytesBounded(response, {
@@ -346,11 +346,11 @@ export class BetaflightBuildApi {
           expectedBytes: declared,
           abort,
         }),
-        'ملف Firmware فارغ أو أكبر من الحد الآمن.',
+        "Het Firmware-bestand is leeg of groter dan de veiligheidsgrens.",
         signal,
       );
       if (bytes.length === 0) {
-        throw new BuildApiError('ملف Firmware فارغ أو أكبر من الحد الآمن.');
+        throw new BuildApiError("Het Firmware-bestand is leeg of groter dan de veiligheidsgrens.");
       }
       return bytes;
     } finally {

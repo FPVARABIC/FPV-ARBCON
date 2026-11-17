@@ -92,10 +92,10 @@ const partiallyVerified = (
 
 const CORE: readonly PidResetResource[] = ['PID', 'PID_ADVANCED', 'FILTER_CONFIG'];
 /** The exact substring the screen uses to introduce verified resources. */
-const VERIFIED_HEADING = 'تحقّقنا من:';
-const GAP_HEADING = 'تعذّر التحقق من:';
-const NAME_LABEL = 'اسم الملف';
-const SIMPLIFIED_LABEL = 'وضع الضبط المبسّط';
+const VERIFIED_HEADING = "Geverifieerd:";
+const GAP_HEADING = "Niet geverifieerd:";
+const NAME_LABEL = "Profielnaam";
+const SIMPLIFIED_LABEL = "Eenvoudige afstelling";
 
 /** The sentence fragment that follows «تحقّقنا من» up to the next full stop. */
 function verifiedClause(text: string): string {
@@ -114,7 +114,7 @@ describe('PID reset presentation - a profile name that could not be verified', (
     const text = screenText(renderer);
 
     /* The three that really were read back are named as verified. */
-    expect(verifiedClause(text)).toContain('قيم P/I/D');
+    expect(verifiedClause(text)).toContain("P/I/D-waarden");
     expect(verifiedClause(text)).toContain('D Max');
     expect(verifiedClause(text)).toContain('D-term');
     /* The one that was not read is NOT among them - the whole defect. */
@@ -123,8 +123,8 @@ describe('PID reset presentation - a profile name that could not be verified', (
     expect(text).toContain(GAP_HEADING);
     expect(text.slice(text.indexOf(GAP_HEADING))).toContain(NAME_LABEL);
     /* RAM-only and not-persisted survive the change. */
-    expect(text).toContain('الذاكرة العاملة');
-    expect(text).toContain('لا يحفظ حفظًا دائمًا');
+    expect(text).toContain("werkgeheugen");
+    expect(text).toContain("slaat niet permanent op");
 
     act(() => renderer.unmount());
   });
@@ -144,7 +144,7 @@ describe('PID reset presentation - simplified tuning that could not be verified'
     expect(verifiedClause(text)).not.toContain(SIMPLIFIED_LABEL);
     expect(text).toContain(GAP_HEADING);
     expect(text.slice(text.indexOf(GAP_HEADING))).toContain(SIMPLIFIED_LABEL);
-    expect(text).toContain('الذاكرة العاملة');
+    expect(text).toContain("werkgeheugen");
 
     act(() => renderer.unmount());
   });
@@ -165,8 +165,8 @@ describe('PID reset presentation - a fully observed reset', () => {
     /* Nothing failed, so no gap sentence is invented. */
     expect(text).not.toContain(GAP_HEADING);
     /* Still PARTIAL: the firmware rewrites more than this screen reads. */
-    expect(text).toContain('بقية الحقول لم نقرأها');
-    expect(text).toContain('لا يحفظ حفظًا دائمًا');
+    expect(text).toContain("De overige velden zijn niet uitgelezen");
+    expect(text).toContain("slaat niet permanent op");
 
     act(() => renderer.unmount());
   });

@@ -709,7 +709,7 @@ describe('SETUP P1 - the armed contradiction is impossible', () => {
       }),
     );
     // No health vocabulary anywhere.
-    expect(text).not.toMatch(/سليم|صحي/);
+    expect(text).not.toMatch(/in orde|gezond/i);
     await teardown(sessionId, renderer);
   });
 });

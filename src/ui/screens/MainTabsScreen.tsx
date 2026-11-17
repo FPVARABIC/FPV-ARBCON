@@ -283,9 +283,9 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
       // making the navigation look broken. Keep the operator in place and
       // explain why; never hide a potentially live motor surface.
       Alert.alert(
-        'تعذر الانتقال بأمان',
-        'لم يكتمل مسار إيقاف المحركات. استخدم زر الإيقاف الطارئ ثم أعد المحاولة.',
-        [{ text: 'حسناً' }],
+        "Het is onmogelijk om veilig over te stappen.",
+        "motoren's stopbaan is niet voltooid. Gebruik de noodstop en probeer opnieuw.",
+        [{ text: "OK" }],
       );
       return false;
     }
@@ -352,9 +352,9 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
         // Genuinely unconfirmed: stay on Motors and say why. Failing
         // closed is the only acceptable default here.
         Alert.alert(
-          'لم يتأكد إيقاف المحركات',
-          'لم يصل تأكيد إيقاف من متحكم الطيران خلال المهلة المحددة. افصل بطارية LiPo الآن قبل الاقتراب من الطائرة. تبقى شاشة المحركات ظاهرة حتى تتأكد بنفسك.',
-          [{ text: 'حسناً' }],
+          "motoren is nog niet bevestigd.",
+          "vluchtcontroller's stopconfirmation is niet binnen de deadline. Sluit accu LiPo nu af voordat je het vliegtuig nadert. Het motoren-scherm blijft een fenomeen tot je het zelf bevestigt.",
+          [{ text: "OK" }],
         );
       };
       const check = () => {
@@ -389,8 +389,8 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
       ) {
         if (rawCliBusy) {
           Alert.alert(
-            'جلسة CLI نشطة',
-            'احفظ أو ألغِ الجلسة من الشاشة الحالية قبل الانتقال.',
+            "CLI is actief.",
+            "Bewaar of verwijder de sessie van het huidige scherm voordat je overgaat.",
           );
         }
         return;
@@ -403,14 +403,14 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
           return;
         }
         Alert.alert(
-          'تغييرات غير محفوظة',
+          "Niet-opgeslagen wijzigingen",
           activeTab === 'MOTORS'
-            ? 'طُلِب إيقاف جلسة المحركات فوراً. لديك تغييرات لم تُحفظ؛ عُد لحفظها أو انتقل بعد تأكيد الإيقاف دون حفظ.'
-            : 'لديك تغييرات لم تُحفظ. عُد لحفظها أو انتقل إلى الشاشة المطلوبة دون حفظ.',
+            ? "De motoren-zitting wordt onmiddellijk beëindigd. Je hebt niet opgeslagen veranderingen. Ga terug om ze te bewaren of ga verder na het bevestigen van de stop zonder bewaren."
+            : "Je hebt nog niet opgeslagen veranderingen. Ga terug om het te bewaren of ga naar het gewenste scherm zonder te bewaren.",
           [
-            { text: 'العودة للحفظ', style: 'cancel' },
+            { text: "Terug naar het behoud.", style: 'cancel' },
             {
-              text: 'الانتقال دون حفظ',
+              text: "Verhuizen zonder te bewaren.",
               // The stop request was already sent before opening this
               // prompt. Reuse the SAME bounded result path as an ordinary
               // departure without emitting a second motor command.
@@ -760,8 +760,7 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
       {awaitingMotorStop ? (
         <View style={styles.awaitingStop} testID="main-tabs-awaiting-stop">
           <Text style={styles.awaitingStopText}>
-            بانتظار تأكيد إيقاف المحركات قبل مغادرة الشاشة…
-          </Text>
+            {"Wachtend tot de motoren wordt uitgeschakeld..."}</Text>
         </View>
       ) : null}
       {useSideRail ? null : (
@@ -787,7 +786,7 @@ const styles = StyleSheet.create({
     color: colors.accentStrong,
     fontWeight: '700',
     textAlign: 'center',
-    writingDirection: 'rtl',
+    writingDirection: 'ltr',
   },
   content: MAIN_TABS_SHELL.content,
   visible: MAIN_TABS_SHELL.visible,

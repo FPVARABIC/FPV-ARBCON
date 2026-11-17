@@ -28,7 +28,7 @@ const {
   ENGINE_BOUNDARIES,
   FORBIDDEN_TOKENS,
   POSITIVE_CONTROLS,
-  REQUIRED_ARABIC_STRINGS,
+  REQUIRED_SAFETY_STRINGS,
   REQUIRED_ENGINE_TOKENS,
 } = require('../scan-production-bundle');
 
@@ -41,7 +41,7 @@ function cleanBundle() {
     ';',
     REQUIRED_ENGINE_TOKENS.join(';'),
     ';',
-    REQUIRED_ARABIC_STRINGS.map(text => JSON.stringify(text)).join(';'),
+    REQUIRED_SAFETY_STRINGS.map(text => JSON.stringify(text)).join(';'),
     ';var telemetry="attitude";',
   ].join('');
 }
@@ -143,7 +143,7 @@ describe('scanner - a re-contained engine is a FAILURE, not a pass', () => {
 });
 
 describe('scanner - the Arabic safety copy must be in the shipped bytes', () => {
-  it.each(REQUIRED_ARABIC_STRINGS)('fails when %s is absent', text => {
+  it.each(REQUIRED_SAFETY_STRINGS)('fails when %s is absent', text => {
     const without = cleanBundle().replace(JSON.stringify(text), '"REMOVED"');
     const result = analyzeBundle(without);
     expect(result.ok).toBe(false);
@@ -159,7 +159,7 @@ describe('scanner - the Arabic safety copy must be in the shipped bytes', () => 
       ';',
       REQUIRED_ENGINE_TOKENS.join(';'),
       ';',
-      REQUIRED_ARABIC_STRINGS.map(text => `"${escapeNonAscii(text)}"`).join(
+      REQUIRED_SAFETY_STRINGS.map(text => `"${escapeNonAscii(text)}"`).join(
         ';',
       ),
       ';',
@@ -167,6 +167,11 @@ describe('scanner - the Arabic safety copy must be in the shipped bytes', () => 
     const result = analyzeBundle(escaped);
     expect(result.missingArabic).toEqual([]);
     expect(result.ok).toBe(true);
+  });
+
+  it('recognizes Metro Latin-1 escapes in Dutch safety copy', () => {
+    expect(containsEitherForm('minstens \\xe9\\xe9n MSP-poort', 'minstens één MSP-poort')).toBe(true);
+    expect(containsEitherForm('minstens een MSP-poort', 'minstens één MSP-poort')).toBe(false);
   });
 
   it('escapes only non-ASCII characters', () => {
@@ -191,7 +196,7 @@ describe('scanner - the Arabic safety copy must be in the shipped bytes', () => 
     ].join('');
     const result = analyzeBundle(keysOnly);
     expect(result.ok).toBe(false);
-    expect(result.missingArabic.length).toBe(REQUIRED_ARABIC_STRINGS.length);
+    expect(result.missingArabic.length).toBe(REQUIRED_SAFETY_STRINGS.length);
   });
 });
 

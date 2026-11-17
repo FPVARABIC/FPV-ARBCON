@@ -24,7 +24,7 @@ export class EspFirmwareFlasher {
     firmware: Uint8Array,
     options: {flashBaudRate?: number; eraseAll?: boolean} = {},
   ): Promise<string> {
-    if (firmware.length === 0) throw new Error('صورة ESP BIN فارغة.');
+    if (firmware.length === 0) throw new Error("ESP BIN foto is leeg.");
     this.checkCancelled();
     const flashBaudRate = options.flashBaudRate ?? 460800;
     this.onProgress({phase: 'connecting', percent: 0, writtenBytes: 0, totalBytes: firmware.length});
@@ -91,6 +91,6 @@ export class EspFirmwareFlasher {
   }
 
   private checkCancelled(): void {
-    if (this.signal?.aborted) throw new Error('أُلغيَ تفليش ESP.');
+    if (this.signal?.aborted) throw new Error("flashen ESP. is geannuleerd.");
   }
 }

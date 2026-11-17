@@ -45,12 +45,12 @@ interface Props {
 }
 
 const QUICK_COMMANDS = Object.freeze([
-  { command: 'status', label: 'الحالة' },
-  { command: 'version', label: 'الإصدار' },
+  { command: 'status', label: "Status" },
+  { command: 'version', label: "Versie" },
   { command: 'diff all', label: 'diff all' },
   { command: 'dump all', label: 'dump all' },
-  { command: 'tasks', label: 'المهام' },
-  { command: 'resource show all', label: 'الموارد' },
+  { command: 'tasks', label: "Taken" },
+  { command: 'resource show all', label: "Resources" },
 ]);
 
 /**
@@ -66,15 +66,15 @@ function errorText(error: unknown): string {
 function phaseLabel(phase: RawCliPhase): string {
   switch (phase) {
     case 'IDLE':
-      return 'غير نشط';
+      return "Inactief";
     case 'ENTERING':
-      return 'دخول CLI…';
+      return "CLI openen…";
     case 'ACTIVE':
-      return 'جاهز للأوامر';
+      return "Gereed voor opdrachten";
     case 'SENDING':
-      return 'انتظار prompt…';
+      return "Wachten op prompt…";
     case 'CLOSING':
-      return 'إغلاق الجلسة…';
+      return "Sessie sluiten…";
   }
 }
 
@@ -94,7 +94,7 @@ export default function CliScreen({
   const [failure, setFailure] = useState<string>();
   const [hasCliError, setHasCliError] = useState(false);
   const [status, setStatus] = useState(
-    'ابدأ جلسة CLI صريحة. ستتوقف التليمترية مؤقتًا حتى الخروج.',
+    "Begin de CLI sessie openlijk. De telemetrie zal tijdelijk stoppen tot het uitkomt.",
   );
 
   /**
@@ -175,13 +175,13 @@ export default function CliScreen({
   useEffect(() => {
     if (sessionKey === undefined && cli.getPhase() !== 'IDLE') {
       cli.exitWithoutSave().catch(() => undefined);
-      setFailure('انقطع اتصال Flight Controller؛ أُنهيت جلسة CLI وتحرر الرابط بأمان.');
+      setFailure("De verbinding met de vluchtcontroller is verbroken. De CLI-sessie is beëindigd en de verbinding is veilig vrijgegeven.");
       onCliBusyChange(false);
     }
   }, [cli, onCliBusyChange, sessionKey]);
 
   const identity = useMemo(() => {
-    if (!sessionKey) return 'لا توجد جلسة Flight Controller.';
+    if (!sessionKey) return "Er is geen Flight Controller. sessie.";
     const state = cli.getIdentification(sessionKey.sessionId);
     if (state.status === 'SUCCEEDED') {
       /*
@@ -225,10 +225,10 @@ export default function CliScreen({
       }
       return parts.join(' · ');
     }
-    if (state.status === 'FAILED') return 'فشل تثبيت هوية المتحكم.';
+    if (state.status === 'FAILED') return "De controller is niet geïnstalleerd.";
     return state.status === 'RUNNING'
-      ? 'جارٍ تثبيت هوية المتحكم…'
-      : 'هوية المتحكم غير جاهزة.';
+      ? "Een naaste bevestigt de identiteit van de controleur."
+      : "I.D. is niet klaar.";
   }, [cli, sessionKey]);
 
   const isOpen = phase !== 'IDLE';
@@ -240,12 +240,12 @@ export default function CliScreen({
     setHasCliError(false);
     setHistory([]);
     setHistoryCursor(-1);
-    setStatus('إيقاف استطلاع MSP وحجز الرابط ثم انتظار CLI prompt…');
+    setStatus("Stop het MSP-onderzoek en reserveer de verbinding en wacht op CLI prompt...");
     onCliBusyChange(true);
     try {
       await cli.begin(sessionKey);
       sync();
-      setStatus('الجلسة جاهزة. لن يُرسل save إلا من زر الحفظ الصريح.');
+      setStatus("De zitting is klaar. save wordt alleen verzonden via de open save knop.");
     } catch (error) {
       setFailure(errorText(error));
       sync();
@@ -259,7 +259,7 @@ export default function CliScreen({
       const normalized = candidate.trim();
       if (!normalized) return;
       setFailure(undefined);
-      setStatus(`إرسال: ${normalized}`);
+      setStatus(`Verzenden: ${normalized}`);
       try {
         const result: CliCommandResult = await cli.execute(normalized);
         setHistory(current =>
@@ -273,10 +273,10 @@ export default function CliScreen({
         if (result.error) {
           setHasCliError(true);
           setFailure(
-            'أعاد CLI خطأ. حُظر save لهذه الجلسة؛ اخرج دون حفظ وراجع الأمر.',
+            "CLI heeft een fout gemaakt. save is verboden voor deze sessie; Ga zonder te bewaren en kijk ernaar.",
           );
         } else {
-          setStatus(`اكتمل ${normalized} وعاد prompt.`);
+          setStatus(`${normalized} voltooid; prompt ontvangen.`);
         }
       } catch (error) {
         setFailure(errorText(error));
@@ -308,8 +308,8 @@ export default function CliScreen({
         `fpv-arbcon-cli-${Date.now()}.txt`,
         output,
       );
-      if (!saved) throw new Error('لم يكتمل حفظ سجل CLI على الجهاز.');
-      setStatus('حُفظ سجل CLI في ملف نصي.');
+      if (!saved) throw new Error("Het CLI-record is nog niet voltooid.");
+      setStatus("Het CLI-log is opgeslagen in een tekstbestand.");
     } catch (error) {
       setFailure(errorText(error));
     }
@@ -319,7 +319,7 @@ export default function CliScreen({
     setFailure(undefined);
     try {
       await cli.exitWithoutSave();
-      setStatus('خرجت من CLI دون إرسال save.');
+      setStatus("CLI afgesloten zonder save te verzenden.");
     } catch (error) {
       setFailure(errorText(error));
     } finally {
@@ -330,12 +330,12 @@ export default function CliScreen({
 
   const confirmSave = useCallback(() => {
     Alert.alert(
-      'حفظ وإعادة تشغيل المتحكم',
-      'سيُرسل الأمر save الآن، ثم قد ينقطع USB أثناء إعادة تشغيل Flight Controller. هل راجعت diff all؟',
+      "Opslaan en de vluchtcontroller opnieuw opstarten",
+      "save wordt nu verzonden, en USB kan worden uitgeschakeld tijdens het opnieuw opstarten van Flight Controller.. Heb je diff all gecontroleerd?",
       [
-        { text: 'إلغاء', style: 'cancel' },
+        { text: "Annuleren", style: 'cancel' },
         {
-          text: 'حفظ وإعادة تشغيل',
+          text: "Opslaan en opnieuw opstarten",
           style: 'destructive',
           onPress: () => {
             // THE THREE STAGES, SAID OUT LOUD.
@@ -353,13 +353,13 @@ export default function CliScreen({
             // as a fault, and the connection workspace reconnects on its
             // own. All this has to do is narrate it honestly.
             setStatus(
-              'أُرسل save → يُعاد تشغيل Flight Controller → جارٍ إعادة الاتصال…',
+              "save wordt verzonden → Flight wordt hersteld → Controller wordt hersteld...",
             );
             cli
               .saveAndClose()
               .then(() => {
                 setStatus(
-                  'حُفظت الإعدادات ويُعاد تشغيل Flight Controller. سيعود الاتصال تلقائيًا خلال ثوانٍ.',
+                  "De instellingen zijn opgeslagen en Flight Controller. wordt hersteld. De oproep komt automatisch binnen.",
                 );
                 setHasCliError(false);
               })
@@ -382,7 +382,7 @@ export default function CliScreen({
             teaching lives where it acts: the save confirmation. */}
         <View style={styles.header}>
           <View style={styles.headerCopy}>
-            <Text style={styles.title}>سطر الأوامر</Text>
+            <Text style={styles.title}>{"Opdrachtregel"}</Text>
             <Text style={styles.identity}>{identity}</Text>
           </View>
           <Text style={[styles.phase, isOpen && styles.phaseOpen]}>
@@ -390,9 +390,7 @@ export default function CliScreen({
           </Text>
         </View>
         <Text style={styles.safetyLine} accessibilityRole="alert">
-          انزع المراوح، ولا تفصل USB أثناء أمر جارٍ. التليمترية متوقفة طوال
-          امتلاك CLI للرابط، ولا يُرسل save إلا من زره الصريح.
-        </Text>
+          {"Trek propellers uit, en maak USB niet af tijdens een order. De telemetrie staat de hele tijd stil. CLI heeft een verbinding, en save wordt alleen verzonden via zijn directe knop."}</Text>
 
         {failure ? (
           <View style={styles.error} accessibilityRole="alert">
@@ -403,7 +401,7 @@ export default function CliScreen({
                 onPress={() => start().catch(() => undefined)}
                 style={styles.retry}
               >
-                <Text style={styles.retryText}>إعادة محاولة الدخول</Text>
+                <Text style={styles.retryText}>{"Opnieuw openen"}</Text>
               </Pressable>
             ) : null}
           </View>
@@ -412,20 +410,18 @@ export default function CliScreen({
         {sessionKey === undefined ? (
           <View style={styles.noSession} testID="cli-no-session">
             <Text style={styles.noSessionText}>
-              لا توجد جلسة Flight Controller. اتصل بالمتحكم أولًا ثم افتح
-              CLI؛ الطرفية تدخل الجلسة تلقائيًا.
-            </Text>
+              {"Er is geen Flight Controller. sessie. Bel eerst de controller en dan open. CLI; De partij komt automatisch in de sessie."}</Text>
           </View>
         ) : (
           <>
             <View style={styles.terminalCard}>
               <View style={styles.terminalHeader}>
-                <Text style={styles.terminalTitle}>مخرجات المتحكم الحية</Text>
+                <Text style={styles.terminalTitle}>{"Live-uitvoer vluchtcontroller"}</Text>
                 <View style={styles.terminalTools}>
                   <Pressable
                     testID="cli-download-output"
                     accessibilityRole="button"
-                    accessibilityLabel="تنزيل السجل"
+                    accessibilityLabel={"Log downloaden"}
                     accessibilityState={{
                       disabled: !output.trim() || phase !== 'ACTIVE',
                     }}
@@ -442,12 +438,12 @@ export default function CliScreen({
                     }}
                   >
                     <Icon name="download" size={18} color={colors.accent} />
-                    <Text style={styles.toolText}>تنزيل السجل</Text>
+                    <Text style={styles.toolText}>{"Log downloaden"}</Text>
                   </Pressable>
                   <Pressable
                     testID="cli-clear-output"
                     accessibilityRole="button"
-                    accessibilityLabel="مسح العرض"
+                    accessibilityLabel={"Weergave wissen"}
                     accessibilityState={{disabled: phase !== 'ACTIVE'}}
                     disabled={phase !== 'ACTIVE'}
                     style={state => {
@@ -468,7 +464,7 @@ export default function CliScreen({
                     }}
                   >
                     <Icon name="trash-2" size={18} color={colors.accent} />
-                    <Text style={styles.toolText}>مسح العرض</Text>
+                    <Text style={styles.toolText}>{"Weergave wissen"}</Text>
                   </Pressable>
                 </View>
               </View>
@@ -491,7 +487,7 @@ export default function CliScreen({
                   style={styles.terminalText}
                   testID="cli-output"
                 >
-                  {output || '# بانتظار المخرجات…'}
+                  {output || "# Wachten op uitvoer…"}
                 </Text>
               </ScrollView>
               <View style={styles.commandRow}>
@@ -505,7 +501,7 @@ export default function CliScreen({
                   editable={phase === 'ACTIVE'}
                   autoCapitalize="none"
                   autoCorrect={false}
-                  placeholder="مثال: get gyro_lpf1_static_hz"
+                  placeholder={"Voorbeeld: get gyro_lpf1_static_hz"}
                   placeholderTextColor={colors.textMuted}
                   style={styles.commandInput}
                 />
@@ -515,14 +511,14 @@ export default function CliScreen({
                   onPress={() => runCommand(command).catch(() => undefined)}
                   style={[styles.send, !canSend && styles.disabled]}
                 >
-                  <Text style={styles.sendText}>إرسال</Text>
+                  <Text style={styles.sendText}>{"Verzenden"}</Text>
                 </Pressable>
               </View>
               <View style={styles.historyRow}>
                 <Pressable
                   onPress={() => browseHistory(1)}
                   accessibilityRole="button"
-                  accessibilityLabel="الأمر السابق"
+                  accessibilityLabel={"Vorige opdracht"}
                   style={state => {
                     const {pressed, hovered} = readInteraction(state);
                     return [styles.tool, (hovered || pressed) && styles.toolActive];
@@ -531,31 +527,30 @@ export default function CliScreen({
                   {/* Vertical: 'earlier in the list', not a reading
                       direction, so raw geometry and never an alias. */}
                   <Icon name="arrow-up" size={18} color={colors.accent} />
-                  <Text style={styles.toolText}>السابق</Text>
+                  <Text style={styles.toolText}>{"Vorige"}</Text>
                 </Pressable>
                 <Pressable
                   onPress={() => browseHistory(-1)}
                   accessibilityRole="button"
-                  accessibilityLabel="الأمر الأحدث"
+                  accessibilityLabel={"Nieuwste opdracht"}
                   style={state => {
                     const {pressed, hovered} = readInteraction(state);
                     return [styles.tool, (hovered || pressed) && styles.toolActive];
                   }}
                 >
                   <Icon name="arrow-down" size={18} color={colors.accent} />
-                  <Text style={styles.toolText}>الأحدث</Text>
+                  <Text style={styles.toolText}>{"Nieuwste"}</Text>
                 </Pressable>
                 <Text style={styles.historyCount}>
-                  سجل هذه الجلسة: {history.length}
+                  {"Geschiedenis van deze sessie:"}{history.length}
                 </Text>
               </View>
             </View>
 
             <View style={styles.quickCard}>
-              <Text style={styles.sectionTitle}>أوامر قراءة سريعة</Text>
+              <Text style={styles.sectionTitle}>{"Snelle leesopdrachten"}</Text>
               <Text style={styles.hint}>
-                أزرار معروفة للقراءة والتشخيص؛ لا تحفظ شيئًا.
-              </Text>
+                {"Bekende knoppen voor lezen en diagnosticeren; Niets bewaren."}</Text>
               <View style={styles.quickGrid}>
                 {QUICK_COMMANDS.map(item => (
                   <Pressable
@@ -579,11 +574,9 @@ export default function CliScreen({
 
             <View style={styles.decision}>
               <View style={styles.decisionCopy}>
-                <Text style={styles.sectionTitle}>إنهاء الجلسة</Text>
+                <Text style={styles.sectionTitle}>{"Sessie beëindigen"}</Text>
                 <Text style={styles.hint}>
-                  الخروج دون حفظ يتراجع عن التعديلات المؤقتة. save يثبتها ويعيد
-                  تشغيل المتحكم.
-                </Text>
+                  {"Afsluiten zonder opslaan maakt de tijdelijke wijzigingen ongedaan. save installeert en revert. De controller aan."}</Text>
               </View>
               <View style={styles.decisionActions}>
                 <Pressable
@@ -592,7 +585,7 @@ export default function CliScreen({
                   onPress={() => discard().catch(() => undefined)}
                   style={styles.discard}
                 >
-                  <Text style={styles.discardText}>خروج دون حفظ</Text>
+                  <Text style={styles.discardText}>{"Afsluiten zonder opslaan"}</Text>
                 </Pressable>
                 <Pressable
                   testID="cli-save"
@@ -603,7 +596,7 @@ export default function CliScreen({
                     (phase !== 'ACTIVE' || hasCliError) && styles.disabled,
                   ]}
                 >
-                  <Text style={styles.saveText}>save وإعادة التشغيل</Text>
+                  <Text style={styles.saveText}>{"save en opnieuw opstarten"}</Text>
                 </Pressable>
               </View>
             </View>
@@ -614,10 +607,7 @@ export default function CliScreen({
           <Text style={styles.statusText}>{status}</Text>
         </View>
         <Text style={styles.hardware}>
-          {t('hardwareVerification.behaviourTitle')} · نجاح prompt لا يثبت صحة
-          الأمر أو ملاءمة الضبط للطائرة؛ راجع مخرجات CLI واختبر على الطاولة بلا
-          مراوح.
-        </Text>
+          {t('hardwareVerification.behaviourTitle')} {"Een CLI-prompt bewijst niet dat een opdracht correct is of dat de afstelling bij het toestel past. Controleer de CLI-uitvoer en test op de werkbank zonder propellers."}</Text>
       </ScrollView>
     </View>
   );
@@ -645,14 +635,14 @@ const styles = StyleSheet.create({
   title: {
     ...typography.title,
     color: colors.textPrimary,
-    textAlign: 'right',
+    textAlign: 'left',
   },
   identity: { ...typography.caption, color: colors.textMuted },
   safetyLine: {
     ...typography.caption,
     color: colors.warning,
     fontWeight: '600',
-    textAlign: 'right',
+    textAlign: 'left',
     backgroundColor: colors.warningSoft,
     borderRadius: radii.md,
     paddingHorizontal: spacing.md,
@@ -667,7 +657,7 @@ const styles = StyleSheet.create({
   noSessionText: {
     ...typography.body,
     color: colors.textSecondary,
-    textAlign: 'right', maxWidth: PROSE_MEASURE},
+    textAlign: 'left', maxWidth: PROSE_MEASURE},
   retry: {
     marginTop: spacing.sm,
     minHeight: MIN_TOUCH_TARGET,
@@ -690,7 +680,7 @@ const styles = StyleSheet.create({
   phaseOpen: { color: colors.success, backgroundColor: colors.accentSoft },
   error: {...noticeSurface, backgroundColor: colors.errorSoft,
     borderColor: colors.error},
-  errorText: { ...typography.body, color: colors.error, textAlign: 'right', maxWidth: PROSE_MEASURE},
+  errorText: { ...typography.body, color: colors.error, textAlign: 'left', maxWidth: PROSE_MEASURE},
   disabled: { opacity: 0.42 },
   quickCard: {
     backgroundColor: colors.surface,
@@ -703,9 +693,9 @@ const styles = StyleSheet.create({
   sectionTitle: {
     ...typography.sectionTitle,
     color: colors.textPrimary,
-    textAlign: 'right',
+    textAlign: 'left',
   },
-  hint: { ...typography.caption, color: colors.textMuted, textAlign: 'right', maxWidth: PROSE_MEASURE},
+  hint: { ...typography.caption, color: colors.textMuted, textAlign: 'left', maxWidth: PROSE_MEASURE},
   quickGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
   quick: {
     minWidth: 145,
@@ -856,7 +846,7 @@ const styles = StyleSheet.create({
   statusText: {
     ...typography.body,
     color: colors.accentText,
-    textAlign: 'right', maxWidth: PROSE_MEASURE},
+    textAlign: 'left', maxWidth: PROSE_MEASURE},
   hardware: {
     ...typography.caption,
     color: colors.warning,

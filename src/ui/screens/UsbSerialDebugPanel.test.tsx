@@ -234,10 +234,10 @@ describe('UsbSerialDebugPanel - controls enabled/disabled by mspActive', () => {
     const client = createMockClient();
 
     const inactive = await renderPanel(client, false);
-    expect(logText(inactive)).not.toContain('بروتوكول MSP نشط');
+    expect(logText(inactive)).not.toContain("MSP-protocol actief");
 
     const active = await renderPanel(client, true);
-    expect(logText(active)).toContain('بروتوكول MSP نشط');
+    expect(logText(active)).toContain("Lees- en verzendbeheer is uitgeschakeld omdat het MSP-protocol voor deze sessie momenteel actief is. Alleen binnenkomen zonder ingrijpen.");
   });
 
   it('pressing Start Reading while mspActive never calls client.startReading()', async () => {
@@ -554,7 +554,7 @@ describe('UsbSerialDebugPanel - Pass 6.4b read-only MSP status message (Step 7 p
     useMspIdentificationStateMock.mockReturnValue({status: 'RUNNING'} satisfies MspIdentificationState);
     const renderer = await renderPanel(client, true);
 
-    expect(findByTestID(renderer, 'msp-status-message').props.children).toBe('جارٍ التعرّف على وحدة التحكم…');
+    expect(findByTestID(renderer, 'msp-status-message').props.children).toBe("Een identificator op de controller...");
   });
 
   it('shows the FAILED message when identification failed but the client is otherwise fine', async () => {
@@ -567,7 +567,7 @@ describe('UsbSerialDebugPanel - Pass 6.4b read-only MSP status message (Step 7 p
     const renderer = await renderPanel(client, true);
 
     expect(findByTestID(renderer, 'msp-status-message').props.children).toBe(
-      'تعذّر التعرّف على نوع وحدة التحكم، مع بقاء الاتصال قائمًا.',
+      "Het type vluchtcontroller kon niet worden bepaald. De verbinding blijft actief.",
     );
   });
 
@@ -578,7 +578,7 @@ describe('UsbSerialDebugPanel - Pass 6.4b read-only MSP status message (Step 7 p
     const renderer = await renderPanel(client, true);
 
     expect(findByTestID(renderer, 'msp-status-message').props.children).toBe(
-      'تعذّرت استعادة اتصال MSP. أعد الاتصال بوحدة التحكم للمتابعة.',
+      "De MSP-verbinding kon niet worden hersteld. Neem contact op met de controller.",
     );
   });
 
@@ -589,7 +589,7 @@ describe('UsbSerialDebugPanel - Pass 6.4b read-only MSP status message (Step 7 p
     const renderer = await renderPanel(client, true);
 
     expect(findByTestID(renderer, 'msp-status-message').props.children).toBe(
-      'انتهت جلسة الاتصال بوحدة التحكم أو تم فصلها.',
+      "De verbinding met de besturingssessie is afgelopen of is afgesloten.",
     );
   });
 
@@ -667,7 +667,7 @@ describe('UsbSerialDebugPanel - Pass 6.4b identification result display (SUCCEED
     expect(renderer.root.findAllByProps({testID: 'msp-identity-section'}).length).toBeGreaterThan(0);
     const text = logText(renderer);
     expect(text).toContain('BTFL');
-    expect(text).toContain('MSP متوافق');
+    expect(text).toContain("Compatibel met MSP");
     expect(text).not.toContain('BETAFLIGHT');
     expect(text).toContain('MATEKF722');
   });

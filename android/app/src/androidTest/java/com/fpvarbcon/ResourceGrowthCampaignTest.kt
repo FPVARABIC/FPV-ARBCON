@@ -271,11 +271,11 @@ class ResourceGrowthCampaignTest {
   @Test
   fun repeatedPreferenceWritesDoNotGrowDescriptors() {
     val context = InstrumentationRegistry.getInstrumentation().targetContext
-    applyArabicLayoutDirection(context)
+    applyDutchLayoutDirection(context)
     settle()
     val baseline = openDescriptors()
 
-    repeat(CYCLES * 4) { applyArabicLayoutDirection(context) }
+    repeat(CYCLES * 4) { applyDutchLayoutDirection(context) }
     settle()
     encourageCollection()
 

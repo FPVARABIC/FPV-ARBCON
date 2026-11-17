@@ -127,7 +127,7 @@ describe('FirmwareFlasherScreen', () => {
       await flushAsyncEffects();
 
       // The defect state, and the control the sentence implies.
-      expect(allText(renderer)).toContain('القائمة غير متاحة');
+      expect(allText(renderer)).toContain("De lijst is niet beschikbaar.");
       expect(calls()).toBe(1);
       const attachSubscriptions = client.onDeviceAttached.mock.calls.length;
 
@@ -138,8 +138,8 @@ describe('FirmwareFlasherScreen', () => {
       // The error is gone, and so is the loading row - not one replaced
       // by the other and left there.
       const text = allText(renderer);
-      expect(text).not.toContain('القائمة غير متاحة');
-      expect(text).not.toContain('يجري تحميلها الآن');
+      expect(text).not.toContain("De lijst is niet beschikbaar.");
+      expect(text).not.toContain("wordt nu geladen");
       expect(renderer.root.findAllByProps({testID: 'retry-targets'})).toHaveLength(0);
 
       // The catalogue really arrived: the boards are selectable.
@@ -155,7 +155,7 @@ describe('FirmwareFlasherScreen', () => {
       const {api, calls} = flakyApi(5);
       const {renderer} = await renderScreen(fakeClient(), api);
       await flushAsyncEffects();
-      expect(allText(renderer)).toContain('القائمة غير متاحة');
+      expect(allText(renderer)).toContain("De lijst is niet beschikbaar.");
 
       await press(renderer, 'retry-targets');
       await flushAsyncEffects(16);
@@ -163,8 +163,8 @@ describe('FirmwareFlasherScreen', () => {
       expect(calls()).toBe(2);
       const text = allText(renderer);
       // Still an error, still recoverable, and NOT still loading.
-      expect(text).toContain('القائمة غير متاحة');
-      expect(text).not.toContain('يجري تحميلها الآن');
+      expect(text).toContain("De lijst is niet beschikbaar.");
+      expect(text).not.toContain("wordt nu geladen");
       expect(renderer.root.findAllByProps({testID: 'retry-targets'}).length).toBeGreaterThan(0);
 
       // A third press still works - the control does not consume itself.
@@ -201,7 +201,7 @@ describe('FirmwareFlasherScreen', () => {
 
       const {renderer} = await renderScreen(fakeClient(), api);
       await flushAsyncEffects();
-      expect(allText(renderer)).toContain('القائمة غير متاحة');
+      expect(allText(renderer)).toContain("De lijst is niet beschikbaar.");
 
       await press(renderer, 'retry-targets');
       await flushAsyncEffects();
@@ -252,7 +252,7 @@ describe('FirmwareFlasherScreen', () => {
   it('shows the build-configuration contract before a board is selected', async () => {
     const {renderer} = await renderScreen();
     expect(renderer.root.findAllByProps({testID: 'build-configuration'}).length).toBeGreaterThan(0);
-    expect(allText(renderer)).toContain('Radio وTelemetry وOSD وMotor');
+    expect(allText(renderer)).toContain("Selecteer Flight Controller en versie Firmware hierboven; Hier worden de opties Core/Cloud, Radio, Telemetry, OSD, Motor en andere opties direct weergegeven.");
     expect(renderer.root.findByProps({testID: 'build-firmware'}).props.disabled).toBe(true);
     act(() => renderer.unmount());
   });
@@ -264,9 +264,9 @@ describe('FirmwareFlasherScreen', () => {
     expect(client.pickFirmwareFile).toHaveBeenCalledTimes(1);
     expect(allText(renderer)).toContain('HEX • verified.hex');
     expect(allText(renderer)).toContain('STM32 DFU (DfuSe)');
-    expect(allText(renderer)).toContain('بوابة الأمان');
-    expect(allText(renderer)).toContain('الإعداد الآمن الموصى به');
-    expect(allText(renderer)).toContain('المسار البسيط جاهز');
+    expect(allText(renderer)).toContain("Veiligheidscontrole");
+    expect(allText(renderer)).toContain("De aanbevolen beveiligingsinstelling");
+    expect(allText(renderer)).toContain("De eenvoudige baan is klaar.");
     expect(renderer.root.findAllByProps({testID: 'unprotect-dfu-device'})).toHaveLength(0);
     act(() => renderer.unmount());
   });
@@ -329,7 +329,7 @@ describe('FirmwareFlasherScreen', () => {
     expect(renderer.root.findAllByProps({testID: 'osd-protocol-selector'}).length).toBeGreaterThan(0);
     expect(renderer.root.findAllByProps({testID: 'motor-protocol-selector'}).length).toBeGreaterThan(0);
     expect(allText(renderer)).toContain('[None]');
-    expect(allText(renderer)).toContain('المعلومات داخل FPV-ARBCON');
+    expect(allText(renderer)).toContain("Informatie binnen FPV-ARBCON");
     expect(api.loadBuild).toHaveBeenCalledWith('S405', '4.6.0', expect.any(AbortSignal));
     act(() => renderer.unmount());
   });
@@ -338,7 +338,7 @@ describe('FirmwareFlasherScreen', () => {
     const api = fakeApi();
     api.loadTargets.mockRejectedValueOnce(new Error('offline'));
     const {renderer} = await renderScreen(fakeClient(), api);
-    expect(allText(renderer)).toContain('المسار المحلي ما زال متاحاً');
+    expect(allText(renderer)).toContain("De lokale werkwijze blijft beschikbaar");
     await press(renderer, 'firmware-source-local');
     expect(renderer.root.findAllByProps({testID: 'pick-local-firmware'}).length).toBeGreaterThan(0);
     act(() => renderer.unmount());
@@ -375,7 +375,7 @@ describe('FirmwareFlasherScreen', () => {
 
     expect(detect).toHaveBeenCalledWith(expect.any(AbortSignal), {deviceId: 41, portIndex: 1});
     expect(release).toHaveBeenCalledTimes(1);
-    expect(allText(renderer)).toContain('تم التعرف واختيار S405');
+    expect(allText(renderer)).toContain("S405 herkend en geselecteerd");
     detect.mockRestore();
     act(() => renderer.unmount());
   });
@@ -417,7 +417,7 @@ describe('FirmwareFlasherScreen', () => {
       deviceId: 41,
       portIndex: 0,
     });
-    expect(allText(renderer)).toContain('أُعيد ربط المتحكم الوحيد');
+    expect(allText(renderer)).toContain("De USB-identificatie is veranderd. De enige controller is opnieuw aangesloten voor automatische identificatie.");
     expect(release).toHaveBeenCalledTimes(1);
     detect.mockRestore();
     act(() => renderer.unmount());
@@ -434,7 +434,7 @@ describe('FirmwareFlasherScreen', () => {
     const {renderer} = await renderScreen(client);
     await press(renderer, 'pick-unified-config');
     expect(allText(renderer)).toContain('S405.config');
-    expect(allText(renderer)).toContain('سيُتحقق من مؤشري البداية والنهاية والتداخل');
+    expect(allText(renderer)).toContain("Begin- en eindmarkeringen en overlappende gebieden worden vóór het wissen gecontroleerd");
     expect(renderer.root.findByProps({testID: 'clear-unified-config'}).props.disabled).toBe(false);
     act(() => renderer.unmount());
   });
@@ -449,7 +449,7 @@ describe('FirmwareFlasherScreen', () => {
     const {renderer} = await renderScreen(client);
     await press(renderer, 'firmware-source-local');
     await press(renderer, 'pick-local-firmware');
-    expect(allText(renderer)).toContain('حجم ملف Firmware لا يطابق بياناته المستلمة');
+    expect(allText(renderer)).toContain("De grootte van het firmwarebestand wijkt af van de ontvangen gegevens.");
     expect(allText(renderer)).not.toContain('HEX • truncated.hex');
     act(() => renderer.unmount());
   });
@@ -478,7 +478,7 @@ describe('FirmwareFlasherScreen', () => {
     await press(renderer, 'unprotect-dfu-device');
     expect(client.unprotectDfuDevice).toHaveBeenCalledTimes(1);
     expect(client.unprotectDfuDevice).toHaveBeenCalledWith(17);
-    expect(allText(renderer)).toContain('أزيلت Read Protection');
+    expect(allText(renderer)).toContain("Read Protection. is verwijderd. Snijd het bord af, voer DFU opnieuw in en voer flashen opnieuw uit.");
     act(() => renderer.unmount());
   });
 

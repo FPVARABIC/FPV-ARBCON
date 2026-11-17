@@ -79,7 +79,7 @@ android {
 
     namespace "com.fpvarbcon"
     defaultConfig {
-        applicationId "com.fpvarbcon"
+        applicationId "com.fpvarbcon.nl"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1

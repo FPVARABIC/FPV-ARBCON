@@ -135,8 +135,8 @@ const presetsCli = {
 /* ---------------- FirmwareChoice: every rendered state ------------ */
 
 /** The longest source label the Flasher itself ships. */
-const LONG_LABEL = 'Firmware الرسمي عبر الإنترنت';
-const SHORT_LABEL = 'ملف';
+const LONG_LABEL = "Firmware officieel online";
+const SHORT_LABEL = "Bestand";
 
 function ChoiceMatrix(): React.JSX.Element {
   const [value, setValue] = React.useState<'online' | 'local'>('online');

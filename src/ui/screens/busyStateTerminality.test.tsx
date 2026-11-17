@@ -100,8 +100,8 @@ const CASES: readonly ScreenCase[] = [
         controller={controller as never}
       />
     ),
-    busyText: 'جارٍ قراءة أسماء الأوضاع',
-    failedText: 'تعذرت قراءة جدول الأوضاع',
+    busyText: "Modusnamen, voorwaarden en koppelingen uitlezen",
+    failedText: "De modustabel kon niet",
   },
   {
     name: 'OSD',
@@ -113,8 +113,8 @@ const CASES: readonly ScreenCase[] = [
         controller={controller as never}
       />
     ),
-    busyText: 'جارٍ قراءة',
-    failedText: 'تعذرت قراءة',
+    busyText: "Ik lees de OSD en Canvas",
+    failedText: "OSD kon niet worden uitgelezen",
   },
   {
     name: 'Failsafe',
@@ -127,8 +127,8 @@ const CASES: readonly ScreenCase[] = [
         controller={controller as never}
       />
     ),
-    busyText: 'جارٍ قراءة Failsafe',
-    failedText: 'تعذرت قراءة',
+    busyText: "Failsafe, terugvalwaarden",
+    failedText: "Failsafe kon niet",
   },
   {
     name: 'PID tuning',
@@ -140,8 +140,8 @@ const CASES: readonly ScreenCase[] = [
         controller={controller as never}
       />
     ),
-    busyText: 'جارٍ قراءة PID',
-    failedText: 'تعذرت قراءة إعدادات PID',
+    busyText: "De vluchtcontroller is aan het lezen",
+    failedText: "De PID-instellingen konden niet",
   },
   {
     name: 'Power and battery',
@@ -153,8 +153,8 @@ const CASES: readonly ScreenCase[] = [
         controller={controller as never}
       />
     ),
-    busyText: 'جارٍ قراءة البطارية',
-    failedText: 'تعذرت قراءة إعدادات الطاقة',
+    busyText: "Accu, spanningsmeters",
+    failedText: "De voedingsinstellingen konden niet",
   },
   {
     name: 'Receiver',
@@ -167,8 +167,8 @@ const CASES: readonly ScreenCase[] = [
         controller={controller as never}
       />
     ),
-    busyText: 'جارٍ قراءة إعدادات الريسيفر',
-    failedText: 'فشلت العملية قبل اكتمال التحقق',
+    busyText: "Ontvangerinstellingen uitlezen",
+    failedText: "De bewerking mislukte",
   },
   {
     name: 'Video transmitter',
@@ -180,8 +180,8 @@ const CASES: readonly ScreenCase[] = [
         controller={controller as never}
       />
     ),
-    busyText: 'جارٍ قراءة VTX',
-    failedText: 'تعذرت قراءة VTX',
+    busyText: "VTX en tabel uitlezen",
+    failedText: "VTX kon niet",
   },
 ];
 
@@ -211,7 +211,7 @@ describe('a rejected load leaves the screen in a terminal state', () => {
       );
       // And whatever it settled on, it offers a way to try again rather
       // than a dead end.
-      expect(rendered).toContain('إعادة');
+      expect(rendered).toMatch(/opnieuw|Opnieuw/);
 
       ReactTestRenderer.act(() => renderer.unmount());
     },
@@ -245,14 +245,14 @@ describe('a rejected load leaves the screen in a terminal state', () => {
       );
       await Promise.resolve();
     });
-    expect(textOf(renderer)).toContain('جارٍ قراءة أسماء الأوضاع');
+    expect(textOf(renderer)).toContain("Modusnamen, voorwaarden en koppelingen uitlezen…");
 
     await ReactTestRenderer.act(async () => {
       release();
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(textOf(renderer)).not.toContain('جارٍ قراءة أسماء الأوضاع');
+    expect(textOf(renderer)).not.toContain("Modusnamen, voorwaarden en koppelingen uitlezen");
 
     ReactTestRenderer.act(() => renderer.unmount());
   });

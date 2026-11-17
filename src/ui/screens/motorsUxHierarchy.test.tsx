@@ -42,7 +42,7 @@ import {Text} from 'react-native';
 import ReactTestRenderer from 'react-test-renderer';
 
 import '../../i18n';
-import ar from '../../i18n/locales/ar.json';
+import ar from '../../i18n/locales/nl.json';
 import {presentConnectedBoard} from '../session/__testUtils__/connectedBoard';
 import MainTabsScreen from './MainTabsScreen';
 import {
