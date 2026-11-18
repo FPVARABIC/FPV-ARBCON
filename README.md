@@ -1,5 +1,11 @@
 # FPV Configurator NL
 
+## Webversie proberen
+
+[Open FPV Configurator NL](https://fpv-configurator-nl-web.melianeahmed93162357.chatgpt.site)
+
+Privé-testversie: kies **Continue with ChatGPT** en gebruik hetzelfde ChatGPT-account waarmee deze versie is gepubliceerd. De webapp gebruikt de applicatiecode van commit `a2b1d5661ebe12b1e2292903a0a7b169b764d7bf`.
+
 Nederlandstalige editie van FPV-ARBCON. Deze zelfstandige branch `dutch-edition` is gebaseerd op commit `0a40c6b8227d49a608d8a60c3beb39ad2db0e015` van `codex/android-validation-recovery`.
 
 De functies, MSP-protocollen, configuratiewaarden en beveiligingen blijven gelijk aan de brontoepassing. De interface, meldingen, toegankelijkheidslabels en 37 handleidingafbeeldingen zijn Nederlandstalig. De weergaverichting is van links naar rechts, ook op een apparaat met een Arabische systeemtaal.
